@@ -6,7 +6,7 @@ import {
 import { fetchSS } from "@/lib/utilsSS";
 import {
   CCPairBasicInfo,
-  DocumentSet,
+  DocumentSetSummary,
   Tag,
   User,
   ValidSources,
@@ -17,7 +17,7 @@ import { FullEmbeddingModelResponse } from "@/components/embedding/interfaces";
 import { Settings } from "@/app/admin/settings/interfaces";
 import { fetchLLMProvidersSS } from "@/lib/llm/fetchLLMs";
 import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
-import { Folder } from "@/app/chat/folders/interfaces";
+import { Folder } from "@/app/chat/components/folders/interfaces";
 import { cookies, headers } from "next/headers";
 import {
   SIDEBAR_TOGGLED_COOKIE_NAME,
@@ -35,7 +35,7 @@ interface FetchChatDataResult {
   chatSessions: ChatSession[];
   ccPairs: CCPairBasicInfo[];
   availableSources: ValidSources[];
-  documentSets: DocumentSet[];
+  documentSets: DocumentSetSummary[];
   tags: Tag[];
   llmProviders: LLMProviderDescriptor[];
   folders: Folder[];
@@ -167,7 +167,7 @@ export async function fetchChatData(searchParams: {
       new Date(b.time_updated).getTime() - new Date(a.time_updated).getTime()
   );
 
-  let documentSets: DocumentSet[] = [];
+  let documentSets: DocumentSetSummary[] = [];
   if (documentSetsResponse?.ok) {
     documentSets = await documentSetsResponse.json();
   } else {

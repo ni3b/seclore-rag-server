@@ -31,7 +31,7 @@ import { usePathname } from "next/navigation";
 import { SettingsContext } from "../settings/SettingsProvider";
 import { useContext, useState } from "react";
 import { MdOutlineCreditCard } from "react-icons/md";
-import { UserSettingsModal } from "@/app/chat/modal/UserSettingsModal";
+import { UserSettingsModal } from "@/app/chat/components/modal/UserSettingsModal";
 import { usePopup } from "./connectors/Popup";
 import { useChatContext } from "../context/ChatContext";
 import {
@@ -40,9 +40,8 @@ import {
 } from "@/app/admin/settings/interfaces";
 import Link from "next/link";
 import { Button } from "../ui/button";
-import useSWR from "swr";
-import { errorHandlingFetcher } from "@/lib/fetcher";
 import { useIsKGExposed } from "@/app/admin/kg/utils";
+import { useFederatedOAuthStatus } from "@/lib/hooks/useFederatedOAuthStatus";
 
 const connectors_items = () => [
   {
@@ -404,8 +403,14 @@ export function ClientLayout({
   const toggleUserSettings = () => {
     setUserSettingsOpen(!userSettingsOpen);
   };
-  const { llmProviders } = useChatContext();
+  const { llmProviders, ccPairs } = useChatContext();
   const { popup, setPopup } = usePopup();
+
+  // Fetch federated-connector info so the modal can list/refresh them
+  const {
+    connectors: federatedConnectors,
+    refetch: refetchFederatedConnectors,
+  } = useFederatedOAuthStatus();
 
   if (isLoading) {
     return <></>;
@@ -428,6 +433,9 @@ export function ClientLayout({
           setPopup={setPopup}
           onClose={() => setUserSettingsOpen(false)}
           defaultModel={user?.preferences?.default_model!}
+          ccPairs={ccPairs}
+          federatedConnectors={federatedConnectors}
+          refetchFederatedConnectors={refetchFederatedConnectors}
         />
       )}
 

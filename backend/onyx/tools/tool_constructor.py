@@ -14,14 +14,25 @@ from onyx.configs.app_configs import AZURE_DALLE_API_KEY
 from onyx.configs.app_configs import AZURE_DALLE_API_VERSION
 from onyx.configs.app_configs import AZURE_DALLE_DEPLOYMENT_NAME
 from onyx.configs.app_configs import IMAGE_MODEL_NAME
-from onyx.configs.chat_configs import BING_API_KEY
+from onyx.configs.app_configs import OAUTH_CLIENT_ID
+from onyx.configs.app_configs import OAUTH_CLIENT_SECRET
+from onyx.configs.app_configs import OKTA_API_TOKEN
+from onyx.configs.app_configs import OPENID_CONFIG_URL
+from onyx.configs.constants import TMP_DRALPHA_PERSONA_NAME
 from onyx.configs.model_configs import GEN_AI_TEMPERATURE
 from onyx.context.search.enums import LLMEvaluationType
 from onyx.context.search.enums import OptionalSearchSetting
 from onyx.context.search.models import InferenceSection
 from onyx.context.search.models import RerankingDetails
 from onyx.context.search.models import RetrievalDetails
+from onyx.db.enums import MCPAuthenticationPerformer
+from onyx.db.enums import MCPAuthenticationType
+from onyx.db.kg_config import get_kg_config_settings
 from onyx.db.llm import fetch_existing_llm_providers
+from onyx.db.mcp import get_all_mcp_tools_for_server
+from onyx.db.mcp import get_mcp_server_auth_performer
+from onyx.db.mcp import get_mcp_server_by_id
+from onyx.db.mcp import get_user_connection_config
 from onyx.db.models import Persona
 from onyx.db.models import User
 from onyx.file_store.models import InMemoryChatFile
@@ -40,6 +51,13 @@ from onyx.tools.tool_implementations.images.image_generation_tool import (
 from onyx.tools.tool_implementations.internet_search.internet_search_tool import (
     InternetSearchTool,
 )
+from onyx.tools.tool_implementations.knowledge_graph.knowledge_graph_tool import (
+    KnowledgeGraphTool,
+)
+from onyx.tools.tool_implementations.mcp.mcp_tool import MCPTool
+from onyx.tools.tool_implementations.okta_profile.okta_profile_tool import (
+    OktaProfileTool,
+)
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
 from onyx.tools.utils import compute_all_tool_tokens
 from onyx.tools.utils import explicit_tool_calling_supported
@@ -47,6 +65,45 @@ from onyx.utils.headers import header_dict_to_header_list
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
+
+
+class SearchToolConfig(BaseModel):
+    answer_style_config: AnswerStyleConfig = Field(
+        default_factory=lambda: AnswerStyleConfig(citation_config=CitationConfig())
+    )
+    document_pruning_config: DocumentPruningConfig = Field(
+        default_factory=DocumentPruningConfig
+    )
+    retrieval_options: RetrievalDetails = Field(default_factory=RetrievalDetails)
+    rerank_settings: RerankingDetails | None = None
+    selected_sections: list[InferenceSection] | None = None
+    chunks_above: int = 0
+    chunks_below: int = 0
+    full_doc: bool = False
+    latest_query_files: list[InMemoryChatFile] | None = None
+    # Use with care, should only be used for OnyxBot in channels with multiple users
+    bypass_acl: bool = False
+
+
+class InternetSearchToolConfig(BaseModel):
+    answer_style_config: AnswerStyleConfig = Field(
+        default_factory=lambda: AnswerStyleConfig(
+            citation_config=CitationConfig(all_docs_useful=True)
+        )
+    )
+    document_pruning_config: DocumentPruningConfig = Field(
+        default_factory=DocumentPruningConfig
+    )
+
+
+class ImageGenerationToolConfig(BaseModel):
+    additional_headers: dict[str, str] | None = None
+
+
+class CustomToolConfig(BaseModel):
+    chat_session_id: UUID | None = None
+    message_id: int | None = None
+    additional_headers: dict[str, str] | None = None
 
 
 def _get_image_generation_config(llm: LLM, db_session: Session) -> LLMConfig:
@@ -100,40 +157,26 @@ def _get_image_generation_config(llm: LLM, db_session: Session) -> LLMConfig:
     )
 
 
-class SearchToolConfig(BaseModel):
-    answer_style_config: AnswerStyleConfig = Field(
-        default_factory=lambda: AnswerStyleConfig(citation_config=CitationConfig())
+# Note: this is not very clear / not the way things should generally be done. (+impure function)
+# TODO: refactor the tool config flow to be easier
+def _configure_document_pruning_for_tool_config(
+    tool_config: SearchToolConfig | InternetSearchToolConfig,
+    tools: list[Tool],
+    llm: LLM,
+) -> None:
+    """Helper function to configure document pruning settings for tool configs"""
+    tool_config.document_pruning_config.tool_num_tokens = compute_all_tool_tokens(
+        tools,
+        get_tokenizer(
+            model_name=llm.config.model_name,
+            provider_type=llm.config.model_provider,
+        ),
     )
-    document_pruning_config: DocumentPruningConfig = Field(
-        default_factory=DocumentPruningConfig
-    )
-    retrieval_options: RetrievalDetails = Field(default_factory=RetrievalDetails)
-    rerank_settings: RerankingDetails | None = None
-    selected_sections: list[InferenceSection] | None = None
-    chunks_above: int = 0
-    chunks_below: int = 0
-    full_doc: bool = False
-    latest_query_files: list[InMemoryChatFile] | None = None
-    # Use with care, should only be used for OnyxBot in channels with multiple users
-    bypass_acl: bool = False
-
-
-class InternetSearchToolConfig(BaseModel):
-    answer_style_config: AnswerStyleConfig = Field(
-        default_factory=lambda: AnswerStyleConfig(
-            citation_config=CitationConfig(all_docs_useful=True)
+    tool_config.document_pruning_config.using_tool_message = (
+        explicit_tool_calling_supported(
+            llm.config.model_provider, llm.config.model_name
         )
     )
-
-
-class ImageGenerationToolConfig(BaseModel):
-    additional_headers: dict[str, str] | None = None
-
-
-class CustomToolConfig(BaseModel):
-    chat_session_id: UUID | None = None
-    message_id: int | None = None
-    additional_headers: dict[str, str] | None = None
 
 
 def construct_tools(
@@ -148,16 +191,22 @@ def construct_tools(
     internet_search_tool_config: InternetSearchToolConfig | None = None,
     image_generation_tool_config: ImageGenerationToolConfig | None = None,
     custom_tool_config: CustomToolConfig | None = None,
+    allowed_tool_ids: list[int] | None = None,
 ) -> dict[int, list[Tool]]:
     """Constructs tools based on persona configuration and available APIs"""
     tool_dict: dict[int, list[Tool]] = {}
 
+    mcp_tool_cache: dict[int, dict[int, MCPTool]] = {}
     # Get user's OAuth token if available
     user_oauth_token = None
     if user and user.oauth_accounts:
         user_oauth_token = user.oauth_accounts[0].access_token
 
     for db_tool_model in persona.tools:
+        # If allowed_tool_ids is specified, skip tools not in the allowed list
+        if allowed_tool_ids is not None and db_tool_model.id not in allowed_tool_ids:
+            continue
+
         if db_tool_model.in_code_tool_id:
             tool_cls = get_built_in_tool_by_id(
                 db_tool_model.in_code_tool_id, db_session
@@ -172,6 +221,7 @@ def construct_tools(
                     search_tool_config = SearchToolConfig()
 
                 search_tool = SearchTool(
+                    tool_id=db_tool_model.id,
                     db_session=db_session,
                     user=user,
                     persona=persona,
@@ -179,7 +229,7 @@ def construct_tools(
                     prompt_config=prompt_config,
                     llm=llm,
                     fast_llm=fast_llm,
-                    pruning_config=search_tool_config.document_pruning_config,
+                    document_pruning_config=search_tool_config.document_pruning_config,
                     answer_style_config=search_tool_config.answer_style_config,
                     selected_sections=search_tool_config.selected_sections,
                     chunks_above=search_tool_config.chunks_above,
@@ -211,6 +261,7 @@ def construct_tools(
                         api_version=img_generation_llm_config.api_version,
                         additional_headers=image_generation_tool_config.additional_headers,
                         model=img_generation_llm_config.model_name,
+                        tool_id=db_tool_model.id,
                     )
                 ]
 
@@ -219,16 +270,58 @@ def construct_tools(
                 if not internet_search_tool_config:
                     internet_search_tool_config = InternetSearchToolConfig()
 
-                if not BING_API_KEY:
+                try:
+                    tool_dict[db_tool_model.id] = [
+                        InternetSearchTool(tool_id=db_tool_model.id)
+                    ]
+                except ValueError as e:
+                    logger.error(f"Failed to initialize Internet Search Tool: {e}")
                     raise ValueError(
-                        "Internet search tool requires a Bing API key, please contact your Onyx admin to get it added!"
+                        "Internet search tool requires a search provider API key, please contact your Onyx admin to get it added!"
+                    )
+            # Handle Okta Profile Tool
+            elif tool_cls.__name__ == OktaProfileTool.__name__:
+                if not user_oauth_token:
+                    raise ValueError(
+                        "Okta Profile Tool requires user OAuth token but none found"
+                    )
+
+                if not all([OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OPENID_CONFIG_URL]):
+                    raise ValueError(
+                        "Okta Profile Tool requires OAuth configuration to be set"
+                    )
+
+                if not OKTA_API_TOKEN:
+                    raise ValueError(
+                        "Okta Profile Tool requires OKTA_API_TOKEN to be set"
+                    )
+
+                tool_dict[db_tool_model.id] = [
+                    OktaProfileTool(
+                        access_token=user_oauth_token,
+                        client_id=OAUTH_CLIENT_ID,
+                        client_secret=OAUTH_CLIENT_SECRET,
+                        openid_config_url=OPENID_CONFIG_URL,
+                        okta_api_token=OKTA_API_TOKEN,
+                        tool_id=db_tool_model.id,
+                    )
+                ]
+
+            # Handle KG Tool
+            elif tool_cls.__name__ == KnowledgeGraphTool.__name__:
+
+                # skip the knowledge graph tool if KG is not enabled/exposed
+                kg_config = get_kg_config_settings()
+                if not kg_config.KG_ENABLED or not kg_config.KG_EXPOSED:
+                    continue
+
+                if persona.name != TMP_DRALPHA_PERSONA_NAME:
+                    # TODO: remove this after the beta period
+                    raise ValueError(
+                        f"The Knowledge Graph Tool should only be used by the '{TMP_DRALPHA_PERSONA_NAME}' Agent."
                     )
                 tool_dict[db_tool_model.id] = [
-                    InternetSearchTool(
-                        api_key=BING_API_KEY,
-                        answer_style_config=internet_search_tool_config.answer_style_config,
-                        prompt_config=prompt_config,
-                    )
+                    KnowledgeGraphTool(tool_id=db_tool_model.id)
                 ]
 
         # Handle custom tools
@@ -239,7 +332,8 @@ def construct_tools(
             tool_dict[db_tool_model.id] = cast(
                 list[Tool],
                 build_custom_tools_from_openapi_schema_and_headers(
-                    db_tool_model.openapi_schema,
+                    tool_id=db_tool_model.id,
+                    openapi_schema=db_tool_model.openapi_schema,
                     dynamic_schema_info=DynamicSchemaInfo(
                         chat_session_id=custom_tool_config.chat_session_id,
                         message_id=custom_tool_config.message_id,
@@ -256,25 +350,75 @@ def construct_tools(
                 ),
             )
 
+        # Handle MCP tools
+        elif db_tool_model.mcp_server_id:
+            if db_tool_model.mcp_server_id in mcp_tool_cache:
+                tool_dict[db_tool_model.id] = [
+                    mcp_tool_cache[db_tool_model.mcp_server_id][db_tool_model.id]
+                ]
+                continue
+
+            mcp_server = get_mcp_server_by_id(db_tool_model.mcp_server_id, db_session)
+
+            # Get user-specific connection config if needed
+            connection_config = None
+            user_email = user.email if user else ""
+
+            if (
+                mcp_server.auth_type == MCPAuthenticationType.API_TOKEN
+                or mcp_server.auth_type == MCPAuthenticationType.OAUTH
+            ):
+                # If server has a per-user template, only use that user's config
+                if (
+                    get_mcp_server_auth_performer(mcp_server)
+                    == MCPAuthenticationPerformer.PER_USER
+                ):
+                    connection_config = get_user_connection_config(
+                        mcp_server.id, user_email, db_session
+                    )
+                else:
+                    # No per-user template: use admin config
+                    connection_config = mcp_server.admin_connection_config
+
+            # Get all saved tools for this MCP server
+            saved_tools = get_all_mcp_tools_for_server(mcp_server.id, db_session)
+
+            # Find the specific tool that this database entry represents
+            expected_tool_name = db_tool_model.display_name
+
+            mcp_tool_cache[db_tool_model.mcp_server_id] = {}
+            # Find the matching tool definition
+            for saved_tool in saved_tools:
+                # Create MCPTool instance for this specific tool
+                mcp_tool = MCPTool(
+                    tool_id=saved_tool.id,
+                    mcp_server=mcp_server,
+                    tool_name=saved_tool.name,
+                    tool_description=saved_tool.description,
+                    tool_definition=saved_tool.mcp_input_schema or {},
+                    connection_config=connection_config,
+                    user_email=user_email,
+                )
+                mcp_tool_cache[db_tool_model.mcp_server_id][saved_tool.id] = mcp_tool
+
+                if saved_tool.name == expected_tool_name:
+                    tool_dict[saved_tool.id] = [cast(Tool, mcp_tool)]
+            if db_tool_model.id not in tool_dict:
+                logger.warning(
+                    f"Tool '{expected_tool_name}' not found in MCP server '{mcp_server.name}'"
+                )
+
     tools: list[Tool] = []
     for tool_list in tool_dict.values():
         tools.extend(tool_list)
 
     # factor in tool definition size when pruning
     if search_tool_config:
-        search_tool_config.document_pruning_config.tool_num_tokens = (
-            compute_all_tool_tokens(
-                tools,
-                get_tokenizer(
-                    model_name=llm.config.model_name,
-                    provider_type=llm.config.model_provider,
-                ),
-            )
-        )
-        search_tool_config.document_pruning_config.using_tool_message = (
-            explicit_tool_calling_supported(
-                llm.config.model_provider, llm.config.model_name
-            )
+        _configure_document_pruning_for_tool_config(search_tool_config, tools, llm)
+
+    if internet_search_tool_config:
+        _configure_document_pruning_for_tool_config(
+            internet_search_tool_config, tools, llm
         )
 
     return tool_dict

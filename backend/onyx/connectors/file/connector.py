@@ -5,8 +5,6 @@ from pathlib import Path
 from typing import Any
 from typing import IO
 
-from sqlalchemy.orm import Session
-
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import FileOrigin
@@ -18,7 +16,6 @@ from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.models import Document
 from onyx.connectors.models import ImageSection
 from onyx.connectors.models import TextSection
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.file_processing.extract_file_text import extract_text_and_images
 from onyx.file_processing.extract_file_text import get_file_ext
 from onyx.file_processing.extract_file_text import is_accepted_file_ext
@@ -27,12 +24,12 @@ from onyx.file_processing.image_utils import store_image_and_create_section
 from onyx.file_store.file_store import get_default_file_store
 from onyx.utils.logger import setup_logger
 
+
 logger = setup_logger()
 
 
 def _create_image_section(
     image_data: bytes,
-    db_session: Session,
     parent_file_name: str,
     display_name: str,
     link: str | None = None,
@@ -58,7 +55,6 @@ def _create_image_section(
     # Store the image and create a section
     try:
         section, stored_file_name = store_image_and_create_section(
-            db_session=db_session,
             image_data=image_data,
             file_id=file_id,
             display_name=display_name,
@@ -77,7 +73,7 @@ def _process_file(
     file: IO[Any],
     metadata: dict[str, Any] | None,
     pdf_pass: str | None,
-    db_session: Session,
+    file_type: str | None,
 ) -> list[Document]:
     """
     Process a file and return a list of Documents.
@@ -125,7 +121,6 @@ def _process_file(
         try:
             section, _ = _create_image_section(
                 image_data=image_data,
-                db_session=db_session,
                 parent_file_name=file_id,
                 display_name=title,
             )
@@ -155,6 +150,7 @@ def _process_file(
         file=file,
         file_name=file_name,
         pdf_pass=pdf_pass,
+        content_type=file_type,
     )
 
     # Each file may have file-specific ONYX_METADATA https://docs.onyx.app/connectors/file
@@ -196,7 +192,6 @@ def _process_file(
         try:
             image_section, stored_file_name = _create_image_section(
                 image_data=img_data,
-                db_session=db_session,
                 parent_file_name=file_id,
                 display_name=f"{title} - image {idx}",
                 idx=idx,
@@ -230,18 +225,25 @@ class LocalFileConnector(LoadConnector):
     """
     Connector that reads files from Postgres and yields Documents, including
     embedded image extraction without summarization.
+
+    file_locations are S3/Filestore UUIDs
+    file_names are the names of the files
     """
 
+    # Note: file_names is a required parameter, but should not break backwards compatibility.
+    # If add_file_names migration is not run, old file connector configs will not have file_names.
+    # file_names is only used for display purposes in the UI and file_locations is used as a fallback.
     def __init__(
         self,
         file_locations: list[Path | str],
-        zip_metadata: dict[str, Any],
+        file_names: list[str] | None = None,
+        zip_metadata: dict[str, Any] | None = None,
         batch_size: int = INDEX_BATCH_SIZE,
     ) -> None:
         self.file_locations = [str(loc) for loc in file_locations]
         self.batch_size = batch_size
         self.pdf_pass: str | None = None
-        self.zip_metadata = zip_metadata
+        self.zip_metadata = zip_metadata or {}
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
         self.pdf_pass = credentials.get("pdf_password")
@@ -260,41 +262,40 @@ class LocalFileConnector(LoadConnector):
         """
         documents: list[Document] = []
 
-        with get_session_with_current_tenant() as db_session:
-            for file_id in self.file_locations:
-                file_store = get_default_file_store(db_session)
-                file_record = file_store.read_file_record(file_id=file_id)
-                if not file_record:
-                    # typically an unsupported extension
-                    logger.warning(
-                        f"No file record found for '{file_id}' in PG; skipping."
-                    )
-                    continue
+        for file_id in self.file_locations:
+            file_store = get_default_file_store()
+            file_record = file_store.read_file_record(file_id=file_id)
+            if not file_record:
+                # typically an unsupported extension
+                logger.warning(f"No file record found for '{file_id}' in PG; skipping.")
+                continue
 
-                metadata = self._get_file_metadata(file_id)
-                file_io = file_store.read_file(file_id=file_id, mode="b")
-                new_docs = _process_file(
-                    file_id=file_id,
-                    file_name=file_record.display_name,
-                    file=file_io,
-                    metadata=metadata,
-                    pdf_pass=self.pdf_pass,
-                    db_session=db_session,
-                )
-                documents.extend(new_docs)
+            metadata = self._get_file_metadata(file_record.display_name)
+            file_io = file_store.read_file(file_id=file_id, mode="b")
+            new_docs = _process_file(
+                file_id=file_id,
+                file_name=file_record.display_name,
+                file=file_io,
+                metadata=metadata,
+                pdf_pass=self.pdf_pass,
+                file_type=file_record.file_type,
+            )
+            documents.extend(new_docs)
 
-                if len(documents) >= self.batch_size:
-                    yield documents
-
-                    documents = []
-
-            if documents:
+            if len(documents) >= self.batch_size:
                 yield documents
+
+                documents = []
+
+        if documents:
+            yield documents
 
 
 if __name__ == "__main__":
     connector = LocalFileConnector(
-        file_locations=[os.environ["TEST_FILE"]], zip_metadata={}
+        file_locations=[os.environ["TEST_FILE"]],
+        file_names=[os.environ["TEST_FILE"]],
+        zip_metadata={},
     )
     connector.load_credentials({"pdf_password": os.environ.get("PDF_PASSWORD")})
     doc_batches = connector.load_from_state()

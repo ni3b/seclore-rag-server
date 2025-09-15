@@ -1,4 +1,5 @@
 import { ValidSources } from "../types";
+import { TypedFile } from "./fileTypes";
 
 export interface OAuthAdditionalKwargDescription {
   name: string;
@@ -30,6 +31,10 @@ export interface CredentialBase<T> {
   groups?: number[];
 }
 
+export interface CredentialWithPrivateKey<T> extends CredentialBase<T> {
+  private_key: TypedFile;
+}
+
 export interface Credential<T> extends CredentialBase<T> {
   id: number;
   user_id: string | null;
@@ -54,6 +59,11 @@ export interface BookstackCredentialJson {
   bookstack_base_url: string;
   bookstack_api_token_id: string;
   bookstack_api_token_secret: string;
+}
+
+export interface OutlineCredentialJson {
+  outline_base_url: string;
+  outline_api_token: string;
 }
 
 export interface ConfluenceCredentialJson {
@@ -188,8 +198,10 @@ export interface SalesforceCredentialJson {
 
 export interface SharepointCredentialJson {
   sp_client_id: string;
-  sp_client_secret: string;
+  sp_client_secret?: string;
   sp_directory_id: string;
+  sp_certificate_password?: string;
+  sp_private_key?: TypedFile;
 }
 
 export interface AsanaCredentialJson {
@@ -244,6 +256,11 @@ export interface HighspotCredentialJson {
   highspot_secret: string;
 }
 
+export interface ImapCredentialJson {
+  imap_username: string;
+  imap_password: string;
+}
+
 export const credentialTemplates: Record<ValidSources, any> = {
   github: { github_access_token: "" } as GithubCredentialJson,
   gitlab: {
@@ -256,6 +273,10 @@ export const credentialTemplates: Record<ValidSources, any> = {
     bookstack_api_token_id: "",
     bookstack_api_token_secret: "",
   } as BookstackCredentialJson,
+  outline: {
+    outline_base_url: "",
+    outline_api_token: "",
+  } as OutlineCredentialJson,
   confluence: {
     confluence_username: "",
     confluence_access_token: "",
@@ -292,10 +313,33 @@ export const credentialTemplates: Record<ValidSources, any> = {
     is_sandbox: false,
   } as SalesforceCredentialJson,
   sharepoint: {
-    sp_client_id: "",
-    sp_client_secret: "",
-    sp_directory_id: "",
-  } as SharepointCredentialJson,
+    authentication_method: "client_credentials",
+    authMethods: [
+      {
+        value: "client_secret",
+        label: "Client Secret",
+        fields: {
+          sp_client_id: "",
+          sp_client_secret: "",
+          sp_directory_id: "",
+        },
+        description:
+          "If you select this mode, the SharePoint connector will use a client secret to authenticate. You will need to provide the client ID and client secret.",
+      },
+      {
+        value: "certificate",
+        label: "Certificate Authentication",
+        fields: {
+          sp_client_id: "",
+          sp_directory_id: "",
+          sp_certificate_password: "",
+          sp_private_key: null,
+        },
+        description:
+          "If you select this mode, the SharePoint connector will use a certificate to authenticate. You will need to provide the client ID, directory ID, certificate password, and PFX data.",
+      },
+    ],
+  } as CredentialTemplateWithAuth<SharepointCredentialJson>,
   asana: {
     asana_api_token_secret: "",
   } as AsanaCredentialJson,
@@ -386,6 +430,7 @@ export const credentialTemplates: Record<ValidSources, any> = {
   web: null,
   not_applicable: null,
   ingestion_api: null,
+  federated_slack: null,
   discord: { discord_bot_token: "" } as DiscordCredentialJson,
 
   // NOTE: These are Special Cases
@@ -399,6 +444,10 @@ export const credentialTemplates: Record<ValidSources, any> = {
     highspot_key: "",
     highspot_secret: "",
   } as HighspotCredentialJson,
+  imap: {
+    imap_username: "",
+    imap_password: "",
+  } as ImapCredentialJson,
 };
 
 export const credentialDisplayNames: Record<string, string> = {
@@ -413,6 +462,11 @@ export const credentialDisplayNames: Record<string, string> = {
   bookstack_base_url: "Bookstack Base URL",
   bookstack_api_token_id: "Bookstack API Token ID",
   bookstack_api_token_secret: "Bookstack API Token Secret",
+
+  // Outline
+  outline_base_url:
+    "Outline Base URL (e.g. https://app.getoutline.com or your self-hosted URL)",
+  outline_api_token: "Outline API Token",
 
   // Confluence
   confluence_username: "Confluence Username",
@@ -484,6 +538,10 @@ export const credentialDisplayNames: Record<string, string> = {
   r2_access_key_id: "R2 Access Key ID",
   r2_secret_access_key: "R2 Secret Access Key",
 
+  // IMAP
+  imap_username: "IMAP Username",
+  imap_password: "IMAP Password",
+
   // S3
   aws_access_key_id: "AWS Access Key ID",
   aws_secret_access_key: "AWS Secret Access Key",
@@ -508,6 +566,8 @@ export const credentialDisplayNames: Record<string, string> = {
   sp_client_id: "SharePoint Client ID",
   sp_client_secret: "SharePoint Client Secret",
   sp_directory_id: "SharePoint Directory ID",
+  sp_certificate_password: "SharePoint Certificate Password",
+  sp_private_key: "SharePoint Private Key",
 
   // Asana
   asana_api_token_secret: "Asana API Token",

@@ -13,6 +13,7 @@ services:
       - index
       - cache
       - inference_model_server
+      - minio
     restart: unless-stopped
     env_file:
       - .env
@@ -129,7 +130,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       # Not necessary, this is just to reduce download time during startup
-      - model_cache_huggingface:/root/.cache/huggingface/
+      - model_cache_huggingface:/app/.cache/huggingface/
     logging:
       driver: json-file
       options:
@@ -157,7 +158,7 @@ services:
       - VESPA_SEARCHER_THREADS=${VESPA_SEARCHER_THREADS:-1}
     volumes:
       # Not necessary, this is just to reduce download time during startup
-      - indexing_huggingface_model_cache:/root/.cache/huggingface/
+      - indexing_huggingface_model_cache:/app/.cache/huggingface/
     logging:
       driver: json-file
       options:

@@ -3,8 +3,11 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
+from onyx.configs.constants import TMP_DRALPHA_PERSONA_NAME
+from onyx.configs.kg_configs import KG_BETA_ASSISTANT_DESCRIPTION
 from onyx.context.search.enums import RecencyBiasSetting
 from onyx.db.engine.sql_engine import get_session
+from onyx.db.entities import get_entity_stats_by_grounded_source_name
 from onyx.db.entity_type import get_configured_entity_types
 from onyx.db.entity_type import update_entity_types_and_related_connectors__commit
 from onyx.db.kg_config import disable_kg
@@ -28,11 +31,14 @@ from onyx.server.kg.models import EnableKGConfigRequest
 from onyx.server.kg.models import EntityType
 from onyx.server.kg.models import KGConfig
 from onyx.server.kg.models import KGConfig as KGConfigAPIModel
-from onyx.tools.built_in_tools import get_search_tool
+from onyx.server.kg.models import SourceAndEntityTypeView
+from onyx.server.kg.models import SourceStatistics
+from onyx.tools.built_in_tools import get_builtin_tool
+from onyx.tools.tool_implementations.knowledge_graph.knowledge_graph_tool import (
+    KnowledgeGraphTool,
+)
+from onyx.tools.tool_implementations.search.search_tool import SearchTool
 
-
-_KG_BETA_ASSISTANT_DESCRIPTION = "The KG Beta assistant uses the Onyx Knowledge Graph (beta) structure \
-to answer questions"
 
 admin_router = APIRouter(prefix="/admin/kg")
 
@@ -54,7 +60,7 @@ def get_kg_exposed(_: User | None = Depends(current_admin_user)) -> bool:
 def reset_kg(
     _: User | None = Depends(current_admin_user),
     db_session: Session = Depends(get_session),
-) -> list[EntityType]:
+) -> SourceAndEntityTypeView:
     reset_full_kg_index__commit(db_session)
     populate_missing_default_entity_types__commit(db_session=db_session)
     return get_kg_entity_types(db_session=db_session)
@@ -92,12 +98,9 @@ def enable_or_disable_kg(
     enable_kg(enable_req=req)
     populate_missing_default_entity_types__commit(db_session=db_session)
 
-    # Create or restore KG Beta persona
-
-    # Get the search tool
-    search_tool = get_search_tool(db_session=db_session)
-    if not search_tool:
-        raise RuntimeError("SearchTool not found in the database.")
+    # Get the search and knowledge graph tools
+    search_tool = get_builtin_tool(db_session=db_session, tool_type=SearchTool)
+    kg_tool = get_builtin_tool(db_session=db_session, tool_type=KnowledgeGraphTool)
 
     # Check if we have a previously created persona
     kg_config_settings = get_kg_config_settings()
@@ -129,8 +132,8 @@ def enable_or_disable_kg(
     is_public = len(user_ids) == 0
 
     persona_request = PersonaUpsertRequest(
-        name="KG Beta",
-        description=_KG_BETA_ASSISTANT_DESCRIPTION,
+        name=TMP_DRALPHA_PERSONA_NAME,
+        description=KG_BETA_ASSISTANT_DESCRIPTION,
         system_prompt=KG_BETA_ASSISTANT_SYSTEM_PROMPT,
         task_prompt=KG_BETA_ASSISTANT_TASK_PROMPT,
         datetime_aware=False,
@@ -142,7 +145,7 @@ def enable_or_disable_kg(
         recency_bias=RecencyBiasSetting.NO_DECAY,
         prompt_ids=[0],
         document_set_ids=[],
-        tool_ids=[search_tool.id],
+        tool_ids=[search_tool.id, kg_tool.id],
         llm_model_provider_override=None,
         llm_model_version_override=None,
         starter_messages=None,
@@ -173,11 +176,30 @@ def enable_or_disable_kg(
 def get_kg_entity_types(
     _: User | None = Depends(current_admin_user),
     db_session: Session = Depends(get_session),
-) -> list[EntityType]:
+) -> SourceAndEntityTypeView:
     # when using for the first time, populate with default entity types
-    kg_entity_types = get_configured_entity_types(db_session=db_session)
+    entity_types = {
+        source_name: [EntityType.from_model(et) for et in ets]
+        for source_name, ets in get_configured_entity_types(
+            db_session=db_session
+        ).items()
+    }
 
-    return [EntityType.from_model(kg_entity_type) for kg_entity_type in kg_entity_types]
+    source_statistics = {
+        source_name: SourceStatistics(
+            source_name=source_name,
+            last_updated=last_updated,
+            entities_count=entities_count,
+        )
+        for source_name, (
+            last_updated,
+            entities_count,
+        ) in get_entity_stats_by_grounded_source_name(db_session=db_session).items()
+    }
+
+    return SourceAndEntityTypeView(
+        source_statistics=source_statistics, entity_types=entity_types
+    )
 
 
 @admin_router.put("/entity-types")

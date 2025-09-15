@@ -8,7 +8,6 @@ import requests
 from sqlalchemy.orm import Session
 
 from onyx.configs.constants import FileOrigin
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.models import ChatMessage
 from onyx.db.models import UserFile
 from onyx.db.models import UserFolder
@@ -22,6 +21,8 @@ from onyx.utils.logger import setup_logger
 from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
 
 logger = setup_logger()
+
+RECENT_FOLDER_ID = -1
 
 
 def user_file_id_to_plaintext_file_name(user_file_id: int) -> str:
@@ -47,30 +48,24 @@ def store_user_file_plaintext(user_file_id: int, plaintext_content: str) -> bool
     # Get plaintext file name
     plaintext_file_name = user_file_id_to_plaintext_file_name(user_file_id)
 
-    # Use a separate session to avoid committing the caller's transaction
     try:
-        with get_session_with_current_tenant() as file_store_session:
-            file_store = get_default_file_store(file_store_session)
-            file_content = BytesIO(plaintext_content.encode("utf-8"))
-            file_store.save_file(
-                content=file_content,
-                display_name=f"Plaintext for user file {user_file_id}",
-                file_origin=FileOrigin.PLAINTEXT_CACHE,
-                file_type="text/plain",
-                file_id=plaintext_file_name,
-            )
-            return True
+        file_store = get_default_file_store()
+        file_content = BytesIO(plaintext_content.encode("utf-8"))
+        file_store.save_file(
+            content=file_content,
+            display_name=f"Plaintext for user file {user_file_id}",
+            file_origin=FileOrigin.PLAINTEXT_CACHE,
+            file_type="text/plain",
+            file_id=plaintext_file_name,
+        )
+        return True
     except Exception as e:
         logger.warning(f"Failed to store plaintext for user file {user_file_id}: {e}")
         return False
 
 
-def load_chat_file(
-    file_descriptor: FileDescriptor, db_session: Session
-) -> InMemoryChatFile:
-    file_io = get_default_file_store(db_session).read_file(
-        file_descriptor["id"], mode="b"
-    )
+def load_chat_file(file_descriptor: FileDescriptor) -> InMemoryChatFile:
+    file_io = get_default_file_store().read_file(file_descriptor["id"], mode="b")
     return InMemoryChatFile(
         file_id=file_descriptor["id"],
         content=file_io.read(),
@@ -82,7 +77,6 @@ def load_chat_file(
 def load_all_chat_files(
     chat_messages: list[ChatMessage],
     file_descriptors: list[FileDescriptor],
-    db_session: Session,
 ) -> list[InMemoryChatFile]:
     file_descriptors_for_history: list[FileDescriptor] = []
     for chat_message in chat_messages:
@@ -93,7 +87,7 @@ def load_all_chat_files(
         list[InMemoryChatFile],
         run_functions_tuples_in_parallel(
             [
-                (load_chat_file, (file, db_session))
+                (load_chat_file, (file,))
                 for file in file_descriptors + file_descriptors_for_history
             ]
         ),
@@ -117,7 +111,7 @@ def load_user_file(file_id: int, db_session: Session) -> InMemoryChatFile:
         raise ValueError(f"User file with id {file_id} not found")
 
     # Get the file record to determine the appropriate chat file type
-    file_store = get_default_file_store(db_session)
+    file_store = get_default_file_store()
     file_record = file_store.read_file_record(user_file.file_id)
 
     # Determine appropriate chat file type based on the original file's MIME type
@@ -252,45 +246,47 @@ def get_user_files_as_user(
     Fetches all UserFile database records for a given user.
     """
     user_files = get_user_files(user_file_ids, user_folder_ids, db_session)
+    current_user_files = []
     for user_file in user_files:
         # Note: if user_id is None, then all files should be None as well
         # (since auth must be disabled in this case)
-        if user_file.user_id != user_id:
-            raise ValueError(
-                f"User {user_id} does not have access to file {user_file.id}"
-            )
-    return user_files
+        if user_file.folder_id == RECENT_FOLDER_ID:
+            if user_file.user_id == user_id:
+                current_user_files.append(user_file)
+        else:
+            if user_file.user_id != user_id:
+                raise ValueError(
+                    f"User {user_id} does not have access to file {user_file.id}"
+                )
+            current_user_files.append(user_file)
+
+    return current_user_files
 
 
 def save_file_from_url(url: str) -> str:
-    """NOTE: using multiple sessions here, since this is often called
-    using multithreading. In practice, sharing a session has resulted in
-    weird errors."""
-    with get_session_with_current_tenant() as db_session:
-        response = requests.get(url)
-        response.raise_for_status()
+    response = requests.get(url)
+    response.raise_for_status()
 
-        file_io = BytesIO(response.content)
-        file_store = get_default_file_store(db_session)
-        file_id = file_store.save_file(
-            content=file_io,
-            display_name="GeneratedImage",
-            file_origin=FileOrigin.CHAT_IMAGE_GEN,
-            file_type="image/png;base64",
-        )
-        return file_id
+    file_io = BytesIO(response.content)
+    file_store = get_default_file_store()
+    file_id = file_store.save_file(
+        content=file_io,
+        display_name="GeneratedImage",
+        file_origin=FileOrigin.CHAT_IMAGE_GEN,
+        file_type="image/png;base64",
+    )
+    return file_id
 
 
 def save_file_from_base64(base64_string: str) -> str:
-    with get_session_with_current_tenant() as db_session:
-        file_store = get_default_file_store(db_session)
-        file_id = file_store.save_file(
-            content=BytesIO(base64.b64decode(base64_string)),
-            display_name="GeneratedImage",
-            file_origin=FileOrigin.CHAT_IMAGE_GEN,
-            file_type=get_image_type(base64_string),
-        )
-        return file_id
+    file_store = get_default_file_store()
+    file_id = file_store.save_file(
+        content=BytesIO(base64.b64decode(base64_string)),
+        display_name="GeneratedImage",
+        file_origin=FileOrigin.CHAT_IMAGE_GEN,
+        file_type=get_image_type(base64_string),
+    )
+    return file_id
 
 
 def save_file(
@@ -332,6 +328,10 @@ def save_files(urls: list[str], base64_files: list[str]) -> list[str]:
     ]
 
     return run_functions_tuples_in_parallel(funcs)
+
+
+def build_frontend_file_url(file_id: str) -> str:
+    return f"/api/chat/file/{file_id}"
 
 
 def load_all_persona_files_for_chat(
