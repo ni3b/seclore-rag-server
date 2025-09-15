@@ -34,8 +34,8 @@ services:
       - SMTP_PASS=${SMTP_PASS:-}
       - ENABLE_EMAIL_INVITES=${ENABLE_EMAIL_INVITES:-} # If enabled, will send users (using SMTP settings) an email to join the workspace
       - EMAIL_FROM=${EMAIL_FROM:-}
-#     - OAUTH_CLIENT_ID=143e80d9-0826-4af8-8d1f-fe61d7fa9179
-#      - OAUTH_CLIENT_SECRET=Bc38Q~4wMRDVmDtDn7v3v4nJ.LEhUB.fFD~2NaOB
+#     - OAUTH_CLIENT_ID=
+#      - OAUTH_CLIENT_SECRET=
       - OPENID_CONFIG_URL=https://login.microsoftonline.com/40fce0a7-6f92-4fad-89e5-d16af9a45ac8/v2.0/.well-known/openid-configuration
       - TRACK_EXTERNAL_IDP_EXPIRY=${TRACK_EXTERNAL_IDP_EXPIRY:-}
       - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-}
