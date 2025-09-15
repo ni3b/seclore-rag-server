@@ -5,12 +5,12 @@ from typing import Generic
 from typing import TYPE_CHECKING
 from typing import TypeVar
 
-from onyx.llm.interfaces import LLM
-from onyx.llm.models import PreviousMessage
 from onyx.utils.special_types import JSON_ro
 
 
 if TYPE_CHECKING:
+    from onyx.llm.interfaces import LLM
+    from onyx.llm.models import PreviousMessage
     from onyx.chat.prompt_builder.answer_prompt_builder import AnswerPromptBuilder
     from onyx.tools.message import ToolCallSummary
     from onyx.tools.models import ToolResponse
@@ -20,6 +20,11 @@ OVERRIDE_T = TypeVar("OVERRIDE_T")
 
 
 class Tool(abc.ABC, Generic[OVERRIDE_T]):
+    @property
+    @abc.abstractmethod
+    def id(self) -> int:
+        raise NotImplementedError
+
     @property
     @abc.abstractmethod
     def name(self) -> str:
@@ -34,6 +39,13 @@ class Tool(abc.ABC, Generic[OVERRIDE_T]):
     @abc.abstractmethod
     def display_name(self) -> str:
         raise NotImplementedError
+
+    # Added to make tools work better with LLMs in prompts. Should be unique
+    # TODO: looks at ways how to best ensure uniqueness.
+    # TODO: extra review regarding coding style
+    @property
+    def llm_name(self) -> str:
+        return self.display_name
 
     """For LLMs which support explicit tool calling"""
 
@@ -53,8 +65,8 @@ class Tool(abc.ABC, Generic[OVERRIDE_T]):
     def get_args_for_non_tool_calling_llm(
         self,
         query: str,
-        history: list[PreviousMessage],
-        llm: LLM,
+        history: list["PreviousMessage"],
+        llm: "LLM",
         force_run: bool = False,
     ) -> dict[str, Any] | None:
         raise NotImplementedError

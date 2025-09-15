@@ -154,6 +154,7 @@ class SearchRequest(ChunkContext):
     query: str
 
     expanded_queries: QueryExpansions | None = None
+    original_query: str | None = None
 
     search_type: SearchType = SearchType.SEMANTIC
 
@@ -205,6 +206,7 @@ class SearchQuery(ChunkContext):
     precomputed_query_embedding: Embedding | None = None
 
     expanded_queries: QueryExpansions | None = None
+    original_query: str | None
 
 
 class RetrievalDetails(ChunkContext):
@@ -251,6 +253,8 @@ class InferenceChunk(BaseChunk):
     primary_owners: list[str] | None = None
     secondary_owners: list[str] | None = None
     large_chunk_reference_ids: list[int] = Field(default_factory=list)
+
+    is_federated: bool = False
 
     @property
     def unique_id(self) -> str:
@@ -373,6 +377,11 @@ class SavedSearchDoc(SearchDoc):
         search_doc_data = search_doc.model_dump()
         search_doc_data["score"] = search_doc_data.get("score") or 0.0
         return cls(**search_doc_data, db_doc_id=db_doc_id)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SavedSearchDoc":
+        """Create SavedSearchDoc from serialized dictionary data (e.g., from database JSON)"""
+        return cls(**data)
 
     def __lt__(self, other: Any) -> bool:
         if not isinstance(other, SavedSearchDoc):

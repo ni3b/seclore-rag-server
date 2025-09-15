@@ -54,6 +54,7 @@ vespa:
     # The Vespa Helm chart specifies default resources, which are quite modest. We override
     # them here to increase chances of the chart running successfully. If you plan to index at
     # scale, you will likely need to increase these limits further.
+    # At large scale, it is recommended to use a dedicated Vespa cluster / Vespa cloud.
     requests:
       cpu: 4000m
       memory: 8000Mi
@@ -88,6 +89,17 @@ inferenceCapability:
   podLabels:
     - key: app
       value: inference-model-server
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 6Gi
+    limits:
+      cpu: 4000m
+      memory: 10Gi
+  podSecurityContext: {}
+  securityContext:
+    privileged: true
+    runAsUser: 0
 
 indexCapability:
   service:
@@ -110,6 +122,17 @@ indexCapability:
     # Overrides the image tag whose default is the chart appVersion.
     tag: ""
   limitConcurrency: 10
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 6Gi
+    limits:
+      cpu: 4000m
+      memory: 10Gi
+  podSecurityContext: {}
+  securityContext:
+    privileged: true
+    runAsUser: 0
 config:
   envConfigMapName: env-configmap
 
@@ -174,17 +197,13 @@ webserver:
     servicePort: 3000
     targetPort: http
 
-  resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
 
   autoscaling:
     enabled: false
@@ -245,17 +264,13 @@ api:
     targetPort: api-server-port
     portName: api-server-port
 
-  resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  #  requests:
-  #    cpu: 1000m  # Requests 1 CPU core
-  #    memory: 1Gi  # Requests 1 GiB of memory
-  #  limits:
-  #    cpu: 2000m  # Limits to 2 CPU cores
-  #    memory: 2Gi  # Limits to 2 GiB of memory
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
 
   autoscaling:
     enabled: false
@@ -281,62 +296,11 @@ api:
   tolerations: []
 
 
-# background:
-#   replicaCount: 1
-#   autoscaling:
-#     enabled: false
-# #     minReplicas: 1
-# #     maxReplicas: 100
-# #     targetCPUUtilizationPercentage: 80
-# #     targetMemoryUtilizationPercentage: 80
+######################################################################
 #
-#   image:
-#     repository: onyxdotapp/onyx-backend
-#     pullPolicy: IfNotPresent
-#     # Overrides the image tag whose default is the chart appVersion.
-#     tag: ""
-#   podAnnotations: {}
-#   podLabels:
-#     scope: onyx-backend
-#     app: background
-#   deploymentLabels:
-#     app: background
-#   podSecurityContext:
-#     {}
-#     # fsGroup: 2000
-#   securityContext:
-#     privileged: true
-#     runAsUser: 0
-#   enableMiniChunk: "true"
-#   resources: {}
-#   # We usually recommend not to specify default resources and to leave this as a conscious
-#   # choice for the user. This also increases chances charts run on environments with little
-#   # resources, such as Minikube. If you do want to specify resources, uncomment the following
-#   # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-#   #  requests:
-#   #    cpu: 1000m  # Requests 1 CPU core
-#   #    memory: 1Gi  # Requests 1 GiB of memory
-#   #  limits:
-#   #    cpu: 2000m  # Limits to 2 CPU cores
-#   #    memory: 2Gi  # Limits to 2 GiB of memory
+# Background workers
 #
-#
-#   # Additional volumes on the output Deployment definition.
-#   volumes: []
-#   # - name: foo
-#   #   secret:
-#   #     secretName: mysecret
-#   #     optional: false
-#
-#   # Additional volumeMounts on the output Deployment definition.
-#   volumeMounts: []
-#   # - name: foo
-#   #   mountPath: "/etc/foo"
-#   #   readOnly: true
-#
-#   nodeSelector: {}
-#   tolerations: []
-#   affinity: {}
+######################################################################
 
 celery_shared:
   image:
@@ -362,6 +326,10 @@ celery_shared:
     periodSeconds: 60
     failureThreshold: 5
     timeoutSeconds: 3
+  podSecurityContext: {}
+  securityContext:
+    privileged: true
+    runAsUser: 0
 
 celery_beat:
   replicaCount: 1
@@ -371,12 +339,13 @@ celery_beat:
     app: celery-beat
   deploymentLabels:
     app: celery-beat
-  podSecurityContext:
-    {}
-  securityContext:
-    privileged: true
-    runAsUser: 0
-  resources: {}
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
   volumes: []  # Additional volumes on the output Deployment definition.
   volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
   nodeSelector: {}
@@ -393,34 +362,36 @@ celery_worker_heavy:
     app: celery-worker-heavy
   deploymentLabels:
     app: celery-worker-heavy
-  podSecurityContext:
-    {}
-  securityContext:
-    privileged: true
-    runAsUser: 0
-  resources: {}
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2500m
+      memory: 5Gi
   volumes: []  # Additional volumes on the output Deployment definition.
   volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
   nodeSelector: {}
   tolerations: []
   affinity: {}
 
-celery_worker_indexing:
+celery_worker_docprocessing:
   replicaCount: 1
   autoscaling:
     enabled: false
   podAnnotations: {}
   podLabels:
     scope: onyx-backend-celery
-    app: celery-worker-indexing
+    app: celery-worker-docprocessing
   deploymentLabels:
-    app: celery-worker-indexing
-  podSecurityContext:
-    {}
-  securityContext:
-    privileged: true
-    runAsUser: 0
-  resources: {}
+    app: celery-worker-docprocessing
+  resources:
+    requests:
+      cpu: 500m
+      memory: 4Gi
+    limits:
+      cpu: 1000m
+      memory: 12Gi
   volumes: []  # Additional volumes on the output Deployment definition.
   volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
   nodeSelector: {}
@@ -437,12 +408,13 @@ celery_worker_light:
     app: celery-worker-light
   deploymentLabels:
     app: celery-worker-light
-  podSecurityContext:
-    {}
-  securityContext:
-    privileged: true
-    runAsUser: 0
-  resources: {}
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
   volumes: []  # Additional volumes on the output Deployment definition.
   volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
   nodeSelector: {}
@@ -459,12 +431,13 @@ celery_worker_monitoring:
     app: celery-worker-monitoring
   deploymentLabels:
     app: celery-worker-monitoring
-  podSecurityContext:
-    {}
-  securityContext:
-    privileged: true
-    runAsUser: 0
-  resources: {}
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
   volumes: []  # Additional volumes on the output Deployment definition.
   volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
   nodeSelector: {}
@@ -481,12 +454,13 @@ celery_worker_primary:
     app: celery-worker-primary
   deploymentLabels:
     app: celery-worker-primary
-  podSecurityContext:
-    {}
-  securityContext:
-    privileged: true
-    runAsUser: 0
-  resources: {}
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 8Gi
+    limits:
+      cpu: 2000m
+      memory: 16Gi
   volumes: []  # Additional volumes on the output Deployment definition.
   volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
   nodeSelector: {}
@@ -503,12 +477,13 @@ celery_worker_user_files_indexing:
     app: celery-worker-user-files-indexing
   deploymentLabels:
     app: celery-worker-user-files-indexing
-  podSecurityContext:
-    {}
-  securityContext:
-    privileged: true
-    runAsUser: 0
-  resources: {}
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 6Gi
+    limits:
+      cpu: 4000m
+      memory: 12Gi
   volumes: []  # Additional volumes on the output Deployment definition.
   volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
   nodeSelector: {}
@@ -538,6 +513,35 @@ slackbot:
     limits:
       cpu: "1000m"
       memory: "2000Mi"
+
+celery_worker_docfetching:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  podAnnotations: {}
+  podLabels:
+    scope: onyx-backend-celery
+    app: celery-worker-docfetching
+  deploymentLabels:
+    app: celery-worker-docfetching
+  resources:
+    requests:
+      cpu: 500m
+      memory: 8Gi
+    limits:
+      cpu: 2000m
+      memory: 16Gi
+  volumes: []  # Additional volumes on the output Deployment definition.
+  volumeMounts: []  # Additional volumeMounts on the output Deployment definition.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+######################################################################
+#
+# End background workers section
+#
+######################################################################
 
 redis:
   enabled: true
@@ -632,7 +636,9 @@ configMap:
   SESSION_EXPIRE_TIME_SECONDS: "86400"
   # Can be something like onyx.app, as an extra double-check
   VALID_EMAIL_DOMAINS: ""
-  # For sending verification emails, if unspecified then defaults to 'smtp.gmail.com'
+  # For sending verification emails, true or false
+  REQUIRE_EMAIL_VERIFICATION: ""
+  # If unspecified then defaults to 'smtp.gmail.com'
   SMTP_SERVER: ""
   # For sending verification emails, if unspecified then defaults to '587'
   SMTP_PORT: ""
@@ -662,6 +668,7 @@ configMap:
   QA_PROMPT_OVERRIDE: ""
   # Internet Search Tool
   BING_API_KEY: ""
+  EXA_API_KEY: ""
   # Don't change the NLP models unless you know what you're doing
   EMBEDDING_BATCH_SIZE: ""
   DOCUMENT_ENCODER_MODEL: ""
@@ -683,7 +690,7 @@ configMap:
   GONG_CONNECTOR_START_TIME: ""
   NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP: ""
   # Worker Parallelism
-  CELERY_WORKER_INDEXING_CONCURRENCY: ""
+  CELERY_WORKER_DOCPROCESSING_CONCURRENCY: ""
   CELERY_WORKER_LIGHT_CONCURRENCY: ""
   CELERY_WORKER_LIGHT_PREFETCH_MULTIPLIER: ""
   # OnyxBot SlackBot Configs

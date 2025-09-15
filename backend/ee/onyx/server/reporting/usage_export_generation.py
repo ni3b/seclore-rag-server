@@ -67,7 +67,7 @@ def generate_chat_messages_report(
         file_id = file_store.save_file(
             content=temp_file,
             display_name=file_name,
-            file_origin=FileOrigin.OTHER,
+            file_origin=FileOrigin.GENERATED_REPORT,
             file_type="text/csv",
         )
 
@@ -99,7 +99,7 @@ def generate_user_report(
         file_id = file_store.save_file(
             content=temp_file,
             display_name=file_name,
-            file_origin=FileOrigin.OTHER,
+            file_origin=FileOrigin.GENERATED_REPORT,
             file_type="text/csv",
         )
 
@@ -112,7 +112,7 @@ def create_new_usage_report(
     period: tuple[datetime, datetime] | None,
 ) -> UsageReportMetadata:
     report_id = str(uuid.uuid4())
-    file_store = get_default_file_store(db_session)
+    file_store = get_default_file_store()
 
     messages_file_id = generate_chat_messages_report(
         db_session, file_store, report_id, period

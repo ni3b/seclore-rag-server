@@ -1,16 +1,29 @@
+import time
 from typing import Any
 
 from simple_salesforce import Salesforce
 from simple_salesforce import SFType
+from simple_salesforce.exceptions import SalesforceRefusedRequest
 
+from onyx.connectors.cross_connector_utils.rate_limit_wrapper import (
+    rate_limit_builder,
+)
 from onyx.connectors.salesforce.blacklist import SALESFORCE_BLACKLISTED_OBJECTS
 from onyx.connectors.salesforce.blacklist import SALESFORCE_BLACKLISTED_PREFIXES
 from onyx.connectors.salesforce.blacklist import SALESFORCE_BLACKLISTED_SUFFIXES
 from onyx.connectors.salesforce.salesforce_calls import get_object_by_id_query
 from onyx.utils.logger import setup_logger
+from onyx.utils.retry_wrapper import retry_builder
 
 
 logger = setup_logger()
+
+
+def is_salesforce_rate_limit_error(exception: Exception) -> bool:
+    """Check if an exception is a Salesforce rate limit error."""
+    return isinstance(
+        exception, SalesforceRefusedRequest
+    ) and "REQUEST_LIMIT_EXCEEDED" in str(exception)
 
 
 class OnyxSalesforce(Salesforce):
@@ -47,17 +60,59 @@ class OnyxSalesforce(Salesforce):
                 return True
 
         for suffix in SALESFORCE_BLACKLISTED_SUFFIXES:
-            if object_type_lower.endswith(prefix):
+            if object_type_lower.endswith(suffix):
                 return True
 
         return False
+
+    @retry_builder(
+        tries=5,
+        delay=20,
+        backoff=1.5,
+        max_delay=60,
+        exceptions=(SalesforceRefusedRequest,),
+    )
+    @rate_limit_builder(max_calls=50, period=60)
+    def safe_query(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """Wrapper around the original query method with retry logic and rate limiting."""
+        try:
+            return super().query(query, **kwargs)
+        except SalesforceRefusedRequest as e:
+            if is_salesforce_rate_limit_error(e):
+                logger.warning(
+                    f"Salesforce rate limit exceeded for query: {query[:100]}..."
+                )
+                # Add additional delay for rate limit errors
+                time.sleep(5)
+            raise
+
+    @retry_builder(
+        tries=5,
+        delay=20,
+        backoff=1.5,
+        max_delay=60,
+        exceptions=(SalesforceRefusedRequest,),
+    )
+    @rate_limit_builder(max_calls=50, period=60)
+    def safe_query_all(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """Wrapper around the original query_all method with retry logic and rate limiting."""
+        try:
+            return super().query_all(query, **kwargs)
+        except SalesforceRefusedRequest as e:
+            if is_salesforce_rate_limit_error(e):
+                logger.warning(
+                    f"Salesforce rate limit exceeded for query_all: {query[:100]}..."
+                )
+                # Add additional delay for rate limit errors
+                time.sleep(5)
+            raise
 
     @staticmethod
     def _make_child_objects_by_id_query(
         object_id: str,
         sf_type: str,
         child_relationships: list[str],
-        relationships_to_fields: dict[str, list[str]],
+        relationships_to_fields: dict[str, set[str]],
     ) -> str:
         """Returns a SOQL query given the object id, type and child relationships.
 
@@ -93,13 +148,13 @@ class OnyxSalesforce(Salesforce):
         self,
         object_type: str,
         object_id: str,
-        type_to_queryable_fields: dict[str, list[str]],
+        type_to_queryable_fields: dict[str, set[str]],
     ) -> dict[str, Any] | None:
         record: dict[str, Any] = {}
 
         queryable_fields = type_to_queryable_fields[object_type]
         query = get_object_by_id_query(object_id, object_type, queryable_fields)
-        result = self.query(query)
+        result = self.safe_query(query)
         if not result:
             return None
 
@@ -117,7 +172,7 @@ class OnyxSalesforce(Salesforce):
         object_id: str,
         sf_type: str,
         child_relationships: list[str],
-        relationships_to_fields: dict[str, list[str]],
+        relationships_to_fields: dict[str, set[str]],
     ) -> dict[str, dict[str, Any]]:
         """There's a limit on the number of subqueries we can put in a single query."""
         child_records: dict[str, dict[str, Any]] = {}
@@ -151,7 +206,7 @@ class OnyxSalesforce(Salesforce):
                 )
 
                 try:
-                    result = self.query(query)
+                    result = self.safe_query(query)
                 except Exception:
                     logger.exception(f"Query failed: {query=}")
                 else:
@@ -189,15 +244,30 @@ class OnyxSalesforce(Salesforce):
 
         return child_records
 
+    @retry_builder(
+        tries=3,
+        delay=1,
+        backoff=2,
+        exceptions=(SalesforceRefusedRequest,),
+    )
     def describe_type(self, name: str) -> Any:
         sf_object = SFType(name, self.session_id, self.sf_instance)
-        result = sf_object.describe()
-        return result
+        try:
+            result = sf_object.describe()
+            return result
+        except SalesforceRefusedRequest as e:
+            if is_salesforce_rate_limit_error(e):
+                logger.warning(
+                    f"Salesforce rate limit exceeded for describe_type: {name}"
+                )
+                # Add additional delay for rate limit errors
+                time.sleep(3)
+            raise
 
-    def get_queryable_fields_by_type(self, name: str) -> list[str]:
+    def get_queryable_fields_by_type(self, name: str) -> set[str]:
         object_description = self.describe_type(name)
         if object_description is None:
-            return []
+            return set()
 
         fields: list[dict[str, Any]] = object_description["fields"]
         valid_fields: set[str] = set()
@@ -216,7 +286,7 @@ class OnyxSalesforce(Salesforce):
             if field_name:
                 valid_fields.add(field_name)
 
-        return list(valid_fields - field_names_to_remove)
+        return valid_fields - field_names_to_remove
 
     def get_children_of_sf_type(self, sf_type: str) -> dict[str, str]:
         """Returns a dict of child object names to relationship names.

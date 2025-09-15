@@ -3,17 +3,13 @@ import { Button } from "@/components/ui/button";
 import { ValidSources, AccessType } from "@/lib/types";
 import { FaAccusoft } from "react-icons/fa";
 import { submitCredential } from "@/components/admin/connectors/CredentialForm";
-import { BooleanFormField, TextFormField } from "@/components/Field";
+import { TextFormField } from "@/components/Field";
 import { Form, Formik, FormikHelpers } from "formik";
 import { PopupSpec } from "@/components/admin/connectors/Popup";
 import { getSourceDocLink } from "@/lib/sources";
 import GDriveMain from "@/app/admin/connectors/[connector]/pages/gdrive/GoogleDrivePage";
 import { Connector } from "@/lib/connectors/connectors";
-import {
-  Credential,
-  credentialTemplates,
-  getDisplayNameForCredentialKey,
-} from "@/lib/connectors/credentials";
+import { Credential, credentialTemplates } from "@/lib/connectors/credentials";
 import { PlusCircleIcon } from "../../icons/icons";
 import { GmailMain } from "@/app/admin/connectors/[connector]/pages/gmail/GmailPage";
 import { ActionType, dictionaryType } from "../types";
@@ -27,6 +23,7 @@ import {
 import { useUser } from "@/components/user/UserProvider";
 import CardSection from "@/components/admin/CardSection";
 import { CredentialFieldsRenderer } from "./CredentialFieldsRenderer";
+import { TypedFile } from "@/lib/connectors/fileTypes";
 
 const CreateButton = ({
   onClick,
@@ -118,10 +115,15 @@ export default function CreateCredential({
 
     const { name, is_public, groups, ...credentialValues } = values;
 
+    let privateKey: TypedFile | null = null;
     const filteredCredentialValues = Object.fromEntries(
-      Object.entries(credentialValues).filter(
-        ([_, value]) => value !== null && value !== ""
-      )
+      Object.entries(credentialValues).filter(([key, value]) => {
+        if (value instanceof TypedFile) {
+          privateKey = value;
+          return false;
+        }
+        return value !== null && value !== "";
+      })
     );
 
     try {
@@ -132,6 +134,7 @@ export default function CreateCredential({
         groups: groups,
         name: name,
         source: sourceType,
+        private_key: privateKey || undefined,
       });
 
       const { message, isSuccess, credential } = response;

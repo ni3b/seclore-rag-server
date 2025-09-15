@@ -63,6 +63,15 @@ beat_task_templates: list[dict] = [
         },
     },
     {
+        "name": "check-for-index-attempt-cleanup",
+        "task": OnyxCeleryTask.CHECK_FOR_INDEX_ATTEMPT_CLEANUP,
+        "schedule": timedelta(hours=1),
+        "options": {
+            "priority": OnyxCeleryPriority.LOW,
+            "expires": BEAT_EXPIRES_DEFAULT,
+        },
+    },
+    {
         "name": "check-for-connector-deletion",
         "task": OnyxCeleryTask.CHECK_FOR_CONNECTOR_DELETION,
         "schedule": timedelta(seconds=20),
@@ -94,24 +103,6 @@ beat_task_templates: list[dict] = [
     {
         "name": "check-for-pruning",
         "task": OnyxCeleryTask.CHECK_FOR_PRUNING,
-        "schedule": timedelta(seconds=20),
-        "options": {
-            "priority": OnyxCeleryPriority.MEDIUM,
-            "expires": BEAT_EXPIRES_DEFAULT,
-        },
-    },
-    {
-        "name": "check-for-doc-permissions-sync",
-        "task": OnyxCeleryTask.CHECK_FOR_DOC_PERMISSIONS_SYNC,
-        "schedule": timedelta(seconds=30),
-        "options": {
-            "priority": OnyxCeleryPriority.MEDIUM,
-            "expires": BEAT_EXPIRES_DEFAULT,
-        },
-    },
-    {
-        "name": "check-for-external-group-sync",
-        "task": OnyxCeleryTask.CHECK_FOR_EXTERNAL_GROUP_SYNC,
         "schedule": timedelta(seconds=20),
         "options": {
             "priority": OnyxCeleryPriority.MEDIUM,

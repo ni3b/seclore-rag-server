@@ -13,6 +13,7 @@ services:
       - index
       - cache
       - inference_model_server
+      - minio
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -96,6 +97,9 @@ services:
 
       # Chat Configs
       - HARD_DELETE_CHATS=${HARD_DELETE_CHATS:-}
+      
+      # Show extra/uncommon connectors
+      - SHOW_EXTRA_CONNECTORS=${SHOW_EXTRA_CONNECTORS:-true}
 
       # Vespa Language Forcing
       # See: https://docs.vespa.ai/en/linguistics.html 
@@ -117,7 +121,7 @@ services:
         max-file: "6"
     volumes:
       # optional, only for debugging purposes
-      - api_server_logs:/var/log
+      - api_server_logs:/var/log/onyx
 
   background:
     image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
@@ -145,6 +149,7 @@ services:
       - GENERATIVE_MODEL_ACCESS_CHECK_FREQ=${GENERATIVE_MODEL_ACCESS_CHECK_FREQ:-}
       - DISABLE_LITELLM_STREAMING=${DISABLE_LITELLM_STREAMING:-}
       - LITELLM_EXTRA_HEADERS=${LITELLM_EXTRA_HEADERS:-}
+      - EXA_API_KEY=${EXA_API_KEY:-}
       # Query Options
       - DOC_TIME_DECAY=${DOC_TIME_DECAY:-} # Recency Bias for search results, decay at 1 / (1 + DOC_TIME_DECAY * x years)
       - HYBRID_ALPHA=${HYBRID_ALPHA:-} # Hybrid Search Alpha (0 for entirely keyword, 1 for entirely vector)
@@ -211,7 +216,8 @@ services:
       - LOG_VESPA_TIMING_INFORMATION=${LOG_VESPA_TIMING_INFORMATION:-}
       # Celery Configs (defaults are set in the supervisord.conf file.
       # prefer doing that to have one source of defaults)
-      - CELERY_WORKER_INDEXING_CONCURRENCY=${CELERY_WORKER_INDEXING_CONCURRENCY:-}
+      - CELERY_WORKER_DOCFETCHING_CONCURRENCY=${CELERY_WORKER_DOCFETCHING_CONCURRENCY:-}
+      - CELERY_WORKER_DOCPROCESSING_CONCURRENCY=${CELERY_WORKER_DOCPROCESSING_CONCURRENCY:-}
       - CELERY_WORKER_LIGHT_CONCURRENCY=${CELERY_WORKER_LIGHT_CONCURRENCY:-}
       - CELERY_WORKER_LIGHT_PREFETCH_MULTIPLIER=${CELERY_WORKER_LIGHT_PREFETCH_MULTIPLIER:-}
 
@@ -229,7 +235,7 @@ services:
       - "host.docker.internal:host-gateway"
     # optional, only for debugging purposes
     volumes:
-      - background_logs:/var/log
+      - background_logs:/var/log/onyx
     logging:
       driver: json-file
       options:
@@ -290,9 +296,9 @@ services:
       - CLIENT_EMBEDDING_TIMEOUT=${CLIENT_EMBEDDING_TIMEOUT:-}
     volumes:
       # Not necessary, this is just to reduce download time during startup
-      - model_cache_huggingface:/root/.cache/huggingface/
+      - model_cache_huggingface:/app/.cache/huggingface/
       # optional, only for debugging purposes
-      - inference_model_server_logs:/var/log
+      - inference_model_server_logs:/var/log/onyx
     logging:
       driver: json-file
       options:
@@ -329,9 +335,9 @@ services:
       - VESPA_SEARCHER_THREADS=${VESPA_SEARCHER_THREADS:-1}
     volumes:
       # Not necessary, this is just to reduce download time during startup
-      - indexing_huggingface_model_cache:/root/.cache/huggingface/
+      - indexing_huggingface_model_cache:/app/.cache/huggingface/
       # optional, only for debugging purposes
-      - indexing_model_server_logs:/var/log
+      - indexing_model_server_logs:/var/log/onyx
     logging:
       driver: json-file
       options:
