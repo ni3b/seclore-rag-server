@@ -3,9 +3,8 @@ from typing import Type
 
 from sqlalchemy.orm import Session
 
-from onyx.configs.app_configs import INTEGRATION_TESTS_MODE
 from onyx.configs.constants import DocumentSource
-from onyx.configs.llm_configs import get_image_extraction_and_analysis_enabled
+from onyx.configs.constants import DocumentSourceRequiringTenantContext
 from onyx.connectors.airtable.airtable_connector import AirtableConnector
 from onyx.connectors.asana.connector import AsanaConnector
 from onyx.connectors.axero.connector import AxeroConnector
@@ -13,17 +12,15 @@ from onyx.connectors.blob.connector import BlobStorageConnector
 from onyx.connectors.bookstack.connector import BookstackConnector
 from onyx.connectors.clickup.connector import ClickupConnector
 from onyx.connectors.confluence.connector import ConfluenceConnector
-from onyx.connectors.credentials_provider import OnyxDBCredentialsProvider
 from onyx.connectors.discord.connector import DiscordConnector
 from onyx.connectors.discourse.connector import DiscourseConnector
 from onyx.connectors.document360.connector import Document360Connector
 from onyx.connectors.dropbox.connector import DropboxConnector
 from onyx.connectors.egnyte.connector import EgnyteConnector
-from onyx.connectors.exceptions import ConnectorValidationError
 from onyx.connectors.file.connector import LocalFileConnector
 from onyx.connectors.fireflies.connector import FirefliesConnector
 from onyx.connectors.freshdesk.connector import FreshdeskConnector
-from onyx.connectors.gitbook.connector import GitbookConnector
+from onyx.connectors.freshdesk_solutions.connector import FreshdeskSolutionsConnector
 from onyx.connectors.github.connector import GithubConnector
 from onyx.connectors.gitlab.connector import GitlabConnector
 from onyx.connectors.gmail.connector import GmailConnector
@@ -31,38 +28,33 @@ from onyx.connectors.gong.connector import GongConnector
 from onyx.connectors.google_drive.connector import GoogleDriveConnector
 from onyx.connectors.google_site.connector import GoogleSitesConnector
 from onyx.connectors.guru.connector import GuruConnector
-from onyx.connectors.highspot.connector import HighspotConnector
 from onyx.connectors.hubspot.connector import HubSpotConnector
 from onyx.connectors.interfaces import BaseConnector
-from onyx.connectors.interfaces import CheckpointedConnector
-from onyx.connectors.interfaces import CredentialsConnector
 from onyx.connectors.interfaces import EventConnector
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.interfaces import PollConnector
-from onyx.connectors.jira.connector import JiraConnector
 from onyx.connectors.linear.connector import LinearConnector
 from onyx.connectors.loopio.connector import LoopioConnector
 from onyx.connectors.mediawiki.wiki import MediaWikiConnector
-from onyx.connectors.mock_connector.connector import MockConnector
 from onyx.connectors.models import InputType
 from onyx.connectors.notion.connector import NotionConnector
+from onyx.connectors.onyx_jira.connector import JiraConnector
 from onyx.connectors.productboard.connector import ProductboardConnector
 from onyx.connectors.salesforce.connector import SalesforceConnector
 from onyx.connectors.sharepoint.connector import SharepointConnector
 from onyx.connectors.slab.connector import SlabConnector
-from onyx.connectors.slack.connector import SlackConnector
+from onyx.connectors.slack.connector import SlackPollConnector
 from onyx.connectors.teams.connector import TeamsConnector
 from onyx.connectors.web.connector import WebConnector
 from onyx.connectors.wikipedia.connector import WikipediaConnector
 from onyx.connectors.xenforo.connector import XenforoConnector
 from onyx.connectors.zendesk.connector import ZendeskConnector
 from onyx.connectors.zulip.connector import ZulipConnector
-from onyx.db.connector import fetch_connector_by_id
 from onyx.db.credentials import backend_update_credential_json
-from onyx.db.credentials import fetch_credential_by_id
-from onyx.db.enums import AccessType
 from onyx.db.models import Credential
-from shared_configs.contextvars import get_current_tenant_id
+from onyx.utils.logger import setup_logger
+
+logger = setup_logger()
 
 
 class ConnectorMissingException(Exception):
@@ -77,13 +69,12 @@ def identify_connector_class(
         DocumentSource.WEB: WebConnector,
         DocumentSource.FILE: LocalFileConnector,
         DocumentSource.SLACK: {
-            InputType.POLL: SlackConnector,
-            InputType.SLIM_RETRIEVAL: SlackConnector,
+            InputType.POLL: SlackPollConnector,
+            InputType.SLIM_RETRIEVAL: SlackPollConnector,
         },
         DocumentSource.GITHUB: GithubConnector,
         DocumentSource.GMAIL: GmailConnector,
         DocumentSource.GITLAB: GitlabConnector,
-        DocumentSource.GITBOOK: GitbookConnector,
         DocumentSource.GOOGLE_DRIVE: GoogleDriveConnector,
         DocumentSource.BOOKSTACK: BookstackConnector,
         DocumentSource.CONFLUENCE: ConfluenceConnector,
@@ -117,12 +108,10 @@ def identify_connector_class(
         DocumentSource.XENFORO: XenforoConnector,
         DocumentSource.DISCORD: DiscordConnector,
         DocumentSource.FRESHDESK: FreshdeskConnector,
+        DocumentSource.FRESHDESK_SOLUTIONS: FreshdeskSolutionsConnector,
         DocumentSource.FIREFLIES: FirefliesConnector,
         DocumentSource.EGNYTE: EgnyteConnector,
         DocumentSource.AIRTABLE: AirtableConnector,
-        DocumentSource.HIGHSPOT: HighspotConnector,
-        # just for integration tests
-        DocumentSource.MOCK_CONNECTOR: MockConnector,
     }
     connector_by_source = connector_map.get(source, {})
 
@@ -139,23 +128,10 @@ def identify_connector_class(
 
     if any(
         [
-            (
-                input_type == InputType.LOAD_STATE
-                and not issubclass(connector, LoadConnector)
-            ),
-            (
-                input_type == InputType.POLL
-                # either poll or checkpoint works for this, in the future
-                # all connectors should be checkpoint connectors
-                and (
-                    not issubclass(connector, PollConnector)
-                    and not issubclass(connector, CheckpointedConnector)
-                )
-            ),
-            (
-                input_type == InputType.EVENT
-                and not issubclass(connector, EventConnector)
-            ),
+            input_type == InputType.LOAD_STATE
+            and not issubclass(connector, LoadConnector),
+            input_type == InputType.POLL and not issubclass(connector, PollConnector),
+            input_type == InputType.EVENT and not issubclass(connector, EventConnector),
         ]
     ):
         raise ConnectorMissingException(
@@ -170,73 +146,25 @@ def instantiate_connector(
     input_type: InputType,
     connector_specific_config: dict[str, Any],
     credential: Credential,
+    tenant_id: str | None = None,
+    connector_name: str | None = None
 ) -> BaseConnector:
     connector_class = identify_connector_class(source, input_type)
 
+    if source in DocumentSourceRequiringTenantContext:
+        connector_specific_config["tenant_id"] = tenant_id
+
     connector = connector_class(**connector_specific_config)
 
-    if isinstance(connector, CredentialsConnector):
-        provider = OnyxDBCredentialsProvider(
-            get_current_tenant_id(), str(source), credential.id
-        )
-        connector.set_credentials_provider(provider)
-    else:
-        new_credentials = connector.load_credentials(credential.credential_json)
+    # setting the connector name
+    try:
+        connector.name = connector_name
+    except Exception as e:
+        logger.error(f"Failed to set connector.name: {e}")
 
-        if new_credentials is not None:
-            backend_update_credential_json(credential, new_credentials, db_session)
+    new_credentials = connector.load_credentials(credential.credential_json)
 
-    connector.set_allow_images(get_image_extraction_and_analysis_enabled())
+    if new_credentials is not None:
+        backend_update_credential_json(credential, new_credentials, db_session)
 
     return connector
-
-
-def validate_ccpair_for_user(
-    connector_id: int,
-    credential_id: int,
-    access_type: AccessType,
-    db_session: Session,
-    enforce_creation: bool = True,
-) -> bool:
-    if INTEGRATION_TESTS_MODE:
-        return True
-
-    # Validate the connector settings
-    connector = fetch_connector_by_id(connector_id, db_session)
-    credential = fetch_credential_by_id(
-        credential_id,
-        db_session,
-    )
-
-    if not connector:
-        raise ValueError("Connector not found")
-
-    if (
-        connector.source == DocumentSource.INGESTION_API
-        or connector.source == DocumentSource.MOCK_CONNECTOR
-    ):
-        return True
-
-    if not credential:
-        raise ValueError("Credential not found")
-
-    try:
-        runnable_connector = instantiate_connector(
-            db_session=db_session,
-            source=connector.source,
-            input_type=connector.input_type,
-            connector_specific_config=connector.connector_specific_config,
-            credential=credential,
-        )
-    except ConnectorValidationError as e:
-        raise e
-    except Exception as e:
-        if enforce_creation:
-            raise ConnectorValidationError(str(e))
-        else:
-            return False
-
-    runnable_connector.validate_connector_settings()
-    if access_type == AccessType.SYNC:
-        runnable_connector.validate_perm_sync()
-    return True

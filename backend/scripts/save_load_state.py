@@ -94,12 +94,12 @@ def load_vespa(filename: str) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Onyx checkpoint saving and loading.")
+    parser = argparse.ArgumentParser(description="Seclore checkpoint saving and loading.")
     parser.add_argument(
-        "--save", action="store_true", help="Save Onyx state to directory."
+        "--save", action="store_true", help="Save Seclore state to directory."
     )
     parser.add_argument(
-        "--load", action="store_true", help="Load Onyx state from save directory."
+        "--load", action="store_true", help="Load Seclore state from save directory."
     )
     parser.add_argument(
         "--postgres_container_name",

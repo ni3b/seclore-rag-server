@@ -5,11 +5,11 @@ metadata:
 spec:
   type: {{ .Values.inferenceCapability.service.type }}
   ports:
-    - port: {{ .Values.inferenceCapability.service.servicePort}}
-      targetPort: {{ .Values.inferenceCapability.service.targetPort }}
+    - port: {{ .Values.inferenceCapability.service.port }}
+      targetPort: {{ .Values.inferenceCapability.service.port }}
       protocol: TCP
-      name: {{ .Values.inferenceCapability.service.portName }}
+      name: {{ .Values.inferenceCapability.service.name }}
   selector:
-    {{- range .Values.inferenceCapability.labels }}
+    {{- range .Values.inferenceCapability.deployment.labels }}
     {{ .key }}: {{ .value }}
     {{- end }}

@@ -7,24 +7,27 @@ export const SelectableDropdown = ({
   selected,
   icon,
   toggle,
+  trailing,
 }: {
   value: string;
   selected: boolean;
   icon?: React.ReactNode;
   toggle: () => void;
+  trailing?: React.ReactNode;
 }) => {
   return (
     <div
       key={value}
       className={`p-2 flex gap-x-2 items-center rounded cursor-pointer transition-colors duration-200 ${
         selected
-          ? "bg-background-200 dark:bg-neutral-800"
-          : "hover:bg-background-100 dark:hover:bg-neutral-800"
+          ? "bg-gray-200 dark:bg-gray-700"
+          : "hover:bg-gray-100 dark:hover:bg-gray-800"
       }`}
       onClick={toggle}
     >
       {icon && <div className="flex-none">{icon}</div>}
-      <span className="text-sm">{value}</span>
+      <span className="text-sm flex-1">{value}</span>
+      {trailing && <div className="flex-none">{trailing}</div>}
     </div>
   );
 };

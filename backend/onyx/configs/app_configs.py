@@ -1,18 +1,12 @@
 import json
 import os
 import urllib.parse
-from datetime import datetime
-from datetime import timezone
 from typing import cast
 
 from onyx.auth.schemas import AuthBackend
 from onyx.configs.constants import AuthType
 from onyx.configs.constants import DocumentIndexType
-from onyx.configs.constants import QueryHistoryType
 from onyx.file_processing.enums import HtmlBasedConnectorTransformLinksStrategy
-from onyx.prompts.image_analysis import DEFAULT_IMAGE_ANALYSIS_SYSTEM_PROMPT
-from onyx.prompts.image_analysis import DEFAULT_IMAGE_SUMMARIZATION_SYSTEM_PROMPT
-from onyx.prompts.image_analysis import DEFAULT_IMAGE_SUMMARIZATION_USER_PROMPT
 
 #####
 # App Configs
@@ -35,19 +29,12 @@ GENERATIVE_MODEL_ACCESS_CHECK_FREQ = int(
 )  # 1 day
 DISABLE_GENERATIVE_AI = os.environ.get("DISABLE_GENERATIVE_AI", "").lower() == "true"
 
-# Controls whether to allow admin query history reports with:
-# 1. associated user emails
-# 2. anonymized user emails
-# 3. no queries
-ONYX_QUERY_HISTORY_TYPE = QueryHistoryType(
-    (os.environ.get("ONYX_QUERY_HISTORY_TYPE") or QueryHistoryType.NORMAL.value).lower()
-)
 
 #####
 # Web Configs
 #####
 # WEB_DOMAIN is used to set the redirect_uri after login flows
-# NOTE: if you are having problems accessing the Onyx web UI locally (especially
+# NOTE: if you are having problems accessing the Seclore web UI locally (especially
 # on Windows, try  setting this to `http://127.0.0.1:3000` instead and see if that
 # fixes it)
 WEB_DOMAIN = os.environ.get("WEB_DOMAIN") or "http://localhost:3000"
@@ -59,24 +46,9 @@ WEB_DOMAIN = os.environ.get("WEB_DOMAIN") or "http://localhost:3000"
 AUTH_TYPE = AuthType((os.environ.get("AUTH_TYPE") or AuthType.DISABLED.value).lower())
 DISABLE_AUTH = AUTH_TYPE == AuthType.DISABLED
 
-PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", 12))
-PASSWORD_MAX_LENGTH = int(os.getenv("PASSWORD_MAX_LENGTH", 64))
-PASSWORD_REQUIRE_UPPERCASE = (
-    os.environ.get("PASSWORD_REQUIRE_UPPERCASE", "true").lower() == "true"
-)
-PASSWORD_REQUIRE_LOWERCASE = (
-    os.environ.get("PASSWORD_REQUIRE_LOWERCASE", "true").lower() == "true"
-)
-PASSWORD_REQUIRE_DIGIT = (
-    os.environ.get("PASSWORD_REQUIRE_DIGIT", "true").lower() == "true"
-)
-PASSWORD_REQUIRE_SPECIAL_CHAR = (
-    os.environ.get("PASSWORD_REQUIRE_SPECIAL_CHAR", "true").lower() == "true"
-)
-
 # Encryption key secret is used to encrypt connector credentials, api keys, and other sensitive
 # information. This provides an extra layer of security on top of Postgres access controls
-# and is available in Onyx EE
+# and is available in Seclore EE
 ENCRYPTION_KEY_SECRET = os.environ.get("ENCRYPTION_KEY_SECRET") or ""
 
 # Turn off mask if admin users should see full credentials for data connectors.
@@ -96,8 +68,8 @@ SESSION_EXPIRE_TIME_SECONDS = int(
 REQUEST_TIMEOUT_SECONDS = int(os.environ.get("REQUEST_TIMEOUT_SECONDS") or 60)
 
 # set `VALID_EMAIL_DOMAINS` to a comma seperated list of domains in order to
-# restrict access to Onyx to only users with emails from those domains.
-# E.g. `VALID_EMAIL_DOMAINS=example.com,example.org` will restrict Onyx
+# restrict access to Seclore to only users with emails from those domains.
+# E.g. `VALID_EMAIL_DOMAINS=example.com,example.org` will restrict Seclore
 # signups to users with either an @example.com or an @example.org email.
 # NOTE: maintaining `VALID_EMAIL_DOMAIN` to keep backwards compatibility
 _VALID_EMAIL_DOMAIN = os.environ.get("VALID_EMAIL_DOMAIN", "")
@@ -118,6 +90,7 @@ OAUTH_CLIENT_SECRET = (
     os.environ.get("OAUTH_CLIENT_SECRET", os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"))
     or ""
 )
+OPENID_CONFIG_URL = os.environ.get("OPENID_CONFIG_URL") or ""
 
 USER_AUTH_SECRET = os.environ.get("USER_AUTH_SECRET", "")
 
@@ -135,12 +108,10 @@ SMTP_SERVER = os.environ.get("SMTP_SERVER") or "smtp.gmail.com"
 SMTP_PORT = int(os.environ.get("SMTP_PORT") or "587")
 SMTP_USER = os.environ.get("SMTP_USER", "your-email@gmail.com")
 SMTP_PASS = os.environ.get("SMTP_PASS", "your-gmail-password")
+EMAIL_CONFIGURED = all([SMTP_SERVER, SMTP_USER, SMTP_PASS])
 EMAIL_FROM = os.environ.get("EMAIL_FROM") or SMTP_USER
 
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY") or ""
-EMAIL_CONFIGURED = all([SMTP_SERVER, SMTP_USER, SMTP_PASS]) or SENDGRID_API_KEY
-
-# If set, Onyx will listen to the `expires_at` returned by the identity
+# If set, Seclore will listen to the `expires_at` returned by the identity
 # provider (e.g. Okta, Google, etc.) and force the user to re-authenticate
 # after this time has elapsed. Disabled since by default many auth providers
 # have very short expiry times (e.g. 1 hour) which provide a poor user experience
@@ -176,9 +147,10 @@ VESPA_CLOUD_CERT_PATH = os.environ.get("VESPA_CLOUD_CERT_PATH")
 VESPA_CLOUD_KEY_PATH = os.environ.get("VESPA_CLOUD_KEY_PATH")
 
 # Number of documents in a batch during indexing (further batching done by chunks before passing to bi-encoder)
-INDEX_BATCH_SIZE = int(os.environ.get("INDEX_BATCH_SIZE") or 16)
-
-MAX_DRIVE_WORKERS = int(os.environ.get("MAX_DRIVE_WORKERS", 4))
+try:
+    INDEX_BATCH_SIZE = int(os.environ.get("INDEX_BATCH_SIZE", 16))
+except ValueError:
+    INDEX_BATCH_SIZE = 16
 
 # Below are intended to match the env variables names used by the official postgres docker image
 # https://hub.docker.com/_/postgres
@@ -187,7 +159,7 @@ POSTGRES_USER = os.environ.get("POSTGRES_USER") or "postgres"
 POSTGRES_PASSWORD = urllib.parse.quote_plus(
     os.environ.get("POSTGRES_PASSWORD") or "password"
 )
-POSTGRES_HOST = os.environ.get("POSTGRES_HOST") or "127.0.0.1"
+POSTGRES_HOST = os.environ.get("POSTGRES_HOST") or "localhost"
 POSTGRES_PORT = os.environ.get("POSTGRES_PORT") or "5432"
 POSTGRES_DB = os.environ.get("POSTGRES_DB") or "postgres"
 AWS_REGION_NAME = os.environ.get("AWS_REGION_NAME") or "us-east-2"
@@ -198,18 +170,6 @@ POSTGRES_API_SERVER_POOL_SIZE = int(
 POSTGRES_API_SERVER_POOL_OVERFLOW = int(
     os.environ.get("POSTGRES_API_SERVER_POOL_OVERFLOW") or 10
 )
-
-POSTGRES_API_SERVER_READ_ONLY_POOL_SIZE = int(
-    os.environ.get("POSTGRES_API_SERVER_READ_ONLY_POOL_SIZE") or 10
-)
-POSTGRES_API_SERVER_READ_ONLY_POOL_OVERFLOW = int(
-    os.environ.get("POSTGRES_API_SERVER_READ_ONLY_POOL_OVERFLOW") or 5
-)
-
-# defaults to False
-# generally should only be used for
-POSTGRES_USE_NULL_POOL = os.environ.get("POSTGRES_USE_NULL_POOL", "").lower() == "true"
-
 # defaults to False
 POSTGRES_POOL_PRE_PING = os.environ.get("POSTGRES_POOL_PRE_PING", "").lower() == "true"
 
@@ -221,6 +181,17 @@ try:
     )
 except ValueError:
     POSTGRES_POOL_RECYCLE = POSTGRES_POOL_RECYCLE_DEFAULT
+
+# Experimental setting to control idle transactions
+POSTGRES_IDLE_SESSIONS_TIMEOUT_DEFAULT = 0  # milliseconds
+try:
+    POSTGRES_IDLE_SESSIONS_TIMEOUT = int(
+        os.environ.get(
+            "POSTGRES_IDLE_SESSIONS_TIMEOUT", POSTGRES_IDLE_SESSIONS_TIMEOUT_DEFAULT
+        )
+    )
+except ValueError:
+    POSTGRES_IDLE_SESSIONS_TIMEOUT = POSTGRES_IDLE_SESSIONS_TIMEOUT_DEFAULT
 
 USE_IAM_AUTH = os.getenv("USE_IAM_AUTH", "False").lower() == "true"
 
@@ -320,11 +291,6 @@ try:
 except ValueError:
     CELERY_WORKER_INDEXING_CONCURRENCY = CELERY_WORKER_INDEXING_CONCURRENCY_DEFAULT
 
-
-CELERY_WORKER_KG_PROCESSING_CONCURRENCY = int(
-    os.environ.get("CELERY_WORKER_KG_PROCESSING_CONCURRENCY") or 4
-)
-
 # The maximum number of tasks that can be queued up to sync to Vespa in a single pass
 VESPA_SYNC_MAX_TASKS = 1024
 
@@ -364,15 +330,10 @@ HTML_BASED_CONNECTOR_TRANSFORM_LINKS_STRATEGY = os.environ.get(
     HtmlBasedConnectorTransformLinksStrategy.STRIP,
 )
 
-NOTION_CONNECTOR_DISABLE_RECURSIVE_PAGE_LOOKUP = (
-    os.environ.get("NOTION_CONNECTOR_DISABLE_RECURSIVE_PAGE_LOOKUP", "").lower()
+NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP = (
+    os.environ.get("NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP", "").lower()
     == "true"
 )
-
-
-#####
-# Confluence Connector Configs
-#####
 
 CONFLUENCE_CONNECTOR_LABELS_TO_SKIP = [
     ignored_tag
@@ -397,26 +358,6 @@ CONFLUENCE_CONNECTOR_ATTACHMENT_CHAR_COUNT_THRESHOLD = int(
     os.environ.get("CONFLUENCE_CONNECTOR_ATTACHMENT_CHAR_COUNT_THRESHOLD", 200_000)
 )
 
-# A JSON-formatted array. Each item in the array should have the following structure:
-# {
-#     "user_id": "1234567890",
-#     "username": "bob",
-#     "display_name": "Bob Fitzgerald",
-#     "email": "bob@example.com",
-#     "type": "known"
-# }
-_RAW_CONFLUENCE_CONNECTOR_USER_PROFILES_OVERRIDE = os.environ.get(
-    "CONFLUENCE_CONNECTOR_USER_PROFILES_OVERRIDE", ""
-)
-CONFLUENCE_CONNECTOR_USER_PROFILES_OVERRIDE = cast(
-    list[dict[str, str]] | None,
-    (
-        json.loads(_RAW_CONFLUENCE_CONNECTOR_USER_PROFILES_OVERRIDE)
-        if _RAW_CONFLUENCE_CONNECTOR_USER_PROFILES_OVERRIDE
-        else None
-    ),
-)
-
 # Due to breakages in the confluence API, the timezone offset must be specified client side
 # to match the user's specified timezone.
 
@@ -428,27 +369,10 @@ CONFLUENCE_CONNECTOR_USER_PROFILES_OVERRIDE = cast(
 # https://community.developer.atlassian.com/t/confluence-cloud-time-zone-get-via-rest-api/35954/16
 # https://jira.atlassian.com/browse/CONFCLOUD-69670
 
-
-def get_current_tz_offset() -> int:
-    # datetime now() gets local time, datetime.now(timezone.utc) gets UTC time.
-    # remove tzinfo to compare non-timezone-aware objects.
-    time_diff = datetime.now() - datetime.now(timezone.utc).replace(tzinfo=None)
-    return round(time_diff.total_seconds() / 3600)
-
-
 # enter as a floating point offset from UTC in hours (-24 < val < 24)
 # this will be applied globally, so it probably makes sense to transition this to per
 # connector as some point.
-# For the default value, we assume that the user's local timezone is more likely to be
-# correct (i.e. the configured user's timezone or the default server one) than UTC.
-# https://developer.atlassian.com/cloud/confluence/cql-fields/#created
-CONFLUENCE_TIMEZONE_OFFSET = float(
-    os.environ.get("CONFLUENCE_TIMEZONE_OFFSET", get_current_tz_offset())
-)
-
-GOOGLE_DRIVE_CONNECTOR_SIZE_THRESHOLD = int(
-    os.environ.get("GOOGLE_DRIVE_CONNECTOR_SIZE_THRESHOLD", 10 * 1024 * 1024)
-)
+CONFLUENCE_TIMEZONE_OFFSET = float(os.environ.get("CONFLUENCE_TIMEZONE_OFFSET", 0.0))
 
 JIRA_CONNECTOR_LABELS_TO_SKIP = [
     ignored_tag
@@ -479,19 +403,11 @@ EGNYTE_CLIENT_SECRET = os.getenv("EGNYTE_CLIENT_SECRET")
 LINEAR_CLIENT_ID = os.getenv("LINEAR_CLIENT_ID")
 LINEAR_CLIENT_SECRET = os.getenv("LINEAR_CLIENT_SECRET")
 
-# Slack specific configs
-SLACK_NUM_THREADS = int(os.getenv("SLACK_NUM_THREADS") or 8)
-
 DASK_JOB_CLIENT_ENABLED = (
     os.environ.get("DASK_JOB_CLIENT_ENABLED", "").lower() == "true"
 )
 EXPERIMENTAL_CHECKPOINTING_ENABLED = (
     os.environ.get("EXPERIMENTAL_CHECKPOINTING_ENABLED", "").lower() == "true"
-)
-
-LEAVE_CONNECTOR_ACTIVE_ON_INITIALIZATION_FAILURE = (
-    os.environ.get("LEAVE_CONNECTOR_ACTIVE_ON_INITIALIZATION_FAILURE", "").lower()
-    == "true"
 )
 
 PRUNING_DISABLED = -1
@@ -526,15 +442,18 @@ CONTINUE_ON_CONNECTOR_FAILURE = os.environ.get(
 DISABLE_INDEX_UPDATE_ON_SWAP = (
     os.environ.get("DISABLE_INDEX_UPDATE_ON_SWAP", "").lower() == "true"
 )
+# Controls how many worker processes we spin up to index documents in the
+# background. This is useful for speeding up indexing, but does require a
+# fairly large amount of memory in order to increase substantially, since
+# each worker loads the embedding models into memory.
+NUM_INDEXING_WORKERS = int(os.environ.get("NUM_INDEXING_WORKERS") or 1)
+NUM_SECONDARY_INDEXING_WORKERS = int(
+    os.environ.get("NUM_SECONDARY_INDEXING_WORKERS") or NUM_INDEXING_WORKERS
+)
 # More accurate results at the expense of indexing speed and index size (stores additional 4 MINI_CHUNK vectors)
 ENABLE_MULTIPASS_INDEXING = (
     os.environ.get("ENABLE_MULTIPASS_INDEXING", "").lower() == "true"
 )
-# Enable contextual retrieval
-ENABLE_CONTEXTUAL_RAG = os.environ.get("ENABLE_CONTEXTUAL_RAG", "").lower() == "true"
-
-DEFAULT_CONTEXTUAL_RAG_LLM_NAME = "gpt-4o-mini"
-DEFAULT_CONTEXTUAL_RAG_LLM_PROVIDER = "DevEnvPresetOpenAI"
 # Finer grained chunking for more detail retention
 # Slightly larger since the sentence aware split is a max cutoff so most minichunks will be under MINI_CHUNK_SIZE
 # tokens. But we need it to be at least as big as 1/4th chunk size to avoid having a tiny mini-chunk at the end
@@ -560,12 +479,6 @@ INDEXING_SIZE_WARNING_THRESHOLD = int(
 # 0 disables this behavior and is the default.
 INDEXING_TRACER_INTERVAL = int(os.environ.get("INDEXING_TRACER_INTERVAL") or 0)
 
-# Enable multi-threaded embedding model calls for parallel processing
-# Note: only applies for API-based embedding models
-INDEXING_EMBEDDING_MODEL_NUM_THREADS = int(
-    os.environ.get("INDEXING_EMBEDDING_MODEL_NUM_THREADS") or 8
-)
-
 # During an indexing attempt, specifies the number of batches which are allowed to
 # exception without aborting the attempt.
 INDEXING_EXCEPTION_LIMIT = int(os.environ.get("INDEXING_EXCEPTION_LIMIT") or 0)
@@ -575,17 +488,6 @@ MAX_DOCUMENT_CHARS = int(os.environ.get("MAX_DOCUMENT_CHARS") or 5_000_000)
 MAX_FILE_SIZE_BYTES = int(
     os.environ.get("MAX_FILE_SIZE_BYTES") or 2 * 1024 * 1024 * 1024
 )  # 2GB in bytes
-
-# Use document summary for contextual rag
-USE_DOCUMENT_SUMMARY = os.environ.get("USE_DOCUMENT_SUMMARY", "true").lower() == "true"
-# Use chunk summary for contextual rag
-USE_CHUNK_SUMMARY = os.environ.get("USE_CHUNK_SUMMARY", "true").lower() == "true"
-# Average summary embeddings for contextual rag (not yet implemented)
-AVERAGE_SUMMARY_EMBEDDINGS = (
-    os.environ.get("AVERAGE_SUMMARY_EMBEDDINGS", "false").lower() == "true"
-)
-
-MAX_TOKENS_FOR_FULL_INCLUSION = 4096
 
 #####
 # Miscellaneous
@@ -600,7 +502,7 @@ CURRENT_PROCESS_IS_AN_INDEXING_JOB = (
 LOG_ALL_MODEL_INTERACTIONS = (
     os.environ.get("LOG_ALL_MODEL_INTERACTIONS", "").lower() == "true"
 )
-# Logs Onyx only model interactions like prompts, responses, messages etc.
+# Logs Seclore only model interactions like prompts, responses, messages etc.
 LOG_DANSWER_MODEL_INTERACTIONS = (
     os.environ.get("LOG_DANSWER_MODEL_INTERACTIONS", "").lower() == "true"
 )
@@ -654,12 +556,17 @@ except json.JSONDecodeError:
 # LLM Model Update API endpoint
 LLM_MODEL_UPDATE_API_URL = os.environ.get("LLM_MODEL_UPDATE_API_URL")
 
+# LLM API Rate Limiting Configuration
+# Maximum number of concurrent LLM API calls to prevent rate limiting
+# Particularly important for AWS Bedrock and other rate-limited providers
+LLM_API_CONCURRENCY_LIMIT = int(os.environ.get("LLM_API_CONCURRENCY_LIMIT", "3"))
+
 #####
 # Enterprise Edition Configs
 #####
 # NOTE: this should only be enabled if you have purchased an enterprise license.
 # if you're interested in an enterprise license, please reach out to us at
-# founders@onyx.app OR message Chris Weaver or Yuhong Sun in the Onyx
+# founders@onyx.app OR message Chris Weaver or Yuhong Sun in the Seclore
 # Slack community (https://join.slack.com/t/danswer/shared_invite/zt-1w76msxmd-HJHLe3KNFIAIzk_0dSOKaQ)
 ENTERPRISE_EDITION_ENABLED = (
     os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() == "true"
@@ -671,8 +578,6 @@ AZURE_DALLE_API_KEY = os.environ.get("AZURE_DALLE_API_KEY")
 AZURE_DALLE_API_BASE = os.environ.get("AZURE_DALLE_API_BASE")
 AZURE_DALLE_DEPLOYMENT_NAME = os.environ.get("AZURE_DALLE_DEPLOYMENT_NAME")
 
-# configurable image model
-IMAGE_MODEL_NAME = os.environ.get("IMAGE_MODEL_NAME", "gpt-image-1")
 
 # Use managed Vespa (Vespa Cloud). If set, must also set VESPA_CLOUD_URL, VESPA_CLOUD_CERT_PATH and VESPA_CLOUD_KEY_PATH
 MANAGED_VESPA = os.environ.get("MANAGED_VESPA", "").lower() == "true"
@@ -690,21 +595,6 @@ EXPECTED_API_KEY = os.environ.get(
 # API configuration
 CONTROL_PLANE_API_BASE_URL = os.environ.get(
     "CONTROL_PLANE_API_BASE_URL", "http://localhost:8082"
-)
-
-OAUTH_SLACK_CLIENT_ID = os.environ.get("OAUTH_SLACK_CLIENT_ID", "")
-OAUTH_SLACK_CLIENT_SECRET = os.environ.get("OAUTH_SLACK_CLIENT_SECRET", "")
-OAUTH_CONFLUENCE_CLOUD_CLIENT_ID = os.environ.get(
-    "OAUTH_CONFLUENCE_CLOUD_CLIENT_ID", ""
-)
-OAUTH_CONFLUENCE_CLOUD_CLIENT_SECRET = os.environ.get(
-    "OAUTH_CONFLUENCE_CLOUD_CLIENT_SECRET", ""
-)
-OAUTH_JIRA_CLOUD_CLIENT_ID = os.environ.get("OAUTH_JIRA_CLOUD_CLIENT_ID", "")
-OAUTH_JIRA_CLOUD_CLIENT_SECRET = os.environ.get("OAUTH_JIRA_CLOUD_CLIENT_SECRET", "")
-OAUTH_GOOGLE_DRIVE_CLIENT_ID = os.environ.get("OAUTH_GOOGLE_DRIVE_CLIENT_ID", "")
-OAUTH_GOOGLE_DRIVE_CLIENT_SECRET = os.environ.get(
-    "OAUTH_GOOGLE_DRIVE_CLIENT_SECRET", ""
 )
 
 # JWT configuration
@@ -726,64 +616,9 @@ POD_NAMESPACE = os.environ.get("POD_NAMESPACE")
 
 DEV_MODE = os.environ.get("DEV_MODE", "").lower() == "true"
 
-INTEGRATION_TESTS_MODE = os.environ.get("INTEGRATION_TESTS_MODE", "").lower() == "true"
-
-MOCK_CONNECTOR_FILE_PATH = os.environ.get("MOCK_CONNECTOR_FILE_PATH")
-
 TEST_ENV = os.environ.get("TEST_ENV", "").lower() == "true"
 
-# Set to true to mock LLM responses for testing purposes
-MOCK_LLM_RESPONSE = (
-    os.environ.get("MOCK_LLM_RESPONSE") if os.environ.get("MOCK_LLM_RESPONSE") else None
+# Image search enhancement settings
+INCLUDE_SOURCE_PAGES_FOR_IMAGE_SEARCH = (
+    os.environ.get("INCLUDE_SOURCE_PAGES_FOR_IMAGE_SEARCH", "true").lower() == "true"
 )
-
-
-DEFAULT_IMAGE_ANALYSIS_MAX_SIZE_MB = 20
-
-# Number of pre-provisioned tenants to maintain
-TARGET_AVAILABLE_TENANTS = int(os.environ.get("TARGET_AVAILABLE_TENANTS", "5"))
-
-
-# Image summarization configuration
-IMAGE_SUMMARIZATION_SYSTEM_PROMPT = os.environ.get(
-    "IMAGE_SUMMARIZATION_SYSTEM_PROMPT",
-    DEFAULT_IMAGE_SUMMARIZATION_SYSTEM_PROMPT,
-)
-
-# The user prompt for image summarization - the image filename will be automatically prepended
-IMAGE_SUMMARIZATION_USER_PROMPT = os.environ.get(
-    "IMAGE_SUMMARIZATION_USER_PROMPT",
-    DEFAULT_IMAGE_SUMMARIZATION_USER_PROMPT,
-)
-
-IMAGE_ANALYSIS_SYSTEM_PROMPT = os.environ.get(
-    "IMAGE_ANALYSIS_SYSTEM_PROMPT",
-    DEFAULT_IMAGE_ANALYSIS_SYSTEM_PROMPT,
-)
-
-DISABLE_AUTO_AUTH_REFRESH = (
-    os.environ.get("DISABLE_AUTO_AUTH_REFRESH", "").lower() == "true"
-)
-
-# Knowledge Graph Read Only User Configuration
-DB_READONLY_USER: str = os.environ.get("DB_READONLY_USER", "db_readonly_user")
-DB_READONLY_PASSWORD: str = urllib.parse.quote_plus(
-    os.environ.get("DB_READONLY_PASSWORD") or "password"
-)
-
-# File Store Configuration
-S3_FILE_STORE_BUCKET_NAME = (
-    os.environ.get("S3_FILE_STORE_BUCKET_NAME") or "onyx-file-store-bucket"
-)
-S3_FILE_STORE_PREFIX = os.environ.get("S3_FILE_STORE_PREFIX") or "onyx-files"
-# S3_ENDPOINT_URL is for MinIO and other S3-compatible storage. Leave blank for AWS S3.
-S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL")
-S3_VERIFY_SSL = os.environ.get("S3_VERIFY_SSL", "").lower() == "true"
-
-# S3/MinIO Access Keys
-S3_AWS_ACCESS_KEY_ID = os.environ.get("S3_AWS_ACCESS_KEY_ID")
-S3_AWS_SECRET_ACCESS_KEY = os.environ.get("S3_AWS_SECRET_ACCESS_KEY")
-
-# Forcing Vespa Language
-# English: en, German:de, etc. See: https://docs.vespa.ai/en/linguistics.html
-VESPA_LANGUAGE_OVERRIDE = os.environ.get("VESPA_LANGUAGE_OVERRIDE")

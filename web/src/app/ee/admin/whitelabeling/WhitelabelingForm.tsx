@@ -11,7 +11,7 @@ import {
   Label,
   SubLabel,
   TextFormField,
-} from "@/components/Field";
+} from "@/components/admin/connectors/Field";
 import { Button } from "@/components/ui/button";
 import Text from "@/components/ui/text";
 import { ImageUpload } from "./ImageUpload";
@@ -55,7 +55,7 @@ export function WhitelabelingForm() {
     <div>
       <Formik
         initialValues={{
-          auto_scroll: settings?.settings?.auto_scroll || false,
+          auto_scroll: enterpriseSettings?.auto_scroll || false,
           application_name: enterpriseSettings?.application_name || null,
           use_custom_logo: enterpriseSettings?.use_custom_logo || false,
           use_custom_logotype: enterpriseSettings?.use_custom_logotype || false,
@@ -140,56 +140,55 @@ export function WhitelabelingForm() {
             <TextFormField
               label="Application Name"
               name="application_name"
-              subtext={`The custom name you are giving Onyx for your team. This will replace 'Onyx' everywhere in the UI.`}
-              placeholder="Custom name which will replace 'Onyx'"
+              subtext={`The custom name you are giving Seclore for your organization. This will replace 'Seclore' everywhere in the UI.`}
+              placeholder="Custom name which will replace 'Seclore'"
               disabled={isSubmitting}
             />
-            <div>
-              <Label className="mt-4">Custom Logo</Label>
 
-              {values.use_custom_logo ? (
-                <div className="mt-3">
-                  <SubLabel>Current Custom Logo: </SubLabel>
-                  <img
-                    src={"/api/enterprise-settings/logo?u=" + Date.now()}
-                    alt="logo"
-                    style={{ objectFit: "contain" }}
-                    className="w-32 h-32 mb-10 mt-4"
-                  />
+            <Label className="mt-4">Custom Logo</Label>
 
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    type="button"
-                    className="mb-8"
-                    onClick={async () => {
-                      const valuesWithoutLogo = {
-                        ...values,
-                        use_custom_logo: false,
-                      };
-                      await updateEnterpriseSettings(valuesWithoutLogo);
-                      setValues(valuesWithoutLogo);
-                    }}
-                  >
-                    Delete
-                  </Button>
+            {values.use_custom_logo ? (
+              <div className="mt-3">
+                <SubLabel>Current Custom Logo: </SubLabel>
+                <img
+                  src={"/api/enterprise-settings/logo?u=" + Date.now()}
+                  alt="logo"
+                  style={{ objectFit: "contain" }}
+                  className="w-32 h-32 mb-10 mt-4"
+                />
 
-                  <SubLabel>
-                    Override the current custom logo by uploading a new image
-                    below and clicking the Update button.
-                  </SubLabel>
-                </div>
-              ) : (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  type="button"
+                  className="mb-8"
+                  onClick={async () => {
+                    const valuesWithoutLogo = {
+                      ...values,
+                      use_custom_logo: false,
+                    };
+                    await updateEnterpriseSettings(valuesWithoutLogo);
+                    setValues(valuesWithoutLogo);
+                  }}
+                >
+                  Delete
+                </Button>
+
                 <SubLabel>
-                  Specify your own logo to replace the standard Onyx logo.
+                  Override the current custom logo by uploading a new image
+                  below and clicking the Update button.
                 </SubLabel>
-              )}
+              </div>
+            ) : (
+              <SubLabel>
+                Specify your own logo to replace the standard Seclore logo.
+              </SubLabel>
+            )}
 
-              <ImageUpload
-                selectedFile={selectedLogo}
-                setSelectedFile={setSelectedLogo}
-              />
-            </div>
+            <ImageUpload
+              selectedFile={selectedLogo}
+              setSelectedFile={setSelectedLogo}
+            />
 
             <Separator />
 
@@ -208,7 +207,7 @@ export function WhitelabelingForm() {
                   >
                     the docs
                   </Link>{" "}
-                  to see whitelabeling examples in action.
+                  to see whitelabelling examples in action.
                 </Text>
 
                 <TextFormField
@@ -238,7 +237,7 @@ export function WhitelabelingForm() {
                     values.enable_consent_screen
                       ? `The title for the consent screen that will be displayed for each user on their initial visit to the application. If left blank, title will default to "Terms of Use".`
                       : `The title for the popup that will be displayed for each user on their initial visit to the application. If left blank AND Custom Popup Content is specified, will use "Welcome to ${
-                          values.application_name || "Onyx"
+                          values.application_name || "Seclore"
                         }!".`
                   }
                   placeholder={

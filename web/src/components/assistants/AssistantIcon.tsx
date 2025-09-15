@@ -1,9 +1,11 @@
 import React from "react";
 import crypto from "crypto";
 import { Persona } from "@/app/admin/assistants/interfaces";
+import { CustomTooltip } from "../tooltip/CustomTooltip";
 import { buildImgUrl } from "@/app/chat/files/images/utils";
 import {
   ArtAsistantIcon,
+  OnyxIcon,
   GeneralAssistantIcon,
   SearchAssistantIcon,
 } from "../icons/icons";
@@ -51,7 +53,7 @@ export function generateIdenticon(str: string, dimension: number) {
             y={yPos - 0.5}
             width={cellSize + 1}
             height={cellSize + 1}
-            fill="currentColor"
+            fill="black"
           />
         );
 
@@ -65,7 +67,7 @@ export function generateIdenticon(str: string, dimension: number) {
               y={yPos - 0.5}
               width={cellSize + 1}
               height={cellSize + 1}
-              fill="currentColor"
+              fill="black"
             />
           );
         }
@@ -118,16 +120,14 @@ export function AssistantIcon({
           }
         })();
 
-  const wrapperClass = border
-    ? "ring text-[#000] dark:text-[#fff] ring-[1px] ring-border-strong"
-    : "";
+  const wrapperClass = border ? "ring ring-[1px] ring-border-strong" : "";
   const style = { width: dimension, height: dimension };
 
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className={className + " text-[#000] dark:text-[#fff]"}>
+          <div className={className}>
             {assistant.id == -3 ? (
               <ArtAsistantIcon size={dimension} />
             ) : assistant.id == 0 ? (

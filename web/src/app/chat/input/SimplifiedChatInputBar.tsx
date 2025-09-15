@@ -7,7 +7,7 @@ import {
   InputBarPreview,
   InputBarPreviewImageProvider,
 } from "../files/InputBarPreview";
-import { SendIcon } from "@/components/icons/icons";
+import { OpenAIIcon, SendIcon } from "@/components/icons/icons";
 import { HorizontalSourceSelector } from "@/components/search/filtering/HorizontalSourceSelector";
 import { Tag } from "@/lib/types";
 
@@ -56,9 +56,8 @@ export function SimplifiedChatInputBar({
     if (items) {
       const pastedFiles = [];
       for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item && item.kind === "file") {
-          const file = item.getAsFile();
+        if (items[i].kind === "file") {
+          const file = items[i].getAsFile();
           if (file) pastedFiles.push(file);
         }
       }
@@ -91,7 +90,7 @@ export function SimplifiedChatInputBar({
               flex
               flex-col
               border
-              border-background-200
+              border-[#E5E7EB]
               rounded-lg
               relative
               text-text-chatbar
@@ -233,12 +232,10 @@ export function SimplifiedChatInputBar({
           }}
         >
           <SendIcon
-            size={22}
-            className={`text-neutral-50 dark:text-neutral-900 p-1 my-auto rounded-full ${
-              message
-                ? "bg-neutral-900 dark:bg-neutral-50"
-                : "bg-neutral-500 dark:bg-neutral-400"
-            }`}
+            size={28}
+            className={`text-emphasis text-white p-1 rounded-full  ${
+              message ? "bg-submit-background" : "bg-disabled-submit-background"
+            } `}
           />
         </button>
       </div>

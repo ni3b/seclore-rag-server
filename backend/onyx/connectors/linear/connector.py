@@ -21,8 +21,7 @@ from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.utils.logger import setup_logger
 from onyx.utils.retry_wrapper import request_with_retries
 
@@ -92,7 +91,6 @@ class LinearConnector(LoadConnector, PollConnector, OAuthConnector):
             f"&response_type=code"
             f"&scope=read"
             f"&state={state}"
-            f"&prompt=consent"  # prompts user for access; allows choosing workspace
         )
 
     @classmethod
@@ -193,24 +191,12 @@ class LinearConnector(LoadConnector, PollConnector, OAuthConnector):
                             team {
                                 name
                             }
-                            creator {
-                                name
-                                email
-                            }
-                            assignee {
-                                name
-                                email
-                            }
                             previousIdentifiers
                             subIssueSortOrder
                             priorityLabel
                             identifier
                             url
                             branchName
-                            state {
-                                id
-                                name
-                            }
                             customerTicketCount
                             description
                             comments {
@@ -250,53 +236,32 @@ class LinearConnector(LoadConnector, PollConnector, OAuthConnector):
             documents: list[Document] = []
             for edge in edges:
                 node = edge["node"]
-                # Create sections for description and comments
-                sections = [
-                    TextSection(
-                        link=node["url"],
-                        text=node["description"] or "",
-                    )
-                ]
-
-                # Add comment sections
-                for comment in node["comments"]["nodes"]:
-                    sections.append(
-                        TextSection(
-                            link=node["url"],
-                            text=comment["body"] or "",
-                        )
-                    )
-
-                # Cast the sections list to the expected type
-                typed_sections = cast(list[TextSection | ImageSection], sections)
-
                 documents.append(
                     Document(
                         id=node["id"],
-                        sections=typed_sections,
+                        sections=[
+                            Section(
+                                link=node["url"],
+                                text=node["description"] or "",
+                            )
+                        ]
+                        + [
+                            Section(
+                                link=node["url"],
+                                text=comment["body"] or "",
+                            )
+                            for comment in node["comments"]["nodes"]
+                        ],
                         source=DocumentSource.LINEAR,
                         semantic_identifier=f"[{node['identifier']}] {node['title']}",
                         title=node["title"],
                         doc_updated_at=time_str_to_utc(node["updatedAt"]),
                         metadata={
-                            k: str(v)
-                            for k, v in {
-                                "team": (node.get("team") or {}).get("name"),
-                                "creator": node.get("creator"),
-                                "assignee": node.get("assignee"),
-                                "state": (node.get("state") or {}).get("name"),
-                                "priority": node.get("priority"),
-                                "estimate": node.get("estimate"),
-                                "started_at": node.get("startedAt"),
-                                "completed_at": node.get("completedAt"),
-                                "created_at": node.get("createdAt"),
-                                "due_date": node.get("dueDate"),
-                            }.items()
-                            if v is not None
+                            "team": node["team"]["name"],
                         },
                     )
                 )
-            yield documents
+                yield documents
 
             endCursor = response_json["data"]["issues"]["pageInfo"]["endCursor"]
             has_more = response_json["data"]["issues"]["pageInfo"]["hasNextPage"]

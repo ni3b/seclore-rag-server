@@ -13,7 +13,6 @@ from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA
 from shared_configs.configs import SLACK_CHANNEL_ID
 from shared_configs.configs import TENANT_ID_PREFIX
 from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
-from shared_configs.contextvars import ONYX_REQUEST_ID_CONTEXTVAR
 
 
 logging.addLevelName(logging.INFO + 5, "NOTICE")
@@ -22,16 +21,9 @@ pruning_ctx: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "pruning_ctx", default=dict()
 )
 
-doc_permission_sync_ctx: contextvars.ContextVar[dict[str, Any]] = (
-    contextvars.ContextVar("doc_permission_sync_ctx", default=dict())
-)
-
-
-class LoggerContextVars:
-    @staticmethod
-    def reset() -> None:
-        pruning_ctx.set(dict())
-        doc_permission_sync_ctx.set(dict())
+doc_permission_sync_ctx: contextvars.ContextVar[
+    dict[str, Any]
+] = contextvars.ContextVar("doc_permission_sync_ctx", default=dict())
 
 
 class TaskAttemptSingleton:
@@ -69,15 +61,7 @@ def get_log_level_from_str(log_level_str: str = LOG_LEVEL) -> int:
         "NOTSET": logging.NOTSET,
     }
 
-    return log_level_dict.get(log_level_str.upper(), logging.INFO)
-
-
-class OnyxRequestIDFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        from shared_configs.contextvars import ONYX_REQUEST_ID_CONTEXTVAR
-
-        record.request_id = ONYX_REQUEST_ID_CONTEXTVAR.get() or "-"
-        return True
+    return log_level_dict.get(log_level_str.upper(), logging.getLevelName("NOTICE"))
 
 
 class OnyxLoggingAdapter(logging.LoggerAdapter):
@@ -86,49 +70,38 @@ class OnyxLoggingAdapter(logging.LoggerAdapter):
     ) -> tuple[str, MutableMapping[str, Any]]:
         # If this is an indexing job, add the attempt ID to the log message
         # This helps filter the logs for this specific indexing
-        while True:
-            pruning_ctx_dict = pruning_ctx.get()
-            if len(pruning_ctx_dict) > 0:
-                if "request_id" in pruning_ctx_dict:
-                    msg = f"[Prune: {pruning_ctx_dict['request_id']}] {msg}"
+        index_attempt_id = TaskAttemptSingleton.get_index_attempt_id()
+        cc_pair_id = TaskAttemptSingleton.get_connector_credential_pair_id()
 
-                if "cc_pair_id" in pruning_ctx_dict:
-                    msg = f"[CC Pair: {pruning_ctx_dict['cc_pair_id']}] {msg}"
-                break
+        doc_permission_sync_ctx_dict = doc_permission_sync_ctx.get()
+        pruning_ctx_dict = pruning_ctx.get()
+        if len(pruning_ctx_dict) > 0:
+            if "request_id" in pruning_ctx_dict:
+                msg = f"[Prune: {pruning_ctx_dict['request_id']}] {msg}"
 
-            doc_permission_sync_ctx_dict = doc_permission_sync_ctx.get()
-            if len(doc_permission_sync_ctx_dict) > 0:
-                if "request_id" in doc_permission_sync_ctx_dict:
-                    msg = f"[Doc Permissions Sync: {doc_permission_sync_ctx_dict['request_id']}] {msg}"
-                break
-
-            index_attempt_id = TaskAttemptSingleton.get_index_attempt_id()
-            cc_pair_id = TaskAttemptSingleton.get_connector_credential_pair_id()
-
+            if "cc_pair_id" in pruning_ctx_dict:
+                msg = f"[CC Pair: {pruning_ctx_dict['cc_pair_id']}] {msg}"
+        elif len(doc_permission_sync_ctx_dict) > 0:
+            if "request_id" in doc_permission_sync_ctx_dict:
+                msg = f"[Doc Permissions Sync: {doc_permission_sync_ctx_dict['request_id']}] {msg}"
+        else:
             if index_attempt_id is not None:
                 msg = f"[Index Attempt: {index_attempt_id}] {msg}"
 
             if cc_pair_id is not None:
                 msg = f"[CC Pair: {cc_pair_id}] {msg}"
 
-            break
-
         # Add tenant information if it differs from default
         # This will always be the case for authenticated API requests
         if MULTI_TENANT:
             tenant_id = CURRENT_TENANT_ID_CONTEXTVAR.get()
-            if tenant_id != POSTGRES_DEFAULT_SCHEMA and tenant_id is not None:
+            if tenant_id != POSTGRES_DEFAULT_SCHEMA:
                 # Strip tenant_ prefix and take first 8 chars for cleaner logs
                 tenant_display = tenant_id.removeprefix(TENANT_ID_PREFIX)
                 short_tenant = (
                     tenant_display[:8] if len(tenant_display) > 8 else tenant_display
                 )
                 msg = f"[t:{short_tenant}] {msg}"
-
-        # request id within a fastapi route
-        fastapi_request_id = ONYX_REQUEST_ID_CONTEXTVAR.get()
-        if fastapi_request_id:
-            msg = f"[{fastapi_request_id}] {msg}"
 
         # For Slack Bot, logs the channel relevant to the request
         channel_id = self.extra.get(SLACK_CHANNEL_ID) if self.extra else None
@@ -180,14 +153,6 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
-def get_uvicorn_standard_formatter() -> ColoredFormatter:
-    """Returns a standard colored logging formatter."""
-    return ColoredFormatter(
-        "%(asctime)s %(filename)30s %(lineno)4s: [%(request_id)s] %(message)s",
-        datefmt="%m/%d/%Y %I:%M:%S %p",
-    )
-
-
 def get_standard_formatter() -> ColoredFormatter:
     """Returns a standard colored logging formatter."""
     return ColoredFormatter(
@@ -224,6 +189,12 @@ def setup_logger(
 
     logger.addHandler(handler)
 
+    uvicorn_logger = logging.getLogger("uvicorn.access")
+    if uvicorn_logger:
+        uvicorn_logger.handlers = []
+        uvicorn_logger.addHandler(handler)
+        uvicorn_logger.setLevel(log_level)
+
     is_containerized = is_running_in_container()
     if LOG_FILE_NAME and (is_containerized or DEV_LOGGING_ENABLED):
         log_levels = ["debug", "info", "notice"]
@@ -242,35 +213,12 @@ def setup_logger(
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
 
+            if uvicorn_logger:
+                uvicorn_logger.addHandler(file_handler)
+
     logger.notice = lambda msg, *args, **kwargs: logger.log(logging.getLevelName("NOTICE"), msg, *args, **kwargs)  # type: ignore
 
     return OnyxLoggingAdapter(logger, extra=extra)
-
-
-def setup_uvicorn_logger(
-    log_level: int = get_log_level_from_str(),
-    shared_file_handlers: list[logging.FileHandler] | None = None,
-) -> None:
-    uvicorn_logger = logging.getLogger("uvicorn.access")
-    if not uvicorn_logger:
-        return
-
-    formatter = get_uvicorn_standard_formatter()
-
-    handler = logging.StreamHandler()
-    handler.setLevel(log_level)
-    handler.setFormatter(formatter)
-
-    uvicorn_logger.handlers = []
-    uvicorn_logger.addHandler(handler)
-    uvicorn_logger.setLevel(log_level)
-    uvicorn_logger.addFilter(OnyxRequestIDFilter())
-
-    if shared_file_handlers:
-        for fh in shared_file_handlers:
-            uvicorn_logger.addHandler(fh)
-
-    return
 
 
 def print_loggers() -> None:
@@ -293,8 +241,3 @@ def print_loggers() -> None:
 
         print(f"  Propagate: {logger.propagate}")
         print()
-
-
-def format_error_for_logging(e: Exception) -> str:
-    """Clean error message by removing newlines for better logging."""
-    return str(e).replace("\n", " ")

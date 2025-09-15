@@ -1,6 +1,5 @@
 import contextlib
 import secrets
-import string
 from typing import Any
 
 from fastapi import APIRouter
@@ -10,6 +9,7 @@ from fastapi import Request
 from fastapi import Response
 from fastapi import status
 from fastapi_users import exceptions
+from fastapi_users.password import PasswordHelper
 from onelogin.saml2.auth import OneLogin_Saml2_Auth  # type: ignore
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,9 +27,8 @@ from onyx.auth.users import get_user_manager
 from onyx.configs.app_configs import SESSION_EXPIRE_TIME_SECONDS
 from onyx.db.auth import get_user_count
 from onyx.db.auth import get_user_db
-from onyx.db.engine.async_sql_engine import get_async_session
-from onyx.db.engine.async_sql_engine import get_async_session_context_manager
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_async_session
+from onyx.db.engine import get_session
 from onyx.db.models import User
 from onyx.utils.logger import setup_logger
 
@@ -39,70 +38,33 @@ router = APIRouter(prefix="/auth/saml")
 
 
 async def upsert_saml_user(email: str) -> User:
-    """
-    Creates or updates a user account for SAML authentication.
-
-    For new users or users with non-web-login roles:
-    1. Generates a secure random password that meets validation criteria
-    2. Creates the user with appropriate role and verified status
-
-    SAML users never use this password directly as they authenticate via their
-    Identity Provider, but we need a valid password to satisfy system requirements.
-    """
-    logger.debug(f"Attempting to upsert SAML user with email: {email}")
+    get_async_session_context = contextlib.asynccontextmanager(
+        get_async_session
+    )  # type:ignore
     get_user_db_context = contextlib.asynccontextmanager(get_user_db)
     get_user_manager_context = contextlib.asynccontextmanager(get_user_manager)
 
-    async with get_async_session_context_manager() as session:
+    async with get_async_session_context() as session:
         async with get_user_db_context(session) as user_db:
             async with get_user_manager_context(user_db) as user_manager:
                 try:
-                    user = await user_manager.get_by_email(email)
-                    # If user has a non-authenticated role, treat as non-existent
-                    if not user.role.is_web_login():
-                        raise exceptions.UserNotExists()
-                    return user
+                    return await user_manager.get_by_email(email)
                 except exceptions.UserNotExists:
-                    logger.info("Creating user from SAML login")
+                    logger.notice("Creating user from SAML login")
 
                 user_count = await get_user_count()
                 role = UserRole.ADMIN if user_count == 0 else UserRole.BASIC
 
-                # Generate a secure random password meeting validation requirements
-                # We use a secure random password since we never need to know what it is
-                # (SAML users authenticate via their IdP)
-                secure_random_password = "".join(
-                    [
-                        # Ensure minimum requirements are met
-                        secrets.choice(
-                            string.ascii_uppercase
-                        ),  # at least one uppercase
-                        secrets.choice(
-                            string.ascii_lowercase
-                        ),  # at least one lowercase
-                        secrets.choice(string.digits),  # at least one digit
-                        secrets.choice(
-                            "!@#$%^&*()-_=+[]{}|;:,.<>?"
-                        ),  # at least one special
-                        # Fill remaining length with random chars (mix of all types)
-                        "".join(
-                            secrets.choice(
-                                string.ascii_letters
-                                + string.digits
-                                + "!@#$%^&*()-_=+[]{}|;:,.<>?"
-                            )
-                            for _ in range(12)
-                        ),
-                    ]
-                )
+                fastapi_users_pw_helper = PasswordHelper()
+                password = fastapi_users_pw_helper.generate()
+                hashed_pass = fastapi_users_pw_helper.hash(password)
 
-                # Create the user with SAML-appropriate settings
-                user = await user_manager.create(
+                user: User = await user_manager.create(
                     UserCreate(
                         email=email,
-                        password=secure_random_password,  # Pass raw password, not hash
+                        password=hashed_pass,
+                        is_verified=True,
                         role=role,
-                        is_verified=True,  # SAML users are pre-verified by their IdP
                     )
                 )
 
@@ -194,7 +156,7 @@ async def saml_login_callback(
 
     upsert_saml_account(user_id=user.id, cookie=saved_cookie, db_session=db_session)
 
-    # Redirect to main Onyx search page
+    # Redirect to main Seclore search page
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
 
     response.set_cookie(

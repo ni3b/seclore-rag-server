@@ -1,9 +1,8 @@
-import json
 import mimetypes
 import os
+import uuid
 import zipfile
 from io import BytesIO
-from typing import Any
 from typing import cast
 
 from fastapi import APIRouter
@@ -18,20 +17,16 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
-from onyx.auth.users import current_chat_accessible_user
+from onyx.auth.users import current_chat_accesssible_user
 from onyx.auth.users import current_curator_or_admin_user
 from onyx.auth.users import current_user
-from onyx.background.celery.versioned_apps.client import app as client_app
+from onyx.background.celery.versioned_apps.primary import app as primary_app
 from onyx.configs.app_configs import ENABLED_CONNECTOR_TYPES
-from onyx.configs.app_configs import MOCK_CONNECTOR_FILE_PATH
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import FileOrigin
 from onyx.configs.constants import MilestoneRecordType
-from onyx.configs.constants import ONYX_METADATA_FILENAME
 from onyx.configs.constants import OnyxCeleryPriority
 from onyx.configs.constants import OnyxCeleryTask
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.factory import validate_ccpair_for_user
 from onyx.connectors.google_utils.google_auth import (
     get_google_oauth_creds,
 )
@@ -74,30 +69,26 @@ from onyx.db.connector import mark_ccpair_with_indexing_trigger
 from onyx.db.connector import update_connector
 from onyx.db.connector_credential_pair import add_credential_to_connector
 from onyx.db.connector_credential_pair import get_cc_pair_groups_for_ids
-from onyx.db.connector_credential_pair import get_cc_pair_groups_for_ids_parallel
 from onyx.db.connector_credential_pair import get_connector_credential_pair
 from onyx.db.connector_credential_pair import get_connector_credential_pairs_for_user
-from onyx.db.connector_credential_pair import (
-    get_connector_credential_pairs_for_user_parallel,
-)
 from onyx.db.credentials import cleanup_gmail_credentials
 from onyx.db.credentials import cleanup_google_drive_credentials
 from onyx.db.credentials import create_credential
 from onyx.db.credentials import delete_service_account_credentials
 from onyx.db.credentials import fetch_credential_by_id_for_user
 from onyx.db.deletion_attempt import check_deletion_attempt_is_allowed
-from onyx.db.document import get_document_counts_for_cc_pairs_parallel
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.document import get_document_counts_for_cc_pairs
+from onyx.db.engine import get_current_tenant_id
+from onyx.db.engine import get_session
 from onyx.db.enums import AccessType
 from onyx.db.enums import IndexingMode
 from onyx.db.index_attempt import get_index_attempts_for_cc_pair
+from onyx.db.index_attempt import get_latest_index_attempt_for_cc_pair_id
+from onyx.db.index_attempt import get_latest_index_attempts
 from onyx.db.index_attempt import get_latest_index_attempts_by_status
-from onyx.db.index_attempt import get_latest_index_attempts_parallel
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import IndexAttempt
 from onyx.db.models import IndexingStatus
+from onyx.db.models import SearchSettings
 from onyx.db.models import User
-from onyx.db.models import UserGroup__ConnectorCredentialPair
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.search_settings import get_secondary_search_settings
 from onyx.file_processing.extract_file_text import convert_docx_to_txt
@@ -126,17 +117,13 @@ from onyx.server.documents.models import RunConnectorRequest
 from onyx.server.models import StatusResponse
 from onyx.utils.logger import setup_logger
 from onyx.utils.telemetry import create_milestone_and_report
-from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
 from onyx.utils.variable_functionality import fetch_ee_implementation_or_noop
-from shared_configs.contextvars import get_current_tenant_id
 
 logger = setup_logger()
 
 _GMAIL_CREDENTIAL_ID_COOKIE_NAME = "gmail_credential_id"
 _GOOGLE_DRIVE_CREDENTIAL_ID_COOKIE_NAME = "google_drive_credential_id"
 
-SEEN_ZIP_DETAIL = "Only one zip file is allowed per file connector, \
-use the ingestion APIs for multiple files"
 
 router = APIRouter(prefix="/manage")
 
@@ -393,32 +380,12 @@ def check_drive_tokens(
     return AuthStatus(authenticated=True)
 
 
-def extract_zip_metadata(zf: zipfile.ZipFile) -> dict[str, Any]:
-    zip_metadata = {}
-    try:
-        metadata_file_info = zf.getinfo(ONYX_METADATA_FILENAME)
-        with zf.open(metadata_file_info, "r") as metadata_file:
-            try:
-                zip_metadata = json.load(metadata_file)
-                if isinstance(zip_metadata, list):
-                    # convert list of dicts to dict of dicts
-                    # Use just the basename for matching since metadata may not include
-                    # the full path within the ZIP file
-                    zip_metadata = {d["filename"]: d for d in zip_metadata}
-            except json.JSONDecodeError as e:
-                logger.warning(f"Unable to load {ONYX_METADATA_FILENAME}: {e}")
-                # should fail loudly here to let users know that their metadata
-                # file is not valid JSON
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unable to load {ONYX_METADATA_FILENAME}: {e}",
-                )
-    except KeyError:
-        logger.info(f"No {ONYX_METADATA_FILENAME} file")
-    return zip_metadata
-
-
-def upload_files(files: list[UploadFile], db_session: Session) -> FileUploadResponse:
+@router.post("/admin/connector/file/upload")
+def upload_files(
+    files: list[UploadFile],
+    _: User = Depends(current_curator_or_admin_user),
+    db_session: Session = Depends(get_session),
+) -> FileUploadResponse:
     for file in files:
         if not file.filename:
             raise HTTPException(status_code=400, detail="File name cannot be empty")
@@ -428,18 +395,13 @@ def upload_files(files: list[UploadFile], db_session: Session) -> FileUploadResp
         normalized_path = os.path.normpath(file_path)
         return not any(part.startswith(".") for part in normalized_path.split(os.sep))
 
-    deduped_file_paths = []
-    zip_metadata = {}
     try:
         file_store = get_default_file_store(db_session)
-        seen_zip = False
+        deduped_file_paths = []
+
         for file in files:
             if file.content_type and file.content_type.startswith("application/zip"):
-                if seen_zip:
-                    raise HTTPException(status_code=400, detail=SEEN_ZIP_DETAIL)
-                seen_zip = True
                 with zipfile.ZipFile(file.file, "r") as zf:
-                    zip_metadata = extract_zip_metadata(zf)
                     for file_info in zf.namelist():
                         if zf.getinfo(file_info).is_dir():
                             continue
@@ -448,49 +410,40 @@ def upload_files(files: list[UploadFile], db_session: Session) -> FileUploadResp
                             continue
 
                         sub_file_bytes = zf.read(file_info)
+                        sub_file_name = os.path.join(str(uuid.uuid4()), file_info)
+                        deduped_file_paths.append(sub_file_name)
 
                         mime_type, __ = mimetypes.guess_type(file_info)
                         if mime_type is None:
                             mime_type = "application/octet-stream"
 
-                        file_id = file_store.save_file(
+                        file_store.save_file(
+                            file_name=sub_file_name,
                             content=BytesIO(sub_file_bytes),
                             display_name=os.path.basename(file_info),
                             file_origin=FileOrigin.CONNECTOR,
                             file_type=mime_type,
                         )
-                        deduped_file_paths.append(file_id)
                 continue
 
-            # Special handling for docx files - only store the plaintext version
-            if file.content_type and file.content_type.startswith(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ):
-                docx_file_id = convert_docx_to_txt(file, file_store)
-                deduped_file_paths.append(docx_file_id)
-                continue
-
-            # Default handling for all other file types
-            file_id = file_store.save_file(
+            file_path = os.path.join(str(uuid.uuid4()), cast(str, file.filename))
+            deduped_file_paths.append(file_path)
+            file_store.save_file(
+                file_name=file_path,
                 content=file.file,
                 display_name=file.filename,
                 file_origin=FileOrigin.CONNECTOR,
                 file_type=file.content_type or "text/plain",
             )
-            deduped_file_paths.append(file_id)
+
+            if file.content_type and file.content_type.startswith(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ):
+                convert_docx_to_txt(file, file_store, file_path)
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return FileUploadResponse(file_paths=deduped_file_paths, zip_metadata=zip_metadata)
-
-
-@router.post("/admin/connector/file/upload")
-def upload_files_api(
-    files: list[UploadFile],
-    _: User = Depends(current_curator_or_admin_user),
-    db_session: Session = Depends(get_session),
-) -> FileUploadResponse:
-    return upload_files(files, db_session)
+    return FileUploadResponse(file_paths=deduped_file_paths)
 
 
 @router.get("/admin/connector")
@@ -619,14 +572,9 @@ def get_connector_status(
     user: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> list[ConnectorStatus]:
-    # This method is only used document set and group creation/editing
-    # Therefore, it is okay to get non-editable, but public cc_pairs
     cc_pairs = get_connector_credential_pairs_for_user(
         db_session=db_session,
         user=user,
-        eager_load_connector=True,
-        eager_load_credential=True,
-        get_editable=False,
     )
 
     group_cc_pair_relationships = get_cc_pair_groups_for_ids(
@@ -661,19 +609,9 @@ def get_connector_indexing_status(
     get_editable: bool = Query(
         False, description="If true, return editable document sets"
     ),
+    tenant_id: str | None = Depends(get_current_tenant_id),
 ) -> list[ConnectorIndexingStatus]:
-    tenant_id = get_current_tenant_id()
     indexing_statuses: list[ConnectorIndexingStatus] = []
-
-    if MOCK_CONNECTOR_FILE_PATH:
-        import json
-
-        with open(MOCK_CONNECTOR_FILE_PATH, "r") as f:
-            raw_data = json.load(f)
-            connector_indexing_statuses = [
-                ConnectorIndexingStatus(**status) for status in raw_data
-            ]
-        return connector_indexing_statuses
 
     # NOTE: If the connector is deleting behind the scenes,
     # accessing cc_pairs can be inconsistent and members like
@@ -681,35 +619,23 @@ def get_connector_indexing_status(
     # Additional checks are done to make sure the connector and credential still exist.
     # TODO: make this one query ... possibly eager load or wrap in a read transaction
     # to avoid the complexity of trying to error check throughout the function
-
-    # see https://stackoverflow.com/questions/75758327/
-    # sqlalchemy-method-connection-for-bind-is-already-in-progress
-    # for why we can't pass in the current db_session to these functions
-    (
-        cc_pairs,
-        latest_index_attempts,
-        latest_finished_index_attempts,
-    ) = run_functions_tuples_in_parallel(
-        [
-            (
-                # Gets the connector/credential pairs for the user
-                get_connector_credential_pairs_for_user_parallel,
-                (user, get_editable, None, True, True, True),
-            ),
-            (
-                # Gets the most recent index attempt for each connector/credential pair
-                get_latest_index_attempts_parallel,
-                (secondary_index, True, False),
-            ),
-            (
-                # Gets the most recent FINISHED index attempt for each connector/credential pair
-                get_latest_index_attempts_parallel,
-                (secondary_index, True, True),
-            ),
-        ]
+    cc_pairs = get_connector_credential_pairs_for_user(
+        db_session=db_session,
+        user=user,
+        get_editable=get_editable,
     )
-    cc_pairs = cast(list[ConnectorCredentialPair], cc_pairs)
-    latest_index_attempts = cast(list[IndexAttempt], latest_index_attempts)
+
+    cc_pair_identifiers = [
+        ConnectorCredentialPairIdentifier(
+            connector_id=cc_pair.connector_id, credential_id=cc_pair.credential_id
+        )
+        for cc_pair in cc_pairs
+    ]
+
+    latest_index_attempts = get_latest_index_attempts(
+        secondary_index=secondary_index,
+        db_session=db_session,
+    )
 
     cc_pair_to_latest_index_attempt = {
         (
@@ -719,60 +645,31 @@ def get_connector_indexing_status(
         for index_attempt in latest_index_attempts
     }
 
-    cc_pair_to_latest_finished_index_attempt = {
-        (
-            index_attempt.connector_credential_pair.connector_id,
-            index_attempt.connector_credential_pair.credential_id,
-        ): index_attempt
-        for index_attempt in latest_finished_index_attempts
-    }
-
-    document_count_info, group_cc_pair_relationships = run_functions_tuples_in_parallel(
-        [
-            (
-                get_document_counts_for_cc_pairs_parallel,
-                (
-                    [
-                        ConnectorCredentialPairIdentifier(
-                            connector_id=cc_pair.connector_id,
-                            credential_id=cc_pair.credential_id,
-                        )
-                        for cc_pair in cc_pairs
-                    ],
-                ),
-            ),
-            (
-                get_cc_pair_groups_for_ids_parallel,
-                ([cc_pair.id for cc_pair in cc_pairs],),
-            ),
-        ]
+    document_count_info = get_document_counts_for_cc_pairs(
+        db_session=db_session,
+        cc_pair_identifiers=cc_pair_identifiers,
     )
-    document_count_info = cast(list[tuple[int, int, int]], document_count_info)
-    group_cc_pair_relationships = cast(
-        list[UserGroup__ConnectorCredentialPair], group_cc_pair_relationships
-    )
-
     cc_pair_to_document_cnt = {
         (connector_id, credential_id): cnt
         for connector_id, credential_id, cnt in document_count_info
     }
 
+    group_cc_pair_relationships = get_cc_pair_groups_for_ids(
+        db_session=db_session,
+        cc_pair_ids=[cc_pair.id for cc_pair in cc_pairs],
+    )
     group_cc_pair_relationships_dict: dict[int, list[int]] = {}
     for relationship in group_cc_pair_relationships:
         group_cc_pair_relationships_dict.setdefault(relationship.cc_pair_id, []).append(
             relationship.user_group_id
         )
 
-    connector_to_cc_pair_ids: dict[int, list[int]] = {}
-    for cc_pair in cc_pairs:
-        connector_to_cc_pair_ids.setdefault(cc_pair.connector_id, []).append(cc_pair.id)
+    search_settings: SearchSettings | None = None
+    if not secondary_index:
+        search_settings = get_current_search_settings(db_session)
+    else:
+        search_settings = get_secondary_search_settings(db_session)
 
-    get_search_settings = (
-        get_secondary_search_settings
-        if secondary_index
-        else get_current_search_settings
-    )
-    search_settings = get_search_settings(db_session)
     for cc_pair in cc_pairs:
         # TODO remove this to enable ingestion API
         if cc_pair.name == "DefaultCCPair":
@@ -795,19 +692,12 @@ def get_connector_indexing_status(
             (connector.id, credential.id)
         )
 
-        latest_finished_attempt = cc_pair_to_latest_finished_index_attempt.get(
-            (connector.id, credential.id)
+        latest_finished_attempt = get_latest_index_attempt_for_cc_pair_id(
+            db_session=db_session,
+            connector_credential_pair_id=cc_pair.id,
+            secondary_index=secondary_index,
+            only_finished=True,
         )
-
-        # Safely get the owner email, handling detached instances
-        owner_email = ""
-        try:
-            if credential.user:
-                owner_email = credential.user.email
-        except Exception:
-            # If there's any error accessing the user (like DetachedInstanceError),
-            # we'll just use an empty string for the owner email
-            pass
 
         indexing_statuses.append(
             ConnectorIndexingStatus(
@@ -815,13 +705,10 @@ def get_connector_indexing_status(
                 name=cc_pair.name,
                 in_progress=in_progress,
                 cc_pair_status=cc_pair.status,
-                in_repeated_error_state=cc_pair.in_repeated_error_state,
-                connector=ConnectorSnapshot.from_connector_db_model(
-                    connector, connector_to_cc_pair_ids.get(connector.id, [])
-                ),
+                connector=ConnectorSnapshot.from_connector_db_model(connector),
                 credential=CredentialSnapshot.from_credential_db_model(credential),
                 access_type=cc_pair.access_type,
-                owner=owner_email,
+                owner=credential.user.email if credential.user else "",
                 groups=group_cc_pair_relationships_dict.get(cc_pair.id, []),
                 last_finished_status=(
                     latest_finished_attempt.status if latest_finished_attempt else None
@@ -876,9 +763,8 @@ def create_connector_from_model(
     connector_data: ConnectorUpdateRequest,
     user: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str = Depends(get_current_tenant_id),
 ) -> ObjectCreationIdResponse:
-    tenant_id = get_current_tenant_id()
-
     try:
         _validate_connector_allowed(connector_data.source)
 
@@ -916,9 +802,8 @@ def create_connector_with_mock_credential(
     connector_data: ConnectorUpdateRequest,
     user: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str = Depends(get_current_tenant_id),
 ) -> StatusResponse:
-    tenant_id = get_current_tenant_id()
-
     fetch_ee_implementation_or_noop(
         "onyx.db.user_group", "validate_object_creation_for_user", None
     )(
@@ -946,36 +831,14 @@ def create_connector_with_mock_credential(
             db_session=db_session,
         )
 
-        # Store the created connector and credential IDs
-        connector_id = cast(int, connector_response.id)
-        credential_id = credential.id
-
-        validate_ccpair_for_user(
-            connector_id=connector_id,
-            credential_id=credential_id,
-            access_type=connector_data.access_type,
-            db_session=db_session,
-        )
         response = add_credential_to_connector(
             db_session=db_session,
             user=user,
-            connector_id=connector_id,
-            credential_id=credential_id,
+            connector_id=cast(int, connector_response.id),  # will aways be an int
+            credential_id=credential.id,
             access_type=connector_data.access_type,
             cc_pair_name=connector_data.name,
             groups=connector_data.groups,
-        )
-
-        # trigger indexing immediately
-        client_app.send_task(
-            OnyxCeleryTask.CHECK_FOR_INDEXING,
-            priority=OnyxCeleryPriority.HIGH,
-            kwargs={"tenant_id": tenant_id},
-        )
-
-        logger.info(
-            f"create_connector_with_mock_credential - running check_for_indexing: "
-            f"cc_pair={response.data}"
         )
 
         create_milestone_and_report(
@@ -985,12 +848,9 @@ def create_connector_with_mock_credential(
             properties=None,
             db_session=db_session,
         )
+
         return response
 
-    except ConnectorValidationError as e:
-        raise HTTPException(
-            status_code=400, detail="Connector validation error: " + str(e)
-        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1061,10 +921,10 @@ def connector_run_once(
     run_info: RunConnectorRequest,
     _: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str = Depends(get_current_tenant_id),
 ) -> StatusResponse[int]:
     """Used to trigger indexing on a set of cc_pairs associated with a
     single connector."""
-    tenant_id = get_current_tenant_id()
 
     connector_id = run_info.connector_id
     specified_credential_ids = run_info.credential_ids
@@ -1095,18 +955,55 @@ def connector_run_once(
             status_code=400,
             detail="Connector has no valid credentials, cannot create index attempts.",
         )
-    try:
-        num_triggers = trigger_indexing_for_cc_pair(
-            credential_ids,
-            connector_id,
-            run_info.from_beginning,
-            tenant_id,
-            db_session,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
-    logger.info("connector_run_once - running check_for_indexing")
+    # Prevents index attempts for cc pairs that already have an index attempt currently running
+    skipped_credentials = [
+        credential_id
+        for credential_id in credential_ids
+        if get_index_attempts_for_cc_pair(
+            cc_pair_identifier=ConnectorCredentialPairIdentifier(
+                connector_id=run_info.connector_id,
+                credential_id=credential_id,
+            ),
+            only_current=True,
+            db_session=db_session,
+            disinclude_finished=True,
+        )
+    ]
+
+    connector_credential_pairs = [
+        get_connector_credential_pair(
+            db_session=db_session,
+            connector_id=connector_id,
+            credential_id=credential_id,
+        )
+        for credential_id in credential_ids
+        if credential_id not in skipped_credentials
+    ]
+
+    num_triggers = 0
+    for cc_pair in connector_credential_pairs:
+        if cc_pair is not None:
+            indexing_mode = IndexingMode.UPDATE
+            if run_info.from_beginning:
+                indexing_mode = IndexingMode.REINDEX
+
+            mark_ccpair_with_indexing_trigger(cc_pair.id, indexing_mode, db_session)
+            num_triggers += 1
+
+            logger.info(
+                f"connector_run_once - marking cc_pair with indexing trigger: "
+                f"connector={run_info.connector_id} "
+                f"cc_pair={cc_pair.id} "
+                f"indexing_trigger={indexing_mode}"
+            )
+
+    # run the beat task to pick up the triggers immediately
+    primary_app.send_task(
+        OnyxCeleryTask.CHECK_FOR_INDEXING,
+        priority=OnyxCeleryPriority.HIGH,
+        kwargs={"tenant_id": tenant_id},
+    )
 
     msg = f"Marked {num_triggers} index attempts with indexing triggers."
     return StatusResponse(
@@ -1261,7 +1158,7 @@ class BasicCCPairInfo(BaseModel):
 
 @router.get("/connector-status")
 def get_basic_connector_indexing_status(
-    user: User = Depends(current_chat_accessible_user),
+    user: User = Depends(current_chat_accesssible_user),
     db_session: Session = Depends(get_session),
 ) -> list[BasicCCPairInfo]:
     cc_pairs = get_connector_credential_pairs_for_user(
@@ -1278,85 +1175,3 @@ def get_basic_connector_indexing_status(
         for cc_pair in cc_pairs
         if cc_pair.connector.source != DocumentSource.INGESTION_API
     ]
-
-
-def trigger_indexing_for_cc_pair(
-    specified_credential_ids: list[int],
-    connector_id: int,
-    from_beginning: bool,
-    tenant_id: str,
-    db_session: Session,
-    is_user_file: bool = False,
-) -> int:
-    try:
-        possible_credential_ids = get_connector_credential_ids(connector_id, db_session)
-    except ValueError as e:
-        raise ValueError(f"Connector by id {connector_id} does not exist: {str(e)}")
-
-    if not specified_credential_ids:
-        credential_ids = possible_credential_ids
-    else:
-        if set(specified_credential_ids).issubset(set(possible_credential_ids)):
-            credential_ids = specified_credential_ids
-        else:
-            raise ValueError(
-                "Not all specified credentials are associated with connector"
-            )
-
-    if not credential_ids:
-        raise ValueError(
-            "Connector has no valid credentials, cannot create index attempts."
-        )
-
-    # Prevents index attempts for cc pairs that already have an index attempt currently running
-    skipped_credentials = [
-        credential_id
-        for credential_id in credential_ids
-        if get_index_attempts_for_cc_pair(
-            cc_pair_identifier=ConnectorCredentialPairIdentifier(
-                connector_id=connector_id,
-                credential_id=credential_id,
-            ),
-            only_current=True,
-            db_session=db_session,
-            disinclude_finished=True,
-        )
-    ]
-
-    connector_credential_pairs = [
-        get_connector_credential_pair(
-            db_session=db_session,
-            connector_id=connector_id,
-            credential_id=credential_id,
-        )
-        for credential_id in credential_ids
-        if credential_id not in skipped_credentials
-    ]
-
-    num_triggers = 0
-    for cc_pair in connector_credential_pairs:
-        if cc_pair is not None:
-            indexing_mode = IndexingMode.UPDATE
-            if from_beginning:
-                indexing_mode = IndexingMode.REINDEX
-
-            mark_ccpair_with_indexing_trigger(cc_pair.id, indexing_mode, db_session)
-            num_triggers += 1
-
-            logger.info(
-                f"connector_run_once - marking cc_pair with indexing trigger: "
-                f"connector={connector_id} "
-                f"cc_pair={cc_pair.id} "
-                f"indexing_trigger={indexing_mode}"
-            )
-
-    # run the beat task to pick up the triggers immediately
-    priority = OnyxCeleryPriority.HIGHEST if is_user_file else OnyxCeleryPriority.HIGH
-    logger.info(f"Sending indexing check task with priority {priority}")
-    client_app.send_task(
-        OnyxCeleryTask.CHECK_FOR_INDEXING,
-        priority=priority,
-        kwargs={"tenant_id": tenant_id},
-    )
-
-    return num_triggers

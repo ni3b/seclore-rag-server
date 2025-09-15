@@ -67,13 +67,12 @@ export default function UpgradingPage({
   };
   const statusOrder: Record<ValidStatuses, number> = useMemo(
     () => ({
-      invalid: 0,
-      failed: 1,
-      canceled: 2,
-      completed_with_errors: 3,
-      not_started: 4,
-      in_progress: 5,
-      success: 6,
+      failed: 0,
+      canceled: 1,
+      completed_with_errors: 2,
+      not_started: 3,
+      in_progress: 4,
+      success: 5,
     }),
     []
   );
@@ -92,7 +91,7 @@ export default function UpgradingPage({
         (a.latest_index_attempt?.id || 0) - (b.latest_index_attempt?.id || 0)
       );
     });
-  }, [ongoingReIndexingStatus, statusOrder]);
+  }, [ongoingReIndexingStatus]);
 
   if (isLoadingConnectors || isLoadingOngoingReIndexingStatus) {
     return <ThreeDotsLoader />;
@@ -108,13 +107,15 @@ export default function UpgradingPage({
         >
           <div>
             <div>
-              Are you sure you want to cancel? Cancelling will revert to the
-              previous model and all progress will be lost.
+              Are you sure you want to cancel?
+              <br />
+              <br />
+              Cancelling will revert to the previous model and all progress will
+              be lost.
             </div>
-            <div className="mt-12 gap-x-2 w-full justify-end flex">
-              <Button onClick={onCancel}>Confirm</Button>
-              <Button onClick={() => setIsCancelling(false)} variant="outline">
-                Cancel
+            <div className="flex">
+              <Button onClick={onCancel} variant="submit">
+                Confirm
               </Button>
             </div>
           </div>
@@ -139,46 +140,30 @@ export default function UpgradingPage({
             </Button>
 
             {connectors && connectors.length > 0 ? (
-              futureEmbeddingModel.background_reindex_enabled ? (
-                <>
-                  {failedIndexingStatus && failedIndexingStatus.length > 0 && (
-                    <FailedReIndexAttempts
-                      failedIndexingStatuses={failedIndexingStatus}
-                      setPopup={setPopup}
-                    />
-                  )}
+              <>
+                {failedIndexingStatus && failedIndexingStatus.length > 0 && (
+                  <FailedReIndexAttempts
+                    failedIndexingStatuses={failedIndexingStatus}
+                    setPopup={setPopup}
+                  />
+                )}
 
-                  <Text className="my-4">
-                    The table below shows the re-indexing progress of all
-                    existing connectors. Once all connectors have been
-                    re-indexed successfully, the new model will be used for all
-                    search queries. Until then, we will use the old model so
-                    that no downtime is necessary during this transition.
-                  </Text>
+                <Text className="my-4">
+                  The table below shows the re-indexing progress of all existing
+                  connectors. Once all connectors have been re-indexed
+                  successfully, the new model will be used for all search
+                  queries. Until then, we will use the old model so that no
+                  downtime is necessary during this transition.
+                </Text>
 
-                  {sortedReindexingProgress ? (
-                    <ReindexingProgressTable
-                      reindexingProgress={sortedReindexingProgress}
-                    />
-                  ) : (
-                    <ErrorCallout errorTitle="Failed to fetch re-indexing progress" />
-                  )}
-                </>
-              ) : (
-                <div className="mt-8">
-                  <h3 className="text-lg font-semibold mb-2">
-                    Switching Embedding Models
-                  </h3>
-                  <p className="mb-4 text-text-800">
-                    You&apos;re currently switching embedding models, and
-                    you&apos;ve selected the instant switch option. The
-                    transition will complete shortly.
-                  </p>
-                  <p className="text-text-600">
-                    The new model will be active soon.
-                  </p>
-                </div>
-              )
+                {sortedReindexingProgress ? (
+                  <ReindexingProgressTable
+                    reindexingProgress={sortedReindexingProgress}
+                  />
+                ) : (
+                  <ErrorCallout errorTitle="Failed to fetch reindexing progress" />
+                )}
+              </>
             ) : (
               <div className="mt-8 p-6 bg-background-100 border border-border-strong rounded-lg max-w-2xl">
                 <h3 className="text-lg font-semibold mb-2">

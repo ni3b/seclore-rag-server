@@ -44,11 +44,7 @@ export function DocumentSetSelectable({
               ${disabled ? "bg-background" : ""}
               flex 
               cursor-pointer 
-              ${
-                isSelected
-                  ? "bg-accent-background-hovered"
-                  : "bg-background hover:bg-accent-background"
-              }
+              ${isSelected ? "bg-hover" : "bg-background hover:bg-hover-light"}
             `}
             onClick={disabled ? undefined : onSelect}
           >
@@ -69,7 +65,7 @@ export function DocumentSetSelectable({
               <div className="ml-auto my-auto pl-1">
                 <CustomCheckbox
                   checked={isSelected}
-                  onChange={() => null}
+                  onChange={disabled ? undefined : onSelect}
                   disabled={disabled}
                 />
               </div>

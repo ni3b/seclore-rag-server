@@ -10,7 +10,6 @@ from pydantic import BaseModel
 
 from onyx.auth.schemas import UserRole
 from onyx.configs.app_configs import API_KEY_HASH_ROUNDS
-from shared_configs.configs import MULTI_TENANT
 
 
 _API_KEY_HEADER_NAME = "Authorization"
@@ -18,7 +17,7 @@ _API_KEY_HEADER_NAME = "Authorization"
 # to non-standard, experimental, or custom headers in HTTP or other protocols. It
 # indicates that the header is not part of the official standards defined by
 # organizations like the Internet Engineering Task Force (IETF).
-_API_KEY_HEADER_ALTERNATIVE_NAME = "X-Onyx-Authorization"
+_API_KEY_HEADER_ALTERNATIVE_NAME = "X-Seclore-Authorization"
 _BEARER_PREFIX = "Bearer "
 _API_KEY_PREFIX = "on_"
 _DEPRECATED_API_KEY_PREFIX = "dn_"
@@ -36,7 +35,8 @@ class ApiKeyDescriptor(BaseModel):
 
 
 def generate_api_key(tenant_id: str | None = None) -> str:
-    if not MULTI_TENANT or not tenant_id:
+    # For backwards compatibility, if no tenant_id, generate old style key
+    if not tenant_id:
         return _API_KEY_PREFIX + secrets.token_urlsafe(_API_KEY_LEN)
 
     encoded_tenant = quote(tenant_id)  # URL encode the tenant ID
@@ -76,11 +76,10 @@ def hash_api_key(api_key: str) -> str:
     # and overlaps are impossible
     if api_key.startswith(_API_KEY_PREFIX):
         return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-
-    if api_key.startswith(_DEPRECATED_API_KEY_PREFIX):
+    elif api_key.startswith(_DEPRECATED_API_KEY_PREFIX):
         return _deprecated_hash_api_key(api_key)
-
-    raise ValueError(f"Invalid API key prefix: {api_key[:3]}")
+    else:
+        raise ValueError(f"Invalid API key prefix: {api_key[:3]}")
 
 
 def build_displayable_api_key(api_key: str) -> str:

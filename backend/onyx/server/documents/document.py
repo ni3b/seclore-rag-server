@@ -9,7 +9,7 @@ from onyx.context.search.models import IndexFilters
 from onyx.context.search.preprocessing.access_filters import (
     build_access_filters_for_user,
 )
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.document_index.factory import get_default_document_index
@@ -32,7 +32,10 @@ def get_document_info(
     db_session: Session = Depends(get_session),
 ) -> DocumentInfo:
     search_settings = get_current_search_settings(db_session)
-    document_index = get_default_document_index(search_settings, None)
+
+    document_index = get_default_document_index(
+        primary_index_name=search_settings.index_name, secondary_index_name=None
+    )
 
     user_acl_filters = build_access_filters_for_user(user, db_session)
     inference_chunks = document_index.id_based_retrieval(
@@ -76,7 +79,10 @@ def get_chunk_info(
     db_session: Session = Depends(get_session),
 ) -> ChunkInfo:
     search_settings = get_current_search_settings(db_session)
-    document_index = get_default_document_index(search_settings, None)
+
+    document_index = get_default_document_index(
+        primary_index_name=search_settings.index_name, secondary_index_name=None
+    )
 
     user_acl_filters = build_access_filters_for_user(user, db_session)
     chunk_request = VespaChunkRequest(

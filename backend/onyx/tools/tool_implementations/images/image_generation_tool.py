@@ -8,9 +8,9 @@ import requests
 from litellm import image_generation  # type: ignore
 from pydantic import BaseModel
 
+from onyx.chat.models import PromptConfig
 from onyx.chat.chat_utils import combine_message_chain
 from onyx.chat.prompt_builder.answer_prompt_builder import AnswerPromptBuilder
-from onyx.configs.app_configs import IMAGE_MODEL_NAME
 from onyx.configs.model_configs import GEN_AI_HISTORY_CUTOFF
 from onyx.configs.tool_configs import IMAGE_GENERATION_OUTPUT_FORMAT
 from onyx.llm.interfaces import LLM
@@ -28,7 +28,7 @@ from onyx.tools.tool_implementations.images.prompt import (
 from onyx.utils.headers import build_llm_extra_headers
 from onyx.utils.logger import setup_logger
 from onyx.utils.special_types import JSON_ro
-from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
+from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel_with_rate_limiting
 
 
 logger = setup_logger()
@@ -80,8 +80,7 @@ class ImageShape(str, Enum):
     LANDSCAPE = "landscape"
 
 
-# override_kwargs is not supported for image generation tools
-class ImageGenerationTool(Tool[None]):
+class ImageGenerationTool(Tool):
     _NAME = "run_image_generation"
     _DESCRIPTION = "Generate an image from a prompt."
     _DISPLAY_NAME = "Image Generation"
@@ -91,17 +90,11 @@ class ImageGenerationTool(Tool[None]):
         api_key: str,
         api_base: str | None,
         api_version: str | None,
-        model: str = IMAGE_MODEL_NAME,
+        model: str = "dall-e-3",
         num_imgs: int = 2,
         additional_headers: dict[str, str] | None = None,
         output_format: ImageFormat = _DEFAULT_OUTPUT_FORMAT,
     ) -> None:
-
-        if model == "gpt-image-1" and output_format == ImageFormat.URL:
-            raise ValueError(
-                "gpt-image-1 does not support URL format. Please use BASE64 format."
-            )
-
         self.api_key = api_key
         self.api_base = api_base
         self.api_version = api_version
@@ -156,8 +149,10 @@ class ImageGenerationTool(Tool[None]):
         query: str,
         history: list[PreviousMessage],
         llm: LLM,
+        prompt_config: PromptConfig,
         force_run: bool = False,
     ) -> dict[str, Any] | None:
+        
         args = {"prompt": query}
         if force_run:
             return args
@@ -205,20 +200,12 @@ class ImageGenerationTool(Tool[None]):
         self, prompt: str, shape: ImageShape, format: ImageFormat
     ) -> ImageGenerationResponse:
         if shape == ImageShape.LANDSCAPE:
-            if self.model == "gpt-image-1":
-                size = "1536x1024"
-            else:
-                size = "1792x1024"
+            size = "1792x1024"
         elif shape == ImageShape.PORTRAIT:
-            if self.model == "gpt-image-1":
-                size = "1024x1536"
-            else:
-                size = "1024x1792"
+            size = "1024x1792"
         else:
             size = "1024x1024"
-        logger.debug(
-            f"Generating image with model: {self.model}, size: {size}, format: {format}"
-        )
+
         try:
             response = image_generation(
                 prompt=prompt,
@@ -239,12 +226,8 @@ class ImageGenerationTool(Tool[None]):
                 url = None
                 image_data = response.data[0]["b64_json"]
 
-            revised_prompt = response.data[0].get("revised_prompt")
-            if revised_prompt is None:
-                revised_prompt = prompt
-
             return ImageGenerationResponse(
-                revised_prompt=revised_prompt,
+                revised_prompt=response.data[0]["revised_prompt"],
                 url=url,
                 image_data=image_data,
             )
@@ -275,16 +258,14 @@ class ImageGenerationTool(Tool[None]):
                 "An error occurred during image generation. Please try again later."
             )
 
-    def run(
-        self, override_kwargs: None = None, **kwargs: str
-    ) -> Generator[ToolResponse, None, None]:
+    def run(self, **kwargs: str) -> Generator[ToolResponse, None, None]:
         prompt = cast(str, kwargs["prompt"])
         shape = ImageShape(kwargs.get("shape", ImageShape.SQUARE))
         format = self.output_format
 
         results = cast(
             list[ImageGenerationResponse],
-            run_functions_tuples_in_parallel(
+            run_functions_tuples_in_parallel_with_rate_limiting(
                 [
                     (
                         self._generate_image,
@@ -295,7 +276,9 @@ class ImageGenerationTool(Tool[None]):
                         ),
                     )
                     for _ in range(self.num_imgs)
-                ]
+                ],
+                use_rate_limiting=True,
+                use_retry=True
             ),
         )
         yield ToolResponse(

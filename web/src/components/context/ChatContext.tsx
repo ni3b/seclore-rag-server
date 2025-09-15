@@ -1,7 +1,13 @@
 "use client";
 
 import React, { createContext, useContext, useState } from "react";
-import { CCPairBasicInfo, DocumentSet, Tag, ValidSources } from "@/lib/types";
+import {
+  CCPairBasicInfo,
+  DocumentSet,
+  Tag,
+  User,
+  ValidSources,
+} from "@/lib/types";
 import { ChatSession, InputPrompt } from "@/app/chat/interfaces";
 import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
 import { Folder } from "@/app/chat/folders/interfaces";
@@ -10,7 +16,7 @@ import { useRouter } from "next/navigation";
 
 interface ChatContextProps {
   chatSessions: ChatSession[];
-  sidebarInitiallyVisible: boolean;
+  toggledSidebar: boolean;
   availableSources: ValidSources[];
   ccPairs: CCPairBasicInfo[];
   tags: Tag[];
@@ -28,7 +34,6 @@ interface ChatContextProps {
   refreshFolders: () => Promise<void>;
   refreshInputPrompts: () => Promise<void>;
   inputPrompts: InputPrompt[];
-  proSearchToggled: boolean;
 }
 
 const ChatContext = createContext<ChatContextProps | undefined>(undefined);
@@ -56,10 +61,7 @@ export const ChatProvider: React.FC<{
     setFolders(
       folders.map((folder) => {
         if (folder.folder_id) {
-          const display_priority = displayPriorityMap[folder.folder_id];
-          if (display_priority !== undefined) {
-            folder.display_priority = display_priority;
-          }
+          folder.display_priority = displayPriorityMap[folder.folder_id];
         }
         return folder;
       })
@@ -73,7 +75,7 @@ export const ChatProvider: React.FC<{
       const { sessions } = await response.json();
       setChatSessions(sessions);
 
-      const currentSessionId = searchParams?.get("chatId");
+      const currentSessionId = searchParams.get("chatId");
       if (
         currentSessionId &&
         !sessions.some(

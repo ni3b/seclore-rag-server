@@ -1,6 +1,3 @@
-from datetime import datetime
-from datetime import timezone
-
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
@@ -14,22 +11,19 @@ from onyx.connectors.models import IndexAttemptMetadata
 from onyx.db.connector_credential_pair import get_connector_credential_pair_from_id
 from onyx.db.document import get_documents_by_cc_pair
 from onyx.db.document import get_ingestion_documents
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_current_tenant_id
+from onyx.db.engine import get_session
 from onyx.db.models import User
-from onyx.db.search_settings import get_active_search_settings
 from onyx.db.search_settings import get_current_search_settings
 from onyx.db.search_settings import get_secondary_search_settings
+from onyx.document_index.document_index_utils import get_both_index_names
 from onyx.document_index.factory import get_default_document_index
 from onyx.indexing.embedder import DefaultIndexingEmbedder
 from onyx.indexing.indexing_pipeline import build_indexing_pipeline
-from onyx.natural_language_processing.search_nlp_models import (
-    InformationContentClassificationModel,
-)
 from onyx.server.onyx_api.models import DocMinimalInfo
 from onyx.server.onyx_api.models import IngestionDocument
 from onyx.server.onyx_api.models import IngestionResult
 from onyx.utils.logger import setup_logger
-from shared_configs.contextvars import get_current_tenant_id
 
 logger = setup_logger()
 
@@ -75,13 +69,9 @@ def upsert_ingestion_doc(
     doc_info: IngestionDocument,
     _: User | None = Depends(api_key_dep),
     db_session: Session = Depends(get_session),
+    tenant_id: str = Depends(get_current_tenant_id),
 ) -> IngestionResult:
-    tenant_id = get_current_tenant_id()
-
     doc_info.document.from_ingestion_api = True
-
-    if doc_info.document.doc_updated_at is None:
-        doc_info.document.doc_updated_at = datetime.now(tz=timezone.utc)
 
     document = Document.from_base(doc_info.document)
 
@@ -99,10 +89,9 @@ def upsert_ingestion_doc(
         )
 
     # Need to index for both the primary and secondary index if possible
-    active_search_settings = get_active_search_settings(db_session)
+    curr_ind_name, sec_ind_name = get_both_index_names(db_session)
     curr_doc_index = get_default_document_index(
-        active_search_settings.primary,
-        None,
+        primary_index_name=curr_ind_name, secondary_index_name=None
     )
 
     search_settings = get_current_search_settings(db_session)
@@ -111,11 +100,8 @@ def upsert_ingestion_doc(
         search_settings=search_settings
     )
 
-    information_content_classification_model = InformationContentClassificationModel()
-
     indexing_pipeline = build_indexing_pipeline(
         embedder=index_embedding_model,
-        information_content_classification_model=information_content_classification_model,
         document_index=curr_doc_index,
         ignore_time_skip=True,
         db_session=db_session,
@@ -131,7 +117,11 @@ def upsert_ingestion_doc(
     )
 
     # If there's a secondary index being built, index the doc but don't use it for return here
-    if active_search_settings.secondary:
+    if sec_ind_name:
+        sec_doc_index = get_default_document_index(
+            primary_index_name=curr_ind_name, secondary_index_name=None
+        )
+
         sec_search_settings = get_secondary_search_settings(db_session)
 
         if sec_search_settings is None:
@@ -144,13 +134,8 @@ def upsert_ingestion_doc(
             search_settings=sec_search_settings
         )
 
-        sec_doc_index = get_default_document_index(
-            active_search_settings.secondary, None
-        )
-
         sec_ind_pipeline = build_indexing_pipeline(
             embedder=new_index_embedding_model,
-            information_content_classification_model=information_content_classification_model,
             document_index=sec_doc_index,
             ignore_time_skip=True,
             db_session=db_session,

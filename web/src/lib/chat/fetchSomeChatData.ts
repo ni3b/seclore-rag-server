@@ -25,6 +25,7 @@ import {
 import { hasCompletedWelcomeFlowSS } from "@/components/initialSetup/welcome/WelcomeModalWrapper";
 import { fetchAssistantsSS } from "../assistants/fetchAssistantsSS";
 import { NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN } from "../constants";
+import { checkLLMSupportsImageInput } from "../llm/utils";
 
 interface FetchChatDataResult {
   user?: User | null;
@@ -54,8 +55,8 @@ type FetchOption =
   | "llmProviders"
   | "folders";
 
-/*
-NOTE: currently unused, but leaving here for future use.
+/* 
+NOTE: currently unused, but leaving here for future use. 
 */
 export async function fetchSomeChatData(
   searchParams: { [key: string]: string },
@@ -172,9 +173,7 @@ export async function fetchSomeChatData(
     const hasImageCompatibleModel = result.llmProviders?.some(
       (provider) =>
         provider.provider === "openai" ||
-        provider.model_configurations.some(
-          (modelConfiguration) => modelConfiguration.supports_image_input
-        )
+        provider.model_names.some((model) => checkLLMSupportsImageInput(model))
     );
 
     if (!hasImageCompatibleModel) {

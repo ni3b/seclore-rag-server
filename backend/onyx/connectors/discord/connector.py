@@ -4,7 +4,6 @@ from collections.abc import Iterable
 from datetime import datetime
 from datetime import timezone
 from typing import Any
-from typing import cast
 
 from discord import Client
 from discord.channel import TextChannel
@@ -21,8 +20,7 @@ from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -34,7 +32,7 @@ _SNIPPET_LENGTH = 30
 
 def _convert_message_to_document(
     message: DiscordMessage,
-    sections: list[TextSection],
+    sections: list[Section],
 ) -> Document:
     """
     Convert a discord message to a document
@@ -80,7 +78,7 @@ def _convert_message_to_document(
         semantic_identifier=semantic_identifier,
         doc_updated_at=message.edited_at,
         title=title,
-        sections=(cast(list[TextSection | ImageSection], sections)),
+        sections=sections,
         metadata=metadata,
     )
 
@@ -125,8 +123,8 @@ async def _fetch_documents_from_channel(
         if channel_message.type != MessageType.default:
             continue
 
-        sections: list[TextSection] = [
-            TextSection(
+        sections: list[Section] = [
+            Section(
                 text=channel_message.content,
                 link=channel_message.jump_url,
             )
@@ -144,7 +142,7 @@ async def _fetch_documents_from_channel(
                 continue
 
             sections = [
-                TextSection(
+                Section(
                     text=thread_message.content,
                     link=thread_message.jump_url,
                 )
@@ -162,7 +160,7 @@ async def _fetch_documents_from_channel(
                 continue
 
             sections = [
-                TextSection(
+                Section(
                     text=thread_message.content,
                     link=thread_message.jump_url,
                 )

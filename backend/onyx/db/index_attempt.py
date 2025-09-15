@@ -2,37 +2,25 @@ from collections.abc import Sequence
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
-from typing import TypeVarTuple
 
 from sqlalchemy import and_
 from sqlalchemy import delete
 from sqlalchemy import desc
 from sqlalchemy import func
-from sqlalchemy import Select
 from sqlalchemy import select
 from sqlalchemy import update
-from sqlalchemy.orm import contains_eager
-from sqlalchemy.orm import joinedload
 from sqlalchemy.orm import Session
 
-from onyx.connectors.models import ConnectorFailure
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.enums import IndexingStatus
-from onyx.db.enums import IndexModelStatus
-from onyx.db.models import ConnectorCredentialPair
+from onyx.connectors.models import Document
+from onyx.connectors.models import DocumentErrorSummary
 from onyx.db.models import IndexAttempt
 from onyx.db.models import IndexAttemptError
+from onyx.db.models import IndexingStatus
+from onyx.db.models import IndexModelStatus
 from onyx.db.models import SearchSettings
+from onyx.server.documents.models import ConnectorCredentialPair
 from onyx.server.documents.models import ConnectorCredentialPairIdentifier
 from onyx.utils.logger import setup_logger
-from onyx.utils.telemetry import optional_telemetry
-from onyx.utils.telemetry import RecordType
-
-# Comment out unused imports that cause mypy errors
-# from onyx.auth.models import UserRole
-# from onyx.configs.constants import MAX_LAST_VALID_CHECKPOINT_AGE_SECONDS
-# from onyx.db.connector_credential_pair import ConnectorCredentialPairIdentifier
-# from onyx.db.engine import async_query_for_dms
 
 logger = setup_logger()
 
@@ -50,47 +38,6 @@ def get_last_attempt_for_cc_pair(
         )
         .order_by(IndexAttempt.time_updated.desc())
         .first()
-    )
-
-
-def get_recent_completed_attempts_for_cc_pair(
-    cc_pair_id: int,
-    search_settings_id: int,
-    limit: int,
-    db_session: Session,
-) -> list[IndexAttempt]:
-    """Most recent to least recent."""
-    return (
-        db_session.query(IndexAttempt)
-        .filter(
-            IndexAttempt.connector_credential_pair_id == cc_pair_id,
-            IndexAttempt.search_settings_id == search_settings_id,
-            IndexAttempt.status.notin_(
-                [IndexingStatus.NOT_STARTED, IndexingStatus.IN_PROGRESS]
-            ),
-        )
-        .order_by(IndexAttempt.time_updated.desc())
-        .limit(limit)
-        .all()
-    )
-
-
-def get_recent_attempts_for_cc_pair(
-    cc_pair_id: int,
-    search_settings_id: int,
-    limit: int,
-    db_session: Session,
-) -> list[IndexAttempt]:
-    """Most recent to least recent."""
-    return (
-        db_session.query(IndexAttempt)
-        .filter(
-            IndexAttempt.connector_credential_pair_id == cc_pair_id,
-            IndexAttempt.search_settings_id == search_settings_id,
-        )
-        .order_by(IndexAttempt.time_updated.desc())
-        .limit(limit)
-        .all()
     )
 
 
@@ -229,16 +176,6 @@ def mark_attempt_in_progress(
         attempt.status = IndexingStatus.IN_PROGRESS
         attempt.time_started = index_attempt.time_started or func.now()  # type: ignore
         db_session.commit()
-
-        # Add telemetry for index attempt status change
-        optional_telemetry(
-            record_type=RecordType.INDEX_ATTEMPT_STATUS,
-            data={
-                "index_attempt_id": index_attempt.id,
-                "status": IndexingStatus.IN_PROGRESS.value,
-                "cc_pair_id": index_attempt.connector_credential_pair_id,
-            },
-        )
     except Exception:
         db_session.rollback()
         raise
@@ -257,16 +194,6 @@ def mark_attempt_succeeded(
 
         attempt.status = IndexingStatus.SUCCESS
         db_session.commit()
-
-        # Add telemetry for index attempt status change
-        optional_telemetry(
-            record_type=RecordType.INDEX_ATTEMPT_STATUS,
-            data={
-                "index_attempt_id": index_attempt_id,
-                "status": IndexingStatus.SUCCESS.value,
-                "cc_pair_id": attempt.connector_credential_pair_id,
-            },
-        )
     except Exception:
         db_session.rollback()
         raise
@@ -285,16 +212,6 @@ def mark_attempt_partially_succeeded(
 
         attempt.status = IndexingStatus.COMPLETED_WITH_ERRORS
         db_session.commit()
-
-        # Add telemetry for index attempt status change
-        optional_telemetry(
-            record_type=RecordType.INDEX_ATTEMPT_STATUS,
-            data={
-                "index_attempt_id": index_attempt_id,
-                "status": IndexingStatus.COMPLETED_WITH_ERRORS.value,
-                "cc_pair_id": attempt.connector_credential_pair_id,
-            },
-        )
     except Exception:
         db_session.rollback()
         raise
@@ -317,16 +234,6 @@ def mark_attempt_canceled(
         attempt.status = IndexingStatus.CANCELED
         attempt.error_msg = reason
         db_session.commit()
-
-        # Add telemetry for index attempt status change
-        optional_telemetry(
-            record_type=RecordType.INDEX_ATTEMPT_STATUS,
-            data={
-                "index_attempt_id": index_attempt_id,
-                "status": IndexingStatus.CANCELED.value,
-                "cc_pair_id": attempt.connector_credential_pair_id,
-            },
-        )
     except Exception:
         db_session.rollback()
         raise
@@ -351,16 +258,6 @@ def mark_attempt_failed(
         attempt.error_msg = failure_reason
         attempt.full_exception_trace = full_exception_trace
         db_session.commit()
-
-        # Add telemetry for index attempt status change
-        optional_telemetry(
-            record_type=RecordType.INDEX_ATTEMPT_STATUS,
-            data={
-                "index_attempt_id": index_attempt_id,
-                "status": IndexingStatus.FAILED.value,
-                "cc_pair_id": attempt.connector_credential_pair_id,
-            },
-        )
     except Exception:
         db_session.rollback()
         raise
@@ -451,33 +348,19 @@ def get_latest_index_attempts_by_status(
     return db_session.execute(stmt).scalars().all()
 
 
-T = TypeVarTuple("T")
-
-
-def _add_only_finished_clause(stmt: Select[tuple[*T]]) -> Select[tuple[*T]]:
-    return stmt.where(
-        IndexAttempt.status.not_in(
-            [IndexingStatus.NOT_STARTED, IndexingStatus.IN_PROGRESS]
-        ),
-    )
-
-
 def get_latest_index_attempts(
     secondary_index: bool,
     db_session: Session,
-    eager_load_cc_pair: bool = False,
-    only_finished: bool = False,
 ) -> Sequence[IndexAttempt]:
     ids_stmt = select(
         IndexAttempt.connector_credential_pair_id,
         func.max(IndexAttempt.id).label("max_id"),
     ).join(SearchSettings, IndexAttempt.search_settings_id == SearchSettings.id)
 
-    status = IndexModelStatus.FUTURE if secondary_index else IndexModelStatus.PRESENT
-    ids_stmt = ids_stmt.where(SearchSettings.status == status)
-
-    if only_finished:
-        ids_stmt = _add_only_finished_clause(ids_stmt)
+    if secondary_index:
+        ids_stmt = ids_stmt.where(SearchSettings.status == IndexModelStatus.FUTURE)
+    else:
+        ids_stmt = ids_stmt.where(SearchSettings.status == IndexModelStatus.PRESENT)
 
     ids_stmt = ids_stmt.group_by(IndexAttempt.connector_credential_pair_id)
     ids_subquery = ids_stmt.subquery()
@@ -492,53 +375,7 @@ def get_latest_index_attempts(
         .where(IndexAttempt.id == ids_subquery.c.max_id)
     )
 
-    if only_finished:
-        stmt = _add_only_finished_clause(stmt)
-
-    if eager_load_cc_pair:
-        stmt = stmt.options(
-            joinedload(IndexAttempt.connector_credential_pair),
-            joinedload(IndexAttempt.error_rows),
-        )
-
-    return db_session.execute(stmt).scalars().unique().all()
-
-
-# For use with our thread-level parallelism utils. Note that any relationships
-# you wish to use MUST be eagerly loaded, as the session will not be available
-# after this function to allow lazy loading.
-def get_latest_index_attempts_parallel(
-    secondary_index: bool,
-    eager_load_cc_pair: bool = False,
-    only_finished: bool = False,
-) -> Sequence[IndexAttempt]:
-    with get_session_with_current_tenant() as db_session:
-        return get_latest_index_attempts(
-            secondary_index,
-            db_session,
-            eager_load_cc_pair,
-            only_finished,
-        )
-
-
-def get_latest_index_attempt_for_cc_pair_id(
-    db_session: Session,
-    connector_credential_pair_id: int,
-    secondary_index: bool,
-    only_finished: bool = True,
-) -> IndexAttempt | None:
-    stmt = select(IndexAttempt)
-    stmt = stmt.where(
-        IndexAttempt.connector_credential_pair_id == connector_credential_pair_id,
-    )
-    if only_finished:
-        stmt = _add_only_finished_clause(stmt)
-
-    status = IndexModelStatus.FUTURE if secondary_index else IndexModelStatus.PRESENT
-    stmt = stmt.join(SearchSettings).where(SearchSettings.status == status)
-    stmt = stmt.order_by(desc(IndexAttempt.time_created))
-    stmt = stmt.limit(1)
-    return db_session.execute(stmt).scalar_one_or_none()
+    return db_session.execute(stmt).scalars().all()
 
 
 def count_index_attempts_for_connector(
@@ -596,12 +433,37 @@ def get_paginated_index_attempts_for_cc_pair_id(
 
     # Apply pagination
     stmt = stmt.offset(page * page_size).limit(page_size)
-    stmt = stmt.options(
-        contains_eager(IndexAttempt.connector_credential_pair),
-        joinedload(IndexAttempt.error_rows),
-    )
 
-    return list(db_session.execute(stmt).scalars().unique().all())
+    return list(db_session.execute(stmt).scalars().all())
+
+
+def get_latest_index_attempt_for_cc_pair_id(
+    db_session: Session,
+    connector_credential_pair_id: int,
+    secondary_index: bool,
+    only_finished: bool = True,
+) -> IndexAttempt | None:
+    stmt = select(IndexAttempt)
+    stmt = stmt.where(
+        IndexAttempt.connector_credential_pair_id == connector_credential_pair_id,
+    )
+    if only_finished:
+        stmt = stmt.where(
+            IndexAttempt.status.not_in(
+                [IndexingStatus.NOT_STARTED, IndexingStatus.IN_PROGRESS]
+            ),
+        )
+    if secondary_index:
+        stmt = stmt.join(SearchSettings).where(
+            SearchSettings.status == IndexModelStatus.FUTURE
+        )
+    else:
+        stmt = stmt.join(SearchSettings).where(
+            SearchSettings.status == IndexModelStatus.PRESENT
+        )
+    stmt = stmt.order_by(desc(IndexAttempt.time_created))
+    stmt = stmt.limit(1)
+    return db_session.execute(stmt).scalar_one_or_none()
 
 
 def get_index_attempts_for_cc_pair(
@@ -730,25 +592,6 @@ def cancel_indexing_attempts_past_model(
     )
 
 
-def cancel_indexing_attempts_for_search_settings(
-    search_settings_id: int,
-    db_session: Session,
-) -> None:
-    """Stops all indexing attempts that are in progress or not started for
-    the specified search settings."""
-
-    db_session.execute(
-        update(IndexAttempt)
-        .where(
-            IndexAttempt.status.in_(
-                [IndexingStatus.IN_PROGRESS, IndexingStatus.NOT_STARTED]
-            ),
-            IndexAttempt.search_settings_id == search_settings_id,
-        )
-        .values(status=IndexingStatus.FAILED)
-    )
-
-
 def count_unique_cc_pairs_with_successful_index_attempts(
     search_settings_id: int | None,
     db_session: Session,
@@ -772,32 +615,23 @@ def count_unique_cc_pairs_with_successful_index_attempts(
 
 def create_index_attempt_error(
     index_attempt_id: int | None,
-    connector_credential_pair_id: int,
-    failure: ConnectorFailure,
+    batch: int | None,
+    docs: list[Document],
+    exception_msg: str,
+    exception_traceback: str,
     db_session: Session,
 ) -> int:
+    doc_summaries = []
+    for doc in docs:
+        doc_summary = DocumentErrorSummary.from_document(doc)
+        doc_summaries.append(doc_summary.to_dict())
+
     new_error = IndexAttemptError(
         index_attempt_id=index_attempt_id,
-        connector_credential_pair_id=connector_credential_pair_id,
-        document_id=(
-            failure.failed_document.document_id if failure.failed_document else None
-        ),
-        document_link=(
-            failure.failed_document.document_link if failure.failed_document else None
-        ),
-        entity_id=(failure.failed_entity.entity_id if failure.failed_entity else None),
-        failed_time_range_start=(
-            failure.failed_entity.missed_time_range[0]
-            if failure.failed_entity and failure.failed_entity.missed_time_range
-            else None
-        ),
-        failed_time_range_end=(
-            failure.failed_entity.missed_time_range[1]
-            if failure.failed_entity and failure.failed_entity.missed_time_range
-            else None
-        ),
-        failure_message=failure.failure_message,
-        is_resolved=False,
+        batch=batch,
+        doc_summaries=doc_summaries,
+        error_msg=exception_msg,
+        traceback=exception_traceback,
     )
     db_session.add(new_error)
     db_session.commit()
@@ -815,42 +649,3 @@ def get_index_attempt_errors(
 
     errors = db_session.scalars(stmt)
     return list(errors.all())
-
-
-def count_index_attempt_errors_for_cc_pair(
-    cc_pair_id: int,
-    unresolved_only: bool,
-    db_session: Session,
-) -> int:
-    stmt = (
-        select(func.count())
-        .select_from(IndexAttemptError)
-        .where(IndexAttemptError.connector_credential_pair_id == cc_pair_id)
-    )
-    if unresolved_only:
-        stmt = stmt.where(IndexAttemptError.is_resolved.is_(False))
-
-    result = db_session.scalar(stmt)
-    return 0 if result is None else result
-
-
-def get_index_attempt_errors_for_cc_pair(
-    cc_pair_id: int,
-    unresolved_only: bool,
-    db_session: Session,
-    page: int | None = None,
-    page_size: int | None = None,
-) -> list[IndexAttemptError]:
-    stmt = select(IndexAttemptError).where(
-        IndexAttemptError.connector_credential_pair_id == cc_pair_id
-    )
-    if unresolved_only:
-        stmt = stmt.where(IndexAttemptError.is_resolved.is_(False))
-
-    # Order by most recent first
-    stmt = stmt.order_by(desc(IndexAttemptError.time_created))
-
-    if page is not None and page_size is not None:
-        stmt = stmt.offset(page * page_size).limit(page_size)
-
-    return list(db_session.scalars(stmt).all())

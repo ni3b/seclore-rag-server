@@ -36,7 +36,6 @@ class FullUserSnapshot(BaseModel):
     email: str
     role: UserRole
     is_active: bool
-    password_configured: bool
 
     @classmethod
     def from_user_model(cls, user: User) -> "FullUserSnapshot":
@@ -45,13 +44,12 @@ class FullUserSnapshot(BaseModel):
             email=user.email,
             role=user.role,
             is_active=user.is_active,
-            password_configured=user.password_configured,
         )
-
-
-class DisplayPriorityRequest(BaseModel):
-    display_priority_map: dict[int, int]
 
 
 class InvitedUserSnapshot(BaseModel):
     email: str
+
+
+class DisplayPriorityRequest(BaseModel):
+    display_priority_map: dict[int, int]

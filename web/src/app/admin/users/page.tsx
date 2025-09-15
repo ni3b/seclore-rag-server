@@ -3,8 +3,9 @@ import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import InvitedUserTable from "@/components/admin/users/InvitedUserTable";
 import SignedUpUserTable from "@/components/admin/users/SignedUpUserTable";
+import PlatformEmailTable from "@/components/admin/users/PlatformEmailTable";
+import AddPlatformEmail from "@/components/admin/users/AddPlatformEmail";
 
 import { FiPlusSquare } from "react-icons/fi";
 import { Modal } from "@/components/Modal";
@@ -19,16 +20,18 @@ import BulkAdd from "@/components/admin/users/BulkAdd";
 import Text from "@/components/ui/text";
 import { InvitedUserSnapshot } from "@/lib/types";
 import { SearchBar } from "@/components/search/SearchBar";
-import { ConfirmEntityModal } from "@/components/modals/ConfirmEntityModal";
-import { NEXT_PUBLIC_CLOUD_ENABLED } from "@/lib/constants";
-import PendingUsersTable from "@/components/admin/users/PendingUsersTable";
+
 const UsersTables = ({
   q,
   setPopup,
+  setShowAddPlatformEmail,
 }: {
   q: string;
   setPopup: (spec: PopupSpec) => void;
+  setShowAddPlatformEmail: (show: boolean) => void;
 }) => {
+  const [activeTab, setActiveTab] = useState("current");
+  
   const {
     data: invitedUsers,
     error: invitedUsersError,
@@ -39,20 +42,26 @@ const UsersTables = ({
     errorHandlingFetcher
   );
 
+  const {
+    data: platformEmails,
+    error: platformEmailsError,
+    isLoading: platformEmailsLoading,
+    mutate: platformEmailsMutate,
+  } = useSWR<{ id: number; email: string }[]>(
+    activeTab === "platform-emails" ? "/api/manage/platform-emails" : null,
+    errorHandlingFetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      dedupingInterval: 60000, // 1 minute
+    }
+  );
+
   const { data: validDomains, error: domainsError } = useSWR<string[]>(
     "/api/manage/admin/valid-domains",
     errorHandlingFetcher
   );
 
-  const {
-    data: pendingUsers,
-    error: pendingUsersError,
-    isLoading: pendingUsersLoading,
-    mutate: pendingUsersMutate,
-  } = useSWR<InvitedUserSnapshot[]>(
-    NEXT_PUBLIC_CLOUD_ENABLED ? "/api/tenants/users/pending" : null,
-    errorHandlingFetcher
-  );
   // Show loading animation only during the initial data fetch
   if (!validDomains) {
     return <ThreeDotsLoader />;
@@ -68,13 +77,11 @@ const UsersTables = ({
   }
 
   return (
-    <Tabs defaultValue="current">
+    <Tabs defaultValue="current" value={activeTab} onValueChange={setActiveTab}>
       <TabsList>
         <TabsTrigger value="current">Current Users</TabsTrigger>
-        <TabsTrigger value="invited">Invited Users</TabsTrigger>
-        {NEXT_PUBLIC_CLOUD_ENABLED && (
-          <TabsTrigger value="pending">Pending Users</TabsTrigger>
-        )}
+        <TabsTrigger value="platform-emails">Platform Email</TabsTrigger>
+        {/* <TabsTrigger value="invited">Invited Users</TabsTrigger> */}
       </TabsList>
 
       <TabsContent value="current">
@@ -92,7 +99,27 @@ const UsersTables = ({
           </CardContent>
         </Card>
       </TabsContent>
-      <TabsContent value="invited">
+
+      <TabsContent value="platform-emails">
+        <Card>
+          <CardHeader>
+            <CardTitle>Access Request Email</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PlatformEmailTable
+              emails={platformEmails || []}
+              setPopup={setPopup}
+              mutate={platformEmailsMutate}
+              error={platformEmailsError}
+              isLoading={platformEmailsLoading}
+              q={q}
+              onAddEmail={() => setShowAddPlatformEmail(true)}
+            />
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      {/* <TabsContent value="invited">
         <Card>
           <CardHeader>
             <CardTitle>Invited Users</CardTitle>
@@ -108,26 +135,7 @@ const UsersTables = ({
             />
           </CardContent>
         </Card>
-      </TabsContent>
-      {NEXT_PUBLIC_CLOUD_ENABLED && (
-        <TabsContent value="pending">
-          <Card>
-            <CardHeader>
-              <CardTitle>Pending Users</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <PendingUsersTable
-                users={pendingUsers || []}
-                setPopup={setPopup}
-                mutate={pendingUsersMutate}
-                error={pendingUsersError}
-                isLoading={pendingUsersLoading}
-                q={q}
-              />
-            </CardContent>
-          </Card>
-        </TabsContent>
-      )}
+      </TabsContent> */}
     </Tabs>
   );
 };
@@ -136,6 +144,7 @@ const SearchableTables = () => {
   const { popup, setPopup } = usePopup();
   const [query, setQuery] = useState("");
   const [q, setQ] = useState("");
+  const [showAddPlatformEmail, setShowAddPlatformEmail] = useState(false);
 
   return (
     <div>
@@ -151,9 +160,58 @@ const SearchableTables = () => {
             />
           </div>
         </div>
-        <UsersTables q={q} setPopup={setPopup} />
+        <UsersTables q={q} setPopup={setPopup} setShowAddPlatformEmail={setShowAddPlatformEmail} />
       </div>
+      
+      {showAddPlatformEmail && (
+        <Modal title="Add Platform Email" onOutsideClick={() => setShowAddPlatformEmail(false)}>
+          <div className="flex flex-col gap-y-4">
+            <Text className="font-medium text-base">
+              Add a new platform email address. This email will be used for requesting access to the Assistant.
+            </Text>
+            <AddPlatformEmail 
+              onSuccess={() => {
+                setShowAddPlatformEmail(false);
+                setPopup({
+                  message: "Platform email added successfully!",
+                  type: "success",
+                });
+                // Refresh the platform emails data
+                mutate(
+                  (key) => typeof key === "string" && key.startsWith("/api/manage/platform-emails")
+                );
+              }}
+              onFailure={(error) => {
+                setPopup({
+                  message: `Failed to add platform email - ${error}`,
+                  type: "error",
+                });
+              }}
+            />
+          </div>
+        </Modal>
+      )}
     </div>
+  );
+};
+
+const AddPlatformEmailButton = ({
+  setPopup,
+  setShowModal,
+}: {
+  setPopup: (spec: PopupSpec) => void;
+  setShowModal: (show: boolean) => void;
+}) => {
+  return (
+    <Button 
+      className="my-auto w-fit" 
+      onClick={() => setShowModal(true)}
+    >
+      <div className="flex">
+        <FiPlusSquare className="my-auto mr-2" />
+        Add Platform Email
+      </div>
+    </Button>
   );
 };
 
@@ -163,13 +221,6 @@ const AddUserButton = ({
   setPopup: (spec: PopupSpec) => void;
 }) => {
   const [modal, setModal] = useState(false);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-
-  const { data: invitedUsers } = useSWR<InvitedUserSnapshot[]>(
-    "/api/manage/users/invited",
-    errorHandlingFetcher
-  );
-
   const onSuccess = () => {
     mutate(
       (key) => typeof key === "string" && key.startsWith("/api/manage/users")
@@ -180,7 +231,6 @@ const AddUserButton = ({
       type: "success",
     });
   };
-
   const onFailure = async (res: Response) => {
     const error = (await res.json()).detail;
     setPopup({
@@ -188,44 +238,19 @@ const AddUserButton = ({
       type: "error",
     });
   };
-
-  const handleInviteClick = () => {
-    if (
-      !NEXT_PUBLIC_CLOUD_ENABLED &&
-      invitedUsers &&
-      invitedUsers.length === 0
-    ) {
-      setShowConfirmation(true);
-    } else {
-      setModal(true);
-    }
-  };
-
-  const handleConfirmFirstInvite = () => {
-    setShowConfirmation(false);
-    setModal(true);
-  };
-
   return (
     <>
-      <Button className="my-auto w-fit" onClick={handleInviteClick}>
+      {/* <Button 
+        className="my-auto w-fit" 
+        onClick={() => {
+          // Button is disabled, no action
+        }}
+      >
         <div className="flex">
           <FiPlusSquare className="my-auto mr-2" />
           Invite Users
         </div>
-      </Button>
-
-      {showConfirmation && (
-        <ConfirmEntityModal
-          entityType="First User Invitation"
-          entityName="your Access Logic"
-          onClose={() => setShowConfirmation(false)}
-          onSubmit={handleConfirmFirstInvite}
-          additionalDetails="After inviting the first user, only invited users will be able to join this platform. This is a security measure to control access to your team."
-          actionButtonText="Continue"
-          variant="action"
-        />
-      )}
+      </Button> */}
 
       {modal && (
         <Modal title="Bulk Add Users" onOutsideClick={() => setModal(false)}>

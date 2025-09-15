@@ -1,11 +1,17 @@
-import { LLMProviderView } from "../configuration/llm/interfaces";
+import { FullLLMProvider } from "../configuration/llm/interfaces";
 import { Persona, StarterMessage } from "./interfaces";
+import { InputPrompt } from "@/app/chat/interfaces";
 
 interface PersonaUpsertRequest {
   name: string;
   description: string;
   system_prompt: string;
   task_prompt: string;
+  search_tool_description: string;
+  history_query_rephrase: string;
+  custom_tool_argument_system_prompt: string;
+  search_query_prompt: string;
+  search_data_source_selector_prompt: string;
   datetime_aware: boolean;
   document_set_ids: number[];
   num_chunks: number | null;
@@ -20,6 +26,7 @@ interface PersonaUpsertRequest {
   starter_messages: StarterMessage[] | null;
   users?: string[];
   groups: number[];
+  microsoft_ad_groups?: string[];
   tool_ids: number[];
   icon_color: string | null;
   icon_shape: number | null;
@@ -29,14 +36,17 @@ interface PersonaUpsertRequest {
   is_default_persona: boolean;
   display_priority: number | null;
   label_ids: number[] | null;
-  user_file_ids: number[] | null;
-  user_folder_ids: number[] | null;
 }
 
 export interface PersonaUpsertParameters {
   name: string;
   description: string;
   system_prompt: string;
+  search_tool_description: string;
+  history_query_rephrase: string;
+  custom_tool_argument_system_prompt: string;
+  search_query_prompt: string;
+  search_data_source_selector_prompt: string;
   existing_prompt_id: number | null;
   task_prompt: string;
   datetime_aware: boolean;
@@ -48,8 +58,12 @@ export interface PersonaUpsertParameters {
   llm_model_provider_override: string | null;
   llm_model_version_override: string | null;
   starter_messages: StarterMessage[] | null;
+  prompt_shortcuts: InputPrompt[];
+  shortcuts_to_update?: InputPrompt[];
+  shortcuts_to_delete?: number[];
   users?: string[];
   groups: number[];
+  microsoft_ad_groups?: string[];
   tool_ids: number[];
   icon_color: string | null;
   icon_shape: number | null;
@@ -58,8 +72,70 @@ export interface PersonaUpsertParameters {
   uploaded_image: File | null;
   is_default_persona: boolean;
   label_ids: number[] | null;
-  user_file_ids: number[];
-  user_folder_ids: number[];
+}
+
+// Helper function to create new prompt shortcuts during persona creation/update
+async function createPromptShortcuts(
+  promptShortcuts: InputPrompt[], 
+  assistantId: number | null
+): Promise<void> 
+{  
+  // Loop through all new prompt shortcuts and create them
+  for (const shortcut of promptShortcuts) {    
+    // Only create shortcuts that don't have an id (new shortcuts) and have content
+    if (!shortcut.id && shortcut.prompt.trim() && shortcut.content.trim()) {      
+      try {
+        const response = await fetch("/api/input_prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: shortcut.prompt,
+            content: shortcut.content,
+            active: shortcut.active,
+            is_public: shortcut.is_public,
+            assistant_id: assistantId,
+          }),
+        });
+        
+        if (!response.ok) {
+          console.error("Failed to create prompt shortcut:", await response.text());
+        }
+      } catch (error) {
+        console.error("Failed to create prompt shortcut:", error);
+      }
+    }
+  }
+}
+
+// Helper function to update existing prompt shortcuts
+async function updatePromptShortcuts(
+  promptShortcuts: InputPrompt[], 
+  assistantId: number | null
+): Promise<void> {  
+  // Update existing shortcuts that have an id
+  for (const shortcut of promptShortcuts) {
+    if (shortcut.id && shortcut.id > 0 && shortcut.prompt.trim() && shortcut.content.trim()) {
+      try {
+        const response = await fetch(`/api/input_prompt/${shortcut.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: shortcut.prompt,
+            content: shortcut.content,
+            active: shortcut.active,
+            is_public: shortcut.is_public,
+            assistant_id: assistantId,
+          }),
+        });
+        
+        if (!response.ok) {
+          console.error(`Failed to update prompt shortcut ${shortcut.id}:`, await response.text());
+        }
+      } catch (error) {
+        console.error("Failed to update prompt shortcut:", error);
+      }
+    }
+  }
 }
 
 export const createPersonaLabel = (name: string) => {
@@ -104,12 +180,18 @@ function buildPersonaUpsertRequest(
     name,
     description,
     system_prompt,
+    search_tool_description,
+    history_query_rephrase,
+    custom_tool_argument_system_prompt,
+    search_query_prompt,
+    search_data_source_selector_prompt,
     task_prompt,
     document_set_ids,
     num_chunks,
     include_citations,
     is_public,
     groups,
+    microsoft_ad_groups,
     existing_prompt_id,
     datetime_aware,
     users,
@@ -118,14 +200,16 @@ function buildPersonaUpsertRequest(
     icon_shape,
     remove_image,
     search_start_date,
-    user_file_ids,
-    user_folder_ids,
   } = creationRequest;
-
   return {
     name,
     description,
     system_prompt,
+    search_tool_description,
+    history_query_rephrase,
+    custom_tool_argument_system_prompt,
+    search_query_prompt,
+    search_data_source_selector_prompt,
     task_prompt,
     document_set_ids,
     num_chunks,
@@ -133,6 +217,7 @@ function buildPersonaUpsertRequest(
     is_public,
     uploaded_image_id,
     groups,
+    microsoft_ad_groups,
     users,
     tool_ids,
     icon_color,
@@ -152,8 +237,6 @@ function buildPersonaUpsertRequest(
     starter_messages: creationRequest.starter_messages ?? null,
     display_priority: null,
     label_ids: creationRequest.label_ids ?? null,
-    user_file_ids: user_file_ids ?? null,
-    user_folder_ids: user_folder_ids ?? null,
   };
 }
 
@@ -184,6 +267,8 @@ export async function createPersona(
       return null;
     }
   }
+
+  // Handle persona creation first
   const createPersonaResponse = await fetch("/api/persona", {
     method: "POST",
     headers: {
@@ -193,6 +278,26 @@ export async function createPersona(
       buildPersonaUpsertRequest(personaUpsertParams, fileId)
     ),
   });
+
+  // If persona creation was successful, handle prompt shortcuts
+  if (createPersonaResponse.ok) {
+    try {
+      // Clone the response before reading it
+      const responseClone = createPersonaResponse.clone();
+      const createdPersona = await responseClone.json();
+      const assistantId = createdPersona.id;
+      
+      // For new personas, all shortcuts should be new (no existing IDs)
+      const newShortcuts = personaUpsertParams.prompt_shortcuts.filter(shortcut => !shortcut.id);
+      
+      // Handle new prompt shortcuts with the new assistant ID
+      if (newShortcuts.length > 0) {
+        await createPromptShortcuts(newShortcuts, assistantId);
+      }
+    } catch (error) {
+      console.error("Failed to handle prompt shortcuts after persona creation:", error);
+    }
+  }
 
   return createPersonaResponse;
 }
@@ -209,6 +314,22 @@ export async function updatePersona(
     }
   }
 
+  // Fetch existing shortcuts for this assistant
+  let existingShortcuts: InputPrompt[] = [];
+  try {
+    const shortcutsResponse = await fetch("/api/input_prompt");
+    if (shortcutsResponse.ok) {
+      const allShortcuts = await shortcutsResponse.json();
+      existingShortcuts = allShortcuts.filter((shortcut: InputPrompt) => 
+        shortcut.assistant_id === id
+      );
+    }   
+  } catch (error) {
+    console.error("Failed to fetch existing shortcuts:", error);
+  }
+  
+
+  // Handle persona update first
   const updatePersonaResponse = await fetch(`/api/persona/${id}`, {
     method: "PATCH",
     headers: {
@@ -218,6 +339,47 @@ export async function updatePersona(
       buildPersonaUpsertRequest(personaUpsertParams, fileId)
     ),
   });
+
+  // If persona update was successful, handle prompt shortcuts
+  if (updatePersonaResponse.ok) {
+    try {
+      // Handle shortcuts to delete first
+      if (personaUpsertParams.shortcuts_to_delete && personaUpsertParams.shortcuts_to_delete.length > 0) {
+        for (const shortcutId of personaUpsertParams.shortcuts_to_delete) {
+          try {
+            const response = await fetch(`/api/input_prompt/${shortcutId}`, {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+            });
+            
+            if (!response.ok) {
+              console.error(`Failed to delete prompt shortcut ${shortcutId}:`, await response.text());
+            }
+          } catch (error) {
+            console.error(`Failed to delete prompt shortcut ${shortcutId}:`, error);
+          }
+        }
+      }
+      
+      // Handle new shortcuts (without id)
+      const newShortcuts = personaUpsertParams.prompt_shortcuts.filter(shortcut => !shortcut.id);
+      
+      // Handle updated shortcuts from shortcuts_to_update field
+      const updatedShortcuts = personaUpsertParams.shortcuts_to_update || [];
+      
+      // Handle new prompt shortcuts
+      if (newShortcuts.length > 0) {
+        await createPromptShortcuts(newShortcuts, id);
+      }
+      
+      // Handle existing shortcuts updates
+      if (updatedShortcuts.length > 0) {
+        await updatePromptShortcuts(updatedShortcuts, id);
+      }
+    } catch (error) {
+      console.error("Failed to handle prompt shortcuts after persona update:", error);
+    }
+  }
 
   return updatePersonaResponse;
 }
@@ -269,22 +431,6 @@ export function personaComparator(a: Persona, b: Persona) {
   return closerToZeroNegativesFirstComparator(a.id, b.id);
 }
 
-export const togglePersonaDefault = async (
-  personaId: number,
-  isDefault: boolean
-) => {
-  const response = await fetch(`/api/admin/persona/${personaId}/default`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      is_default_persona: !isDefault,
-    }),
-  });
-  return response;
-};
-
 export const togglePersonaVisibility = async (
   personaId: number,
   isVisible: boolean
@@ -317,6 +463,22 @@ export const togglePersonaPublicStatus = async (
   return response;
 };
 
+export const togglePersonaDefaultStatus = async (
+  personaId: number,
+  isDefault: boolean
+) => {
+  const response = await fetch(`/api/persona/${personaId}/default`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      is_default: isDefault,
+    }),
+  });
+  return response;
+};
+
 export function checkPersonaRequiresImageGeneration(persona: Persona) {
   for (const tool of persona.tools) {
     if (tool.name === "ImageGenerationTool") {
@@ -327,7 +489,31 @@ export function checkPersonaRequiresImageGeneration(persona: Persona) {
 }
 
 export function providersContainImageGeneratingSupport(
-  providers: LLMProviderView[]
+  providers: FullLLMProvider[]
 ) {
   return providers.some((provider) => provider.provider === "openai");
 }
+
+// Default fallback persona for when we must display a persona
+// but assistant has access to none
+export const defaultPersona: Persona = {
+  id: 0,
+  name: "Default Assistant",
+  description: "A default assistant",
+  is_visible: true,
+  is_public: true,
+  builtin_persona: false,
+  is_default_persona: true,
+  users: [],
+  groups: [],
+  document_sets: [],
+  prompts: [],
+  tools: [],
+  starter_messages: null,
+  prompt_shortcuts: null,
+  display_priority: null,
+  search_start_date: null,
+  owner: null,
+  icon_shape: 50910,
+  icon_color: "#FF6F6F",
+};

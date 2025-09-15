@@ -29,9 +29,8 @@ class LongTermLogger:
         try:
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
-        except Exception:
-            # logger.error(f"Error creating directory for long-term logs: {e}")
-            pass
+        except Exception as e:
+            logger.error(f"Error creating directory for long-term logs: {e}")
 
     def _cleanup_old_files(self, category_path: Path) -> None:
         try:
@@ -48,13 +47,10 @@ class LongTermLogger:
                     continue
                 try:
                     file.unlink()
-                except Exception:
-                    pass
-                    # logger.error(f"Error deleting old log file {file
-                    # }: {e}")
-        except Exception:
-            pass
-            # logger.error(f"Error during log rotation cleanup: {e}")
+                except Exception as e:
+                    logger.error(f"Error deleting old log file {file}: {e}")
+        except Exception as e:
+            logger.error(f"Error during log rotation cleanup: {e}")
 
     def _record(self, message: Any, category: str) -> None:
         category_path = self.log_file_path / category
@@ -77,9 +73,8 @@ class LongTermLogger:
             with open(file_path, "w+") as f:
                 # default allows us to "ignore" unserializable objects
                 json.dump(final_record, f, default=lambda x: str(x))
-        except Exception:
-            # logger.error(f"Error recording log: {e}")
-            pass
+        except Exception as e:
+            logger.error(f"Error recording log: {e}")
 
     def record(self, message: JSON_ro, category: str = "default") -> None:
         try:
@@ -89,7 +84,7 @@ class LongTermLogger:
             )
             thread.start()
         except Exception:
-            # Should never interfere with normal functions of Onyx
+            # Should never interfere with normal functions of Seclore
             pass
 
     def fetch_category(

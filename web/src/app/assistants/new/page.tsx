@@ -1,7 +1,11 @@
 import CardSection from "@/components/admin/CardSection";
+import { HeaderWrapper } from "@/components/header/HeaderWrapper";
 import { AssistantEditor } from "@/app/admin/assistants/AssistantEditor";
+import { SuccessfulPersonaUpdateRedirectType } from "@/app/admin/assistants/enums";
 import { fetchAssistantEditorInfoSS } from "@/lib/assistants/fetchPersonaEditorInfoSS";
 import { ErrorCallout } from "@/components/ErrorCallout";
+import { LargeBackButton } from "../LargeBackButton";
+import { BackButton } from "@/components/BackButton";
 
 export default async function Page() {
   const [values, error] = await fetchAssistantEditorInfoSS();
@@ -22,6 +26,7 @@ export default async function Page() {
               <AssistantEditor
                 {...values}
                 defaultPublic={false}
+                redirectType={SuccessfulPersonaUpdateRedirectType.CHAT}
                 shouldAddAssistantToUserPreferences={true}
               />
             </CardSection>

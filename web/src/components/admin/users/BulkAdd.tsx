@@ -79,18 +79,13 @@ const AddUserForm = withFormik<FormProps, FormValues>({
   },
   handleSubmit: async (values: FormValues, formikBag) => {
     const emails = values.emails.trim().split(WHITESPACE_SPLIT);
-    formikBag.setSubmitting(true);
-    await addUsers("/api/manage/admin/users", { arg: emails })
-      .then((res) => {
-        if (res.ok) {
-          formikBag.props.onSuccess();
-        } else {
-          formikBag.props.onFailure(res);
-        }
-      })
-      .finally(() => {
-        formikBag.setSubmitting(false);
-      });
+    await addUsers("/api/manage/admin/users", { arg: emails }).then((res) => {
+      if (res.ok) {
+        formikBag.props.onSuccess();
+      } else {
+        formikBag.props.onFailure(res);
+      }
+    });
   },
 })(AddUserFormRenderer);
 

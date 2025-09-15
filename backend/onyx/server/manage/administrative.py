@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
 from onyx.auth.users import current_curator_or_admin_user
-from onyx.background.celery.versioned_apps.client import app as client_app
+from onyx.background.celery.versioned_apps.primary import app as primary_app
 from onyx.configs.app_configs import GENERATIVE_MODEL_ACCESS_CHECK_FREQ
 from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import KV_GEN_AI_KEY_CHECK_TIME
@@ -20,7 +20,8 @@ from onyx.db.connector_credential_pair import get_connector_credential_pair_for_
 from onyx.db.connector_credential_pair import (
     update_connector_credential_pair_from_id,
 )
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_current_tenant_id
+from onyx.db.engine import get_session
 from onyx.db.enums import ConnectorCredentialPairStatus
 from onyx.db.feedback import fetch_docs_ranked_by_boost_for_user
 from onyx.db.feedback import update_document_boost_for_user
@@ -38,7 +39,6 @@ from onyx.server.manage.models import BoostUpdateRequest
 from onyx.server.manage.models import HiddenUpdateRequest
 from onyx.server.models import StatusResponse
 from onyx.utils.logger import setup_logger
-from shared_configs.contextvars import get_current_tenant_id
 
 router = APIRouter(prefix="/manage")
 logger = setup_logger()
@@ -139,9 +139,8 @@ def create_deletion_attempt_for_connector_id(
     connector_credential_pair_identifier: ConnectorCredentialPairIdentifier,
     user: User = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str = Depends(get_current_tenant_id),
 ) -> None:
-    tenant_id = get_current_tenant_id()
-
     connector_id = connector_credential_pair_identifier.connector_id
     credential_id = connector_credential_pair_identifier.credential_id
 
@@ -192,15 +191,10 @@ def create_deletion_attempt_for_connector_id(
     db_session.commit()
 
     # run the beat task to pick up this deletion from the db immediately
-    client_app.send_task(
+    primary_app.send_task(
         OnyxCeleryTask.CHECK_FOR_CONNECTOR_DELETION,
         priority=OnyxCeleryPriority.HIGH,
         kwargs={"tenant_id": tenant_id},
-    )
-
-    logger.info(
-        f"create_deletion_attempt_for_connector_id - running check_for_connector_deletion: "
-        f"cc_pair={cc_pair.id}"
     )
 
     if cc_pair.connector.source == DocumentSource.FILE:

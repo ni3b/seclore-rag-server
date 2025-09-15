@@ -11,10 +11,10 @@ metadata:
 spec:
   type: {{ .Values.api.service.type }}
   ports:
-    - port: {{ .Values.api.service.servicePort }}
-      targetPort: {{ .Values.api.service.targetPort }}
+    - port: {{ .Values.api.service.port }}
+      targetPort: api-server-port
       protocol: TCP
-      name: {{ .Values.api.service.portName }}
+      name: api-server-port
   selector:
     {{- include "onyx-stack.selectorLabels" . | nindent 4 }}
     {{- if .Values.api.deploymentLabels }}

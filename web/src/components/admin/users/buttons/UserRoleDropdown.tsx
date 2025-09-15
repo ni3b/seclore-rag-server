@@ -68,13 +68,13 @@ const UserRoleDropdown = ({
         onValueChange={handleChange}
         disabled={isSettingRole}
       >
-        <SelectTrigger data-testid={`user-role-dropdown-trigger-${user.email}`}>
+        <SelectTrigger>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {(Object.entries(USER_ROLE_LABELS) as [UserRole, string][]).map(
             ([role, label]) => {
-              // Don't want to ever show external permissioned users because it's scary
+              // Dont want to ever show external permissioned users because it's scary
               if (role === UserRole.EXT_PERM_USER) return null;
 
               // Only want to show limited users if paid enterprise features are enabled
@@ -92,11 +92,7 @@ const UserRoleDropdown = ({
               return isNotVisibleRole && !isCurrentRole ? null : (
                 <SelectItem
                   key={role}
-                  onClick={() => {
-                    console.log("clicked");
-                  }}
                   value={role}
-                  data-testid={`user-role-dropdown-${role}`}
                   title={INVALID_ROLE_HOVER_TEXT[role] ?? ""}
                   data-tooltip-delay="0"
                 >

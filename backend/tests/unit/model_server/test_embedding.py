@@ -64,7 +64,7 @@ async def test_openai_embedding(
 
         embedding = CloudEmbedding("fake-key", EmbeddingProvider.OPENAI)
         result = await embedding._embed_openai(
-            ["test1", "test2"], "text-embedding-ada-002", None
+            ["test1", "test2"], "text-embedding-ada-002"
         )
 
         assert result == sample_embeddings
@@ -89,7 +89,6 @@ async def test_embed_text_cloud_provider() -> None:
             prefix=None,
             api_url=None,
             api_version=None,
-            reduced_dimension=None,
         )
 
         assert result == [[0.1, 0.2], [0.3, 0.4]]
@@ -115,7 +114,6 @@ async def test_embed_text_local_model() -> None:
             prefix=None,
             api_url=None,
             api_version=None,
-            reduced_dimension=None,
         )
 
         assert result == [[0.1, 0.2], [0.3, 0.4]]
@@ -159,7 +157,6 @@ async def test_rate_limit_handling() -> None:
                 prefix=None,
                 api_url=None,
                 api_version=None,
-                reduced_dimension=None,
             )
 
 
@@ -182,7 +179,6 @@ async def test_concurrent_embeddings() -> None:
         manual_passage_prefix=None,
         api_url=None,
         api_version=None,
-        reduced_dimension=None,
     )
 
     with patch("model_server.encoders.get_embedding_model") as mock_get_model:

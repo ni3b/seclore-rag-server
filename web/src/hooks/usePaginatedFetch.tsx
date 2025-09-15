@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-
+import {
+  IndexAttemptSnapshot,
+  AcceptedUserSnapshot,
+  InvitedUserSnapshot,
+} from "@/lib/types";
+import { ChatSessionMinimal } from "@/app/ee/admin/performance/usage/types";
 import { errorHandlingFetcher } from "@/lib/fetcher";
 
-// Any type that has an id property
-type PaginatedType = {
-  id: number | string;
-  [key: string]: any;
-};
+type PaginatedType =
+  | IndexAttemptSnapshot
+  | AcceptedUserSnapshot
+  | InvitedUserSnapshot
+  | ChatSessionMinimal;
 
 interface PaginatedApiResponse<T extends PaginatedType> {
   items: T[];
@@ -142,7 +147,7 @@ function usePaginatedFetch<T extends PaginatedType>({
   // Updates the URL with the current page number
   const updatePageUrl = useCallback(
     (page: number) => {
-      if (currentPath && searchParams) {
+      if (currentPath) {
         const params = new URLSearchParams(searchParams);
         params.set("page", page.toString());
         router.replace(`${currentPath}?${params.toString()}`, {
@@ -199,13 +204,9 @@ function usePaginatedFetch<T extends PaginatedType>({
   useEffect(() => {
     const { batchNum, batchPageNum } = batchAndPageIndices;
 
-    const cachedBatch = cachedBatches[batchNum];
-    if (cachedBatch !== undefined) {
-      const cachedBatchPage = cachedBatch[batchPageNum];
-      if (cachedBatchPage !== undefined) {
-        setCurrentPageData(cachedBatchPage);
-        setIsLoading(false);
-      }
+    if (cachedBatches[batchNum] && cachedBatches[batchNum][batchPageNum]) {
+      setCurrentPageData(cachedBatches[batchNum][batchPageNum]);
+      setIsLoading(false);
     }
   }, [currentPage, cachedBatches, pagesPerBatch]);
 

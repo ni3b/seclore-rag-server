@@ -1,117 +1,188 @@
-<!-- ONYX_METADATA={"link": "https://github.com/onyx-dot-app/onyx/blob/main/README.md"} -->
+<!-- DANSWER_METADATA={"link": "https://github.com/onyx-dot-app/onyx/blob/main/README.md"} -->
 
 <a name="readme-top"></a>
 
 <h2 align="center">
-<a href="https://www.onyx.app/"> <img width="50%" src="https://github.com/onyx-dot-app/onyx/blob/logo/OnyxLogoCropped.jpg?raw=true)" /></a>
+<a href="https://www.seclore.com/"> <img width="50%" src="https://astra.seclore.com/logotype.png" /></a>
 </h2>
 
-<p align="center">
-<p align="center">Open Source Gen-AI + Enterprise Search.</p>
-
-<p align="center">
-<a href="https://docs.onyx.app/" target="_blank">
-    <img src="https://img.shields.io/badge/docs-view-blue" alt="Documentation">
-</a>
-<a href="https://join.slack.com/t/onyx-dot-app/shared_invite/zt-34lu4m7xg-TsKGO6h8PDvR5W27zTdyhA" target="_blank">
-    <img src="https://img.shields.io/badge/slack-join-blue.svg?logo=slack" alt="Slack">
-</a>
-<a href="https://discord.gg/TDJ59cGV2X" target="_blank">
-    <img src="https://img.shields.io/badge/discord-join-blue.svg?logo=discord&logoColor=white" alt="Discord">
-</a>
-<a href="https://github.com/onyx-dot-app/onyx/blob/main/README.md" target="_blank">
-    <img src="https://img.shields.io/static/v1?label=license&message=MIT&color=blue" alt="License">
-</a>
-</p>
-
-<strong>[Onyx](https://www.onyx.app/)</strong> (formerly Danswer) is the AI platform connected to your company's docs, apps, and people.
-Onyx provides a feature rich Chat interface and plugs into any LLM of your choice.
-Keep knowledge and access controls sync-ed across over 40 connectors like Google Drive, Slack, Confluence, Salesforce, etc.
-Create custom AI agents with unique prompts, knowledge, and actions that the agents can take.
-Onyx can be deployed securely anywhere and for any scale - on a laptop, on-premise, or to cloud.
 
 
-<h3>Feature Highlights</h3>
+<strong>[Seclore](https://www.seclore.com/)</strong> is the AI Assistant connected to your company's docs, apps, and people.
+Seclore provides a Chat interface and plugs into any LLM of your choice. Seclore can be deployed anywhere and for any
+scale - on a laptop, on-premise, or to cloud. Since you own the deployment, your user data and chats are fully in your
+own control. Seclore is dual Licensed with most of it under MIT license and designed to be modular and easily extensible. The system also comes fully ready
+for production usage with user authentication, role management (admin/basic users), chat persistence, and a UI for
+configuring AI Assistants.
 
-**Deep research over your team's knowledge:**
+Seclore also serves as a Enterprise Search across all common workplace tools such as Slack, Google Drive, Confluence, etc.
+By combining LLMs and team specific knowledge, Seclore becomes a subject matter expert for the team. Imagine ChatGPT if
+it had access to your team's unique knowledge! It enables questions such as "A customer wants feature X, is this already
+supported?" or "Where's the pull request for feature Y?"
 
-https://private-user-images.githubusercontent.com/32520769/414509312-48392e83-95d0-4fb5-8650-a396e05e0a32.mp4?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3Mzk5Mjg2MzYsIm5iZiI6MTczOTkyODMzNiwicGF0aCI6Ii8zMjUyMDc2OS80MTQ1MDkzMTItNDgzOTJlODMtOTVkMC00ZmI1LTg2NTAtYTM5NmUwNWUwYTMyLm1wND9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNTAyMTklMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjUwMjE5VDAxMjUzNlomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPWFhMzk5Njg2Y2Y5YjFmNDNiYTQ2YzM5ZTg5YWJiYTU2NWMyY2YwNmUyODE2NWUxMDRiMWQxZWJmODI4YTA0MTUmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0In0.a9D8A0sgKE9AoaoE-mfFbJ6_OKYeqaf7TZ4Han2JfW8
+## 🚀 How to Run This Project
 
+### Prerequisites
+- Docker and Docker Compose installed
+- Git installed
+- At least 8GB RAM available
 
-**Use Onyx as a secure AI Chat with any LLM:**
+### Quick Start
+1. **Shallow pull the project from main:**
+   ```bash
+   git clone --depth 1 https://github.com/seclore/seclore-rag-server.git
+   cd seclore-rag-server
+   ```
 
-![Onyx Chat Silent Demo](https://github.com/onyx-dot-app/onyx/releases/download/v0.21.1/OnyxChatSilentDemo.gif)
+2. **Run via Docker Compose:**
+   ```bash
+   cd deployment/docker_compose/seclore/dev
+   docker-compose -f docker-compose.dev.seclore.yml up -d
+   ```
 
+3. **Access the application:**
+   - **Web UI:** http://localhost:3000
+   - **API Server:** http://localhost:8080
+   - **Vespa Index:** http://localhost:19071
+   - **Model Server:** http://localhost:9001
 
-**Easily set up connectors to your apps:**
+### Stopping the Services
+```bash
+docker-compose -f docker-compose.dev.seclore.yml down
+```
 
-![Onyx Connector Silent Demo](https://github.com/onyx-dot-app/onyx/releases/download/v0.21.1/OnyxConnectorSilentDemo.gif)
+## 📚 Documentation
 
+- **[Platform Guide](https://secloretechnology.atlassian.net/wiki/spaces/Automation/pages/2300084400/Seclore+AI+Platform+Guide?atlOrigin=eyJpIjoiMTQ5MzJjZDIzNmRkNDBmMGJmNjRmZjgyMjQ4ZTlkYWEiLCJwIjoiYyJ9)** - Comprehensive platform overview and setup
+- **[Migration Guide](https://secloretechnology.atlassian.net/wiki/spaces/Automation/pages/2404253887/Migration+Guide+Version+1.3.0.0+to+1.4.0.0?atlOrigin=eyJpIjoiODY2ZjM5NzBmZmI4NGI2NmE2ZTJjNTA3MmU0ZWZhMmQiLCJwIjoiYyJ9)** - Version migration instructions
+- **[Deployment Guide](https://secloretechnology.atlassian.net/wiki/spaces/Automation/folder/2404253751?atlOrigin=eyJpIjoiYmI4ZWY0MDFlZmMxNGEwNTkzMzhlOWNkZGE3ZDE0ZTQiLCJwIjoiYyJ9)** - Production deployment instructions
+- **[Release Notes](https://secloretechnology.atlassian.net/wiki/spaces/Automation/pages/2404253738/Gen+AI+Release+Notes+-+1.4.0.0?atlOrigin=eyJpIjoiZjY0MWY4OGIxNDhhNDA1NWI3NmY0Y2IyZTg3ZmRiNDAiLCJwIjoiYyJ9)** - Latest release information
+- **[User Guides & Prompts](https://secloretechnology.atlassian.net/wiki/spaces/Automation/folder/2298413212?atlOrigin=eyJpIjoiOTEzOTkxZWZhNjFkNGE3Yzk0ZjNjYzkxZGEzNWIwNGEiLCJwIjoiYyJ9)** - Agent-specific documentation
 
-**Access Onyx where your team already works:**
+## 💻 Development Workflow
 
-![Onyx Bot Demo](https://github.com/onyx-dot-app/onyx/releases/download/v0.21.1/OnyxBot.png)
+### Prerequisites
+- Python 3.9+ installed
+- Node.js 18+ installed
+- Docker and Docker Compose
+- Git
 
+### Getting Started with Development
+1. **Pull the latest code:**
+   ```bash
+   git pull origin main
+   ```
+
+2. **Create a feature branch:**
+   ```bash
+   git checkout -b feature/your-ticket-number
+   ```
+
+3. **Make your changes and commit:**
+   ```bash
+   git add .
+   git commit -m "feat: your feature description"
+   ```
+
+4. **Push and create PR:**
+   ```bash
+   git push origin feature/your-ticket-number
+   # Create PR to release candidate or required branch
+   ```
+
+### Development Tips
+- Run tests before committing: `python -m pytest` (backend) or `npm test` (frontend)
+- Follow the existing code style and conventions
+- Update documentation for any new features
+- Ensure Docker services are running for local development
+
+<h3>Usage</h3>
+
+Seclore Web App:
+
+https://github.com/seclore/seclore-rag-server/assets/32520769/563be14c-9304-47b5-bf0a-9049c2b6f410
+
+Or, plug Seclore into your existing Slack workflows (more integrations to come 😁):
+
+https://github.com/seclore/seclore-rag-server/assets/25087905/3e19739b-d178-4371-9a38-011430bdec1b
+
+For more details on the Admin UI to manage connectors and users, check out our
+<strong><a href="https://www.youtube.com/watch?v=geNzY1nbCnU">Full Video Demo</a></strong>!
 
 ## Deployment
-**To try it out for free and get started in seconds, check out [Onyx Cloud](https://cloud.onyx.app/signup)**.
 
-Onyx can also be run locally (even on a laptop) or deployed on a virtual machine with a single
-`docker compose` command. Checkout our [docs](https://docs.onyx.app/quickstart) to learn more.
+Seclore can easily be run locally (even on a laptop) or deployed on a virtual machine with a single
+`docker compose` command. Checkout our [docs](https://docs.seclore.com/quickstart) to learn more.
 
-We also have built-in support for high-availability/scalable deployment on Kubernetes.
-References [here](https://github.com/onyx-dot-app/onyx/tree/main/deployment).
+We also have built-in support for deployment on Kubernetes. Files for that can be found [here](https://github.com/seclore/seclore-rag-server/tree/main/deployment/kubernetes).
 
+## 💃 Main Features
 
-## 🔍 Other Notable Benefits of Onyx
-- Custom deep learning models for indexing and inference time, only through Onyx + learning from user feedback.
-- Flexible security features like SSO (OIDC/SAML/OAuth2), RBAC, encryption of credentials, etc.
-- Knowledge curation features like document-sets, query history, usage analytics, etc.
-- Scalable deployment options tested up to many tens of thousands users and hundreds of millions of documents.
-
+- Chat UI with the ability to select documents to chat with.
+- Create custom AI Assistants with different prompts and backing knowledge sets.
+- Connect Seclore with LLM of your choice (self-host for a fully airgapped solution).
+- Document Search + AI Answers for natural language queries.
+- Connectors to all common workplace tools like Google Drive, Confluence, Slack, etc.
+- Slack integration to get answers and search results directly in Slack.
 
 ## 🚧 Roadmap
-- New methods in information retrieval (StructRAG, LightGraphRAG, etc.)
-- Personalized Search
-- Organizational understanding and ability to locate and suggest experts from your team.
-- Code Search
-- SQL and Structured Query Language
 
+- Chat/Prompt sharing with specific teammates and user groups.
+- Multimodal model support, chat with images, video etc.
+- Choosing between LLMs and parameters during chat session.
+- Tool calling and agent configurations options.
+- Organizational understanding and ability to locate and suggest experts from your team.
+
+## Other Notable Benefits of Seclore
+
+- User Authentication with document level access management.
+- Best in class Hybrid Search across all sources (BM-25 + prefix aware embedding models).
+- Admin Dashboard to configure connectors, document-sets, access, etc.
+- Custom deep learning models + learn from user feedback.
+- Easy deployment and ability to host Seclore anywhere of your choosing.
 
 ## 🔌 Connectors
-Keep knowledge and access up to sync across 40+ connectors:
 
+Efficiently pulls the latest changes from:
+
+- Slack
+- GitHub
 - Google Drive
 - Confluence
-- Slack
-- Gmail
-- Salesforce
-- Microsoft Sharepoint
-- Github
 - Jira
 - Zendesk
+- Gmail
+- Notion
 - Gong
-- Microsoft Teams
-- Dropbox
+- Slab
+- Linear
+- Productboard
+- Guru
+- Bookstack
+- Document360
+- Sharepoint
+- Hubspot
 - Local Files
-- Websites
+- Websites.
 - And more ...
 
-See the full list [here](https://docs.onyx.app/connectors).
+## 🏗️ Architecture & Design
 
+For detailed information about Seclore's system architecture, design patterns, and technical implementation:
 
-## 📚 Licensing
-There are two editions of Onyx:
+- **[Architecture Design Document](https://secloretechnology.atlassian.net/wiki/x/EACQk)** - Comprehensive system architecture overview, design decisions, and technical specifications
 
-- Onyx Community Edition (CE) is available freely under the MIT Expat license. Simply follow the Deployment guide above.
-- Onyx Enterprise Edition (EE) includes extra features that are primarily useful for larger organizations.
-For feature details, check out [our website](https://www.onyx.app/pricing).
-
-To try the Onyx Enterprise Edition:
-1. Checkout [Onyx Cloud](https://cloud.onyx.app/signup).
-2. For self-hosting the Enterprise Edition, contact us at [founders@onyx.app](mailto:founders@onyx.app) or book a call with us on our [Cal](https://cal.com/team/onyx/founders).
-
+This document provides insights into:
+- System components and their interactions
+- Data flow and processing pipelines
+- Scalability and performance considerations
+- Security architecture and data protection
+- Integration patterns and APIs
 
 ## 💡 Contributing
+
 Looking to contribute? Please check out the [Contribution Guide](CONTRIBUTING.md) for more details.
 
+## ⭐Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=seclore/seclore-rag-server&type=Date)](https://star-history.com/#seclore/seclore-rag-server&Date)

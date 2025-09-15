@@ -56,7 +56,6 @@ export function AccessTypeGroupSelector({
       if (
         access_type.value === "private" &&
         userGroups.length === 1 &&
-        userGroups[0] !== undefined &&
         !isUserAdmin
       ) {
         groups_helpers.setValue([userGroups[0].id]);
@@ -88,7 +87,7 @@ export function AccessTypeGroupSelector({
   if (shouldHideContent) {
     return (
       <>
-        {userGroups && userGroups[0] !== undefined && (
+        {userGroups && (
           <div className="mb-1 font-medium text-base">
             This Connector will be assigned to group <b>{userGroups[0].name}</b>
             .
@@ -111,7 +110,7 @@ export function AccessTypeGroupSelector({
               </div>
             </div>
             {userGroupsIsLoading ? (
-              <div className="animate-pulse bg-background-200 h-8 w-32 rounded"></div>
+              <div className="animate-pulse bg-gray-200 h-8 w-32 rounded"></div>
             ) : (
               <Text className="mb-3">
                 {isAdmin ? (
@@ -132,7 +131,7 @@ export function AccessTypeGroupSelector({
               render={(arrayHelpers: ArrayHelpers) => (
                 <div className="flex gap-2 flex-wrap mb-4">
                   {userGroupsIsLoading ? (
-                    <div className="animate-pulse bg-background-200 h-8 w-32 rounded"></div>
+                    <div className="animate-pulse bg-gray-200 h-8 w-32 rounded"></div>
                   ) : (
                     userGroups &&
                     userGroups.map((userGroup: UserGroup) => {
@@ -152,8 +151,8 @@ export function AccessTypeGroupSelector({
                             cursor-pointer 
                             ${
                               isSelected
-                                ? "bg-background-200"
-                                : "hover:bg-accent-background-hovered"
+                                ? "bg-background-strong"
+                                : "hover:bg-hover"
                             }
                         `}
                           onClick={() => {

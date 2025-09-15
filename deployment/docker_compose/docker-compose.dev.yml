@@ -5,15 +5,15 @@ services:
       context: ../../backend
       dockerfile: Dockerfile
     command: >
-      /bin/sh -c "alembic upgrade head &&
-      echo \"Starting Onyx Api Server\" &&
+      /bin/sh -c "alembic upgrade head && 
+      echo \"Starting Seclore Api Server\" && 
       uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
     depends_on:
       - relational_db
       - index
       - cache
       - inference_model_server
-    restart: unless-stopped
+    restart: always
     ports:
       - "8080:8080"
     environment:
@@ -36,12 +36,11 @@ services:
       - OPENID_CONFIG_URL=${OPENID_CONFIG_URL:-}
       - TRACK_EXTERNAL_IDP_EXPIRY=${TRACK_EXTERNAL_IDP_EXPIRY:-}
       - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-}
-      - INTEGRATION_TESTS_MODE=${INTEGRATION_TESTS_MODE:-}
       # Gen AI Settings
       - GEN_AI_MAX_TOKENS=${GEN_AI_MAX_TOKENS:-}
       - QA_TIMEOUT=${QA_TIMEOUT:-}
       - MAX_CHUNKS_FED_TO_CHAT=${MAX_CHUNKS_FED_TO_CHAT:-}
-      - DISABLE_LLM_CHOOSE_SEARCH=${DISABLE_LLM_CHOOSE_SEARCH:-}
+      - DISABLE_LLM_CHOOSE_SEARCH=false
       - DISABLE_LLM_QUERY_REPHRASE=${DISABLE_LLM_QUERY_REPHRASE:-}
       - DISABLE_GENERATIVE_AI=${DISABLE_GENERATIVE_AI:-}
       - DISABLE_LITELLM_STREAMING=${DISABLE_LITELLM_STREAMING:-}
@@ -53,29 +52,18 @@ services:
       - TOKEN_BUDGET_GLOBALLY_ENABLED=${TOKEN_BUDGET_GLOBALLY_ENABLED:-}
       # Query Options
       - DOC_TIME_DECAY=${DOC_TIME_DECAY:-} # Recency Bias for search results, decay at 1 / (1 + DOC_TIME_DECAY * x years)
-      - HYBRID_ALPHA=${HYBRID_ALPHA:-} # Hybrid Search Alpha (0 for entirely keyword, 1 for entirely vector)
+      - HYBRID_ALPHA=0.5 #${HYBRID_ALPHA:-} # Hybrid Search Alpha (0 for entirely keyword, 1 for entirely vector)
       - EDIT_KEYWORD_QUERY=${EDIT_KEYWORD_QUERY:-}
       - MULTILINGUAL_QUERY_EXPANSION=${MULTILINGUAL_QUERY_EXPANSION:-}
       - LANGUAGE_HINT=${LANGUAGE_HINT:-}
       - LANGUAGE_CHAT_NAMING_HINT=${LANGUAGE_CHAT_NAMING_HINT:-}
       - QA_PROMPT_OVERRIDE=${QA_PROMPT_OVERRIDE:-}
-      - USE_SEMANTIC_KEYWORD_EXPANSIONS_BASIC_SEARCH=${USE_SEMANTIC_KEYWORD_EXPANSIONS_BASIC_SEARCH:-}
       # Other services
       - POSTGRES_HOST=relational_db
       - POSTGRES_DEFAULT_SCHEMA=${POSTGRES_DEFAULT_SCHEMA:-}
-      - POSTGRES_USE_NULL_POOL=${POSTGRES_USE_NULL_POOL:-}
-      - POSTGRES_API_SERVER_POOL_SIZE=${POSTGRES_API_SERVER_POOL_SIZE:-}
-      - POSTGRES_API_SERVER_POOL_OVERFLOW=${POSTGRES_API_SERVER_POOL_OVERFLOW:-}
-      - POSTGRES_IDLE_SESSIONS_TIMEOUT=${POSTGRES_IDLE_SESSIONS_TIMEOUT:-}
-      - POSTGRES_POOL_RECYCLE=${POSTGRES_POOL_RECYCLE:-}
       - VESPA_HOST=index
       - REDIS_HOST=cache
       - WEB_DOMAIN=${WEB_DOMAIN:-} # For frontend redirect auth purpose
-      # MinIO configuration
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
-      - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
-      - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
-      - S3_FILE_STORE_BUCKET_NAME=${S3_FILE_STORE_BUCKET_NAME:-}
       # Don't change the NLP model configs unless you know what you're doing
       - EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-}
       - DOCUMENT_ENCODER_MODEL=${DOCUMENT_ENCODER_MODEL:-}
@@ -90,7 +78,7 @@ services:
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-}
       - LOG_LEVEL=${LOG_LEVEL:-info} # Set to debug to get more fine-grained logs
       - LOG_ALL_MODEL_INTERACTIONS=${LOG_ALL_MODEL_INTERACTIONS:-} # LiteLLM Verbose Logging
-      # Log all of Onyx prompts and interactions with the LLM
+      # Log all of Seclore prompts and interactions with the LLM
       - LOG_DANSWER_MODEL_INTERACTIONS=${LOG_DANSWER_MODEL_INTERACTIONS:-}
       - LOG_INDIVIDUAL_MODEL_TOKENS=${LOG_INDIVIDUAL_MODEL_TOKENS:-}
       # If set to `true` will enable additional logs about Vespa query performance
@@ -109,9 +97,6 @@ services:
       - LINEAR_CLIENT_ID=${LINEAR_CLIENT_ID:-}
       - LINEAR_CLIENT_SECRET=${LINEAR_CLIENT_SECRET:-}
 
-      # Demo purposes
-      - MOCK_CONNECTOR_FILE_PATH=${MOCK_CONNECTOR_FILE_PATH:-}
-
       # Analytics Configs
       - SENTRY_DSN=${SENTRY_DSN:-}
 
@@ -128,15 +113,10 @@ services:
       - API_KEY_HASH_ROUNDS=${API_KEY_HASH_ROUNDS:-}
       # Seeding configuration
       - USE_IAM_AUTH=${USE_IAM_AUTH:-}
-      - ONYX_QUERY_HISTORY_TYPE=${ONYX_QUERY_HISTORY_TYPE:-}
-
-      # Vespa Language Forcing
-      # See: https://docs.vespa.ai/en/linguistics.html 
-      - VESPA_LANGUAGE_OVERRIDE=${VESPA_LANGUAGE_OVERRIDE:-}
-
     # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
-    # volumes:
+    volumes:
     #   - ./bundle.pem:/app/bundle.pem:ro
+      - ./api/log:/var/log
     extra_hosts:
       - "host.docker.internal:host-gateway"
     logging:
@@ -144,9 +124,6 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
-    # optional, only for debugging purposes
-    volumes:
-      - api_server_logs:/var/log
 
   background:
     image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
@@ -165,7 +142,7 @@ services:
       - cache
       - inference_model_server
       - indexing_model_server
-    restart: unless-stopped
+    restart: always
     environment:
       - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
       - JWT_PUBLIC_KEY_URL=${JWT_PUBLIC_KEY_URL:-} # used for JWT authentication of users via API
@@ -183,7 +160,7 @@ services:
       - BING_API_KEY=${BING_API_KEY:-}
       # Query Options
       - DOC_TIME_DECAY=${DOC_TIME_DECAY:-} # Recency Bias for search results, decay at 1 / (1 + DOC_TIME_DECAY * x years)
-      - HYBRID_ALPHA=${HYBRID_ALPHA:-} # Hybrid Search Alpha (0 for entirely keyword, 1 for entirely vector)
+      - HYBRID_ALPHA=0.5 #${HYBRID_ALPHA:-} # Hybrid Search Alpha (0 for entirely keyword, 1 for entirely vector)
       - EDIT_KEYWORD_QUERY=${EDIT_KEYWORD_QUERY:-}
       - MULTILINGUAL_QUERY_EXPANSION=${MULTILINGUAL_QUERY_EXPANSION:-}
       - LANGUAGE_HINT=${LANGUAGE_HINT:-}
@@ -193,19 +170,11 @@ services:
       - POSTGRES_HOST=relational_db
       - POSTGRES_USER=${POSTGRES_USER:-}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
-      - DB_READONLY_USER=${DB_READONLY_USER:-}
-      - DB_READONLY_PASSWORD=${DB_READONLY_PASSWORD:-}
       - POSTGRES_DB=${POSTGRES_DB:-}
       - POSTGRES_DEFAULT_SCHEMA=${POSTGRES_DEFAULT_SCHEMA:-}
-      - POSTGRES_USE_NULL_POOL=${POSTGRES_USE_NULL_POOL:-}
       - VESPA_HOST=index
       - REDIS_HOST=cache
       - WEB_DOMAIN=${WEB_DOMAIN:-} # For frontend redirect auth purpose for OAuth2 connectors
-      # MinIO configuration
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
-      - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
-      - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
-      - S3_FILE_STORE_BUCKET_NAME=${S3_FILE_STORE_BUCKET_NAME:-}
       # Don't change the NLP model configs unless you know what you're doing
       - DOCUMENT_ENCODER_MODEL=${DOCUMENT_ENCODER_MODEL:-}
       - DOC_EMBEDDING_DIM=${DOC_EMBEDDING_DIM:-}
@@ -217,6 +186,7 @@ services:
       - INDEXING_MODEL_SERVER_HOST=${INDEXING_MODEL_SERVER_HOST:-indexing_model_server}
       # Indexing Configs
       - VESPA_SEARCHER_THREADS=${VESPA_SEARCHER_THREADS:-}
+      - NUM_INDEXING_WORKERS=${NUM_INDEXING_WORKERS:-}
       - ENABLED_CONNECTOR_TYPES=${ENABLED_CONNECTOR_TYPES:-}
       - DISABLE_INDEX_UPDATE_ON_SWAP=${DISABLE_INDEX_UPDATE_ON_SWAP:-}
       - DASK_JOB_CLIENT_ENABLED=${DASK_JOB_CLIENT_ENABLED:-}
@@ -244,7 +214,7 @@ services:
       - CELERY_WORKER_LIGHT_CONCURRENCY=${CELERY_WORKER_LIGHT_CONCURRENCY:-}
       - CELERY_WORKER_LIGHT_PREFETCH_MULTIPLIER=${CELERY_WORKER_LIGHT_PREFETCH_MULTIPLIER:-}
 
-      # Onyx SlackBot Configs
+      # Seclore SlackBot Configs
       - DANSWER_BOT_DISABLE_DOCS_ONLY_ANSWER=${DANSWER_BOT_DISABLE_DOCS_ONLY_ANSWER:-}
       - DANSWER_BOT_FEEDBACK_VISIBILITY=${DANSWER_BOT_FEEDBACK_VISIBILITY:-}
       - DANSWER_BOT_DISPLAY_ERROR_MSGS=${DANSWER_BOT_DISPLAY_ERROR_MSGS:-}
@@ -259,7 +229,7 @@ services:
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-}
       - LOG_LEVEL=${LOG_LEVEL:-info} # Set to debug to get more fine-grained logs
       - LOG_ALL_MODEL_INTERACTIONS=${LOG_ALL_MODEL_INTERACTIONS:-} # LiteLLM Verbose Logging
-      # Log all of Onyx prompts and interactions with the LLM
+      # Log all of Seclore prompts and interactions with the LLM
       - LOG_DANSWER_MODEL_INTERACTIONS=${LOG_DANSWER_MODEL_INTERACTIONS:-}
       - LOG_INDIVIDUAL_MODEL_TOKENS=${LOG_INDIVIDUAL_MODEL_TOKENS:-}
       - LOG_VESPA_TIMING_INFORMATION=${LOG_VESPA_TIMING_INFORMATION:-}
@@ -273,16 +243,12 @@ services:
       - AWS_REGION_NAME=${AWS_REGION_NAME:-}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY-}
-        # primarily for testing
-      - CHECK_TTL_MANAGEMENT_TASK_FREQUENCY_IN_HOURS=${CHECK_TTL_MANAGEMENT_TASK_FREQUENCY_IN_HOURS:-}
     # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
-    # volumes:
-    #   - ./bundle.pem:/app/bundle.pem:ro
+    volumes:
+      #- ./bundle.pem:/app/bundle.pem:ro
+      - ./background/log:/var/log
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # optional, only for debugging purposes
-    volumes:
-      - background_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -313,11 +279,11 @@ services:
         - NEXT_PUBLIC_FORGOT_PASSWORD_ENABLED=${NEXT_PUBLIC_FORGOT_PASSWORD_ENABLED:-}
         # Enterprise Edition only
         - NEXT_PUBLIC_THEME=${NEXT_PUBLIC_THEME:-}
-        # DO NOT TURN ON unless you have EXPLICIT PERMISSION from Onyx.
+        # DO NOT TURN ON unless you have EXPLICIT PERMISSION from Seclore.
         - NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED=${NEXT_PUBLIC_DO_NOT_USE_TOGGLE_OFF_DANSWER_POWERED:-false}
     depends_on:
       - api_server
-    restart: unless-stopped
+    restart: always
     environment:
       - INTERNAL_URL=http://api_server:8080
       - WEB_DOMAIN=${WEB_DOMAIN:-}
@@ -340,7 +306,7 @@ services:
       else
         exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
       fi"
-    restart: unless-stopped
+    restart: on-failure
     environment:
       - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
       # Set to debug to get more fine-grained logs
@@ -351,8 +317,6 @@ services:
     volumes:
       # Not necessary, this is just to reduce download time during startup
       - model_cache_huggingface:/root/.cache/huggingface/
-      # optional, only for debugging purposes
-      - inference_model_server_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -371,7 +335,7 @@ services:
       else
         exec uvicorn model_server.main:app --host 0.0.0.0 --port 9000;
       fi"
-    restart: unless-stopped
+    restart: on-failure
     environment:
       - INDEX_BATCH_SIZE=${INDEX_BATCH_SIZE:-}
       - MIN_THREADS_ML_MODELS=${MIN_THREADS_ML_MODELS:-}
@@ -385,8 +349,6 @@ services:
     volumes:
       # Not necessary, this is just to reduce download time during startup
       - indexing_huggingface_model_cache:/root/.cache/huggingface/
-      # optional, only for debugging purposes
-      - indexing_model_server_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -395,14 +357,11 @@ services:
 
   relational_db:
     image: postgres:15.2-alpine
-    shm_size: 1g
     command: -c 'max_connections=250'
-    restart: unless-stopped
+    restart: always
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-      - DB_READONLY_USER=${DB_READONLY_USER:-}
-      - DB_READONLY_PASSWORD=${DB_READONLY_PASSWORD:-}
     ports:
       - "5432:5432"
     volumes:
@@ -410,10 +369,8 @@ services:
 
   # This container name cannot have an underscore in it due to Vespa expectations of the URL
   index:
-    image: vespaengine/vespa:8.526.15
-    restart: unless-stopped
-    environment:
-      - VESPA_SKIP_UPGRADE_CHECK=true
+    image: vespaengine/vespa:8.277.17
+    restart: always
     ports:
       - "19071:19071"
       - "8081:8081"
@@ -427,7 +384,7 @@ services:
 
   nginx:
     image: nginx:1.23.4-alpine
-    restart: unless-stopped
+    restart: always
     # nginx will immediately crash with `nginx: [emerg] host not found in upstream`
     # if api_server / web_server are not up
     depends_on:
@@ -456,41 +413,16 @@ services:
 
   cache:
     image: redis:7.4-alpine
-    restart: unless-stopped
+    restart: always
     ports:
       - "6379:6379"
     # docker silently mounts /data even without an explicit volume mount, which enables
     # persistence. explicitly setting save and appendonly forces ephemeral behavior.
     command: redis-server --save "" --appendonly no
 
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    ports:
-      - "9004:9000"
-      - "9005:9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_DEFAULT_BUCKETS: ${S3_FILE_STORE_BUCKET_NAME:-onyx-file-store-bucket}
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-
 volumes:
   db_volume:
   vespa_volume: # Created by the container itself
-  minio_data:
 
   model_cache_huggingface:
   indexing_huggingface_model_cache:
-  # for logs that we don't want to lose on container restarts
-  api_server_logs:
-  background_logs:
-  inference_model_server_logs:
-  indexing_model_server_logs:

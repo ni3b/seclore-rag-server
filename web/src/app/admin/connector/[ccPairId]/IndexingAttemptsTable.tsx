@@ -15,9 +15,13 @@ import { CCPairFullInfo } from "./types";
 import { IndexAttemptSnapshot } from "@/lib/types";
 import { IndexAttemptStatus } from "@/components/Status";
 import { PageSelector } from "@/components/PageSelector";
+import { ThreeDotsLoader } from "@/components/Loading";
+import { buildCCPairInfoUrl } from "./lib";
 import { localizeAndPrettify } from "@/lib/time";
 import { getDocsProcessedPerMinute } from "@/lib/indexAttempt";
-import { InfoIcon } from "@/components/icons/icons";
+import { ErrorCallout } from "@/components/ErrorCallout";
+import { InfoIcon, SearchIcon } from "@/components/icons/icons";
+import Link from "next/link";
 import ExceptionTraceModal from "@/components/modals/ExceptionTraceModal";
 import {
   Tooltip,
@@ -25,27 +29,43 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { FaBarsProgress } from "react-icons/fa6";
+import usePaginatedFetch from "@/hooks/usePaginatedFetch";
 
-export interface IndexingAttemptsTableProps {
-  ccPair: CCPairFullInfo;
-  indexAttempts: IndexAttemptSnapshot[];
-  currentPage: number;
-  totalPages: number;
-  onPageChange: (page: number) => void;
-}
+const ITEMS_PER_PAGE = 8;
+const PAGES_PER_BATCH = 8;
 
-export function IndexingAttemptsTable({
-  indexAttempts,
-  currentPage,
-  totalPages,
-  onPageChange,
-}: IndexingAttemptsTableProps) {
+export function IndexingAttemptsTable({ ccPair }: { ccPair: CCPairFullInfo }) {
   const [indexAttemptTracePopupId, setIndexAttemptTracePopupId] = useState<
     number | null
   >(null);
 
-  if (!indexAttempts?.length) {
+  const {
+    currentPageData: pageOfIndexAttempts,
+    isLoading,
+    error,
+    currentPage,
+    totalPages,
+    goToPage,
+  } = usePaginatedFetch<IndexAttemptSnapshot>({
+    itemsPerPage: ITEMS_PER_PAGE,
+    pagesPerBatch: PAGES_PER_BATCH,
+    endpoint: `${buildCCPairInfoUrl(ccPair.id)}/index-attempts`,
+  });
+
+  if (isLoading || !pageOfIndexAttempts) {
+    return <ThreeDotsLoader />;
+  }
+
+  if (error) {
+    return (
+      <ErrorCallout
+        errorTitle={`Failed to fetch info on Connector with ID ${ccPair.id}`}
+        errorMsg={error?.toString() || "Unknown error"}
+      />
+    );
+  }
+
+  if (!pageOfIndexAttempts?.length) {
     return (
       <Callout
         className="mt-4"
@@ -58,7 +78,7 @@ export function IndexingAttemptsTable({
     );
   }
 
-  const indexAttemptToDisplayTraceFor = indexAttempts?.find(
+  const indexAttemptToDisplayTraceFor = pageOfIndexAttempts?.find(
     (indexAttempt) => indexAttempt.id === indexAttemptTracePopupId
   );
 
@@ -76,14 +96,14 @@ export function IndexingAttemptsTable({
           <TableRow>
             <TableHead>Time Started</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead className="whitespace-nowrap">New Docs</TableHead>
+            <TableHead>New Doc Cnt</TableHead>
             <TableHead>
-              <div className="w-fit whitespace-nowrap">
+              <div className="w-fit">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="flex items-center">
-                        Total Docs
+                      <span className="cursor-help flex items-center">
+                        Total Doc Cnt
                         <InfoIcon className="ml-1 w-4 h-4" />
                       </span>
                     </TooltipTrigger>
@@ -99,7 +119,7 @@ export function IndexingAttemptsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {indexAttempts.map((indexAttempt) => {
+          {pageOfIndexAttempts.map((indexAttempt) => {
             const docsPerMinute =
               getDocsProcessedPerMinute(indexAttempt)?.toFixed(2);
             return (
@@ -138,37 +158,21 @@ export function IndexingAttemptsTable({
                     </div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <div className="flex items-center">
-                    {indexAttempt.total_docs_indexed}
-                    {indexAttempt.from_beginning && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-help flex items-center">
-                              <FaBarsProgress className="ml-2 h-3.5 w-3.5" />
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            This index attempt{" "}
-                            {indexAttempt.status === "in_progress" ||
-                            indexAttempt.status === "not_started"
-                              ? "is"
-                              : "was"}{" "}
-                            a full re-index. All documents from the source{" "}
-                            {indexAttempt.status === "in_progress" ||
-                            indexAttempt.status === "not_started"
-                              ? "are being "
-                              : "were "}
-                            synced into the system.
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                  </div>
-                </TableCell>
+                <TableCell>{indexAttempt.total_docs_indexed}</TableCell>
                 <TableCell>
                   <div>
+                    {indexAttempt.error_count > 0 && (
+                      <Link
+                        className="cursor-pointer my-auto"
+                        href={`/admin/indexing/${indexAttempt.id}`}
+                      >
+                        <Text className="flex flex-wrap text-link whitespace-normal">
+                          <SearchIcon />
+                          &nbsp;View Errors
+                        </Text>
+                      </Link>
+                    )}
+
                     {indexAttempt.status === "success" && (
                       <Text className="flex flex-wrap whitespace-normal">
                         {"-"}
@@ -205,7 +209,7 @@ export function IndexingAttemptsTable({
             <PageSelector
               totalPages={totalPages}
               currentPage={currentPage}
-              onPageChange={onPageChange}
+              onPageChange={goToPage}
             />
           </div>
         </div>

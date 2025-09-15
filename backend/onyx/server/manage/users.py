@@ -1,8 +1,6 @@
 import re
 from datetime import datetime
-from datetime import timedelta
 from datetime import timezone
-from typing import cast
 
 import jwt
 from email_validator import EmailNotValidError
@@ -14,13 +12,16 @@ from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Request
+from psycopg2.errors import UniqueViolation
 from pydantic import BaseModel
 from sqlalchemy import Column
 from sqlalchemy import desc
 from sqlalchemy import select
 from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ee.onyx.configs.app_configs import SUPER_USERS
 from onyx.auth.email_utils import send_user_email_invite
 from onyx.auth.invited_users import get_invited_users
 from onyx.auth.invited_users import write_invited_users
@@ -32,19 +33,16 @@ from onyx.auth.users import current_admin_user
 from onyx.auth.users import current_curator_or_admin_user
 from onyx.auth.users import current_user
 from onyx.auth.users import optional_user
-from onyx.configs.app_configs import AUTH_BACKEND
 from onyx.configs.app_configs import AUTH_TYPE
-from onyx.configs.app_configs import AuthBackend
-from onyx.configs.app_configs import DEV_MODE
 from onyx.configs.app_configs import ENABLE_EMAIL_INVITES
-from onyx.configs.app_configs import REDIS_AUTH_KEY_PREFIX
 from onyx.configs.app_configs import SESSION_EXPIRE_TIME_SECONDS
 from onyx.configs.app_configs import VALID_EMAIL_DOMAINS
 from onyx.configs.constants import AuthType
-from onyx.configs.constants import FASTAPI_USERS_AUTH_COOKIE_NAME
 from onyx.db.api_key import is_api_key_email_address
-from onyx.db.auth import get_live_users_count
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.auth import get_total_users_count
+from onyx.db.engine import CURRENT_TENANT_ID_CONTEXTVAR
+from onyx.db.engine import get_current_tenant_id
+from onyx.db.engine import get_session
 from onyx.db.models import AccessToken
 from onyx.db.models import User
 from onyx.db.users import delete_user_from_db
@@ -54,12 +52,9 @@ from onyx.db.users import get_total_filtered_users_count
 from onyx.db.users import get_user_by_email
 from onyx.db.users import validate_user_role_update
 from onyx.key_value_store.factory import get_kv_store
-from onyx.redis.redis_pool import get_raw_redis_client
 from onyx.server.documents.models import PaginatedReturn
 from onyx.server.manage.models import AllUsersResponse
 from onyx.server.manage.models import AutoScrollRequest
-from onyx.server.manage.models import TenantInfo
-from onyx.server.manage.models import TenantSnapshot
 from onyx.server.manage.models import UserByEmail
 from onyx.server.manage.models import UserInfo
 from onyx.server.manage.models import UserPreferences
@@ -71,11 +66,7 @@ from onyx.server.models import MinimalUserSnapshot
 from onyx.server.utils import BasicAuthenticationError
 from onyx.utils.logger import setup_logger
 from onyx.utils.variable_functionality import fetch_ee_implementation_or_noop
-from onyx.utils.variable_functionality import (
-    fetch_versioned_implementation_with_fallback,
-)
 from shared_configs.configs import MULTI_TENANT
-from shared_configs.contextvars import get_current_tenant_id
 
 logger = setup_logger()
 router = APIRouter()
@@ -104,7 +95,6 @@ def set_user_role(
     validate_user_role_update(
         requested_role=requested_role,
         current_role=current_role,
-        explicit_override=user_role_update_request.explicit_override,
     )
 
     if user_to_update.id == current_user.id:
@@ -123,22 +113,6 @@ def set_user_role(
     user_to_update.role = user_role_update_request.new_role
 
     db_session.commit()
-
-
-class TestUpsertRequest(BaseModel):
-    email: str
-
-
-@router.post("/manage/users/test-upsert-user")
-async def test_upsert_user(
-    request: TestUpsertRequest,
-    _: User = Depends(current_admin_user),
-) -> None | FullUserSnapshot:
-    """Test endpoint for upsert_saml_user. Only used for integration testing."""
-    user = await fetch_ee_implementation_or_noop(
-        "onyx.server.saml", "upsert_saml_user", None
-    )(email=request.email)
-    return FullUserSnapshot.from_user_model(user) if user else None
 
 
 @router.get("/manage/users/accepted")
@@ -197,14 +171,13 @@ def list_all_users(
     accepted_page: int | None = None,
     slack_users_page: int | None = None,
     invited_page: int | None = None,
-    include_api_keys: bool = False,
     _: User | None = Depends(current_curator_or_admin_user),
     db_session: Session = Depends(get_session),
 ) -> AllUsersResponse:
     users = [
         user
         for user in get_all_users(db_session, email_filter_string=q)
-        if (include_api_keys or not is_api_key_email_address(user.email))
+        if not is_api_key_email_address(user.email)
     ]
 
     slack_users = [user for user in users if user.role == UserRole.SLACK_USER]
@@ -231,7 +204,6 @@ def list_all_users(
                     email=user.email,
                     role=user.role,
                     is_active=user.is_active,
-                    password_configured=user.password_configured,
                 )
                 for user in accepted_users
             ],
@@ -241,7 +213,6 @@ def list_all_users(
                     email=user.email,
                     role=user.role,
                     is_active=user.is_active,
-                    password_configured=user.password_configured,
                 )
                 for user in slack_users
             ],
@@ -259,7 +230,6 @@ def list_all_users(
                 email=user.email,
                 role=user.role,
                 is_active=user.is_active,
-                password_configured=user.password_configured,
             )
             for user in accepted_users
         ][accepted_page * USERS_PAGE_SIZE : (accepted_page + 1) * USERS_PAGE_SIZE],
@@ -269,7 +239,6 @@ def list_all_users(
                 email=user.email,
                 role=user.role,
                 is_active=user.is_active,
-                password_configured=user.password_configured,
             )
             for user in slack_users
         ][
@@ -294,16 +263,14 @@ def bulk_invite_users(
 ) -> int:
     """emails are string validated. If any email fails validation, no emails are
     invited and an exception is raised."""
-    tenant_id = get_current_tenant_id()
 
     if current_user is None:
         raise HTTPException(
             status_code=400, detail="Auth is disabled, cannot invite users"
         )
 
+    tenant_id = CURRENT_TENANT_ID_CONTEXTVAR.get()
     new_invited_emails = []
-    email: str
-
     try:
         for email in emails:
             email_info = validate_email(email)
@@ -321,6 +288,13 @@ def bulk_invite_users(
                 "onyx.server.tenants.provisioning", "add_users_to_tenant", None
             )(new_invited_emails, tenant_id)
 
+        except IntegrityError as e:
+            if isinstance(e.orig, UniqueViolation):
+                raise HTTPException(
+                    status_code=400,
+                    detail="User has already been invited to a Seclore organization",
+                )
+            raise
         except Exception as e:
             logger.error(f"Failed to add users to tenant {tenant_id}: {str(e)}")
 
@@ -329,23 +303,19 @@ def bulk_invite_users(
     all_emails = list(set(new_invited_emails) | set(initial_invited_users))
     number_of_invited_users = write_invited_users(all_emails)
 
-    # send out email invitations if enabled
-    if ENABLE_EMAIL_INVITES:
-        try:
-            for email in new_invited_emails:
-                send_user_email_invite(email, current_user, AUTH_TYPE)
-        except Exception as e:
-            logger.error(f"Error sending email invite to invited users: {e}")
-
-    if not MULTI_TENANT or DEV_MODE:
+    if not MULTI_TENANT:
         return number_of_invited_users
-
-    # for billing purposes, write to the control plane about the number of new users
     try:
         logger.info("Registering tenant users")
         fetch_ee_implementation_or_noop(
             "onyx.server.tenants.billing", "register_tenant_users", None
-        )(tenant_id, get_live_users_count(db_session))
+        )(CURRENT_TENANT_ID_CONTEXTVAR.get(), get_total_users_count(db_session))
+        if ENABLE_EMAIL_INVITES:
+            try:
+                for email in new_invited_emails:
+                    send_user_email_invite(email, current_user)
+            except Exception as e:
+                logger.error(f"Error sending email invite to invited users: {e}")
 
         return number_of_invited_users
     except Exception as e:
@@ -366,22 +336,20 @@ def remove_invited_user(
     _: User | None = Depends(current_admin_user),
     db_session: Session = Depends(get_session),
 ) -> int:
-    tenant_id = get_current_tenant_id()
     user_emails = get_invited_users()
     remaining_users = [user for user in user_emails if user != user_email.user_email]
 
-    if MULTI_TENANT:
-        fetch_ee_implementation_or_noop(
-            "onyx.server.tenants.user_mapping", "remove_users_from_tenant", None
-        )([user_email.user_email], tenant_id)
-
+    tenant_id = CURRENT_TENANT_ID_CONTEXTVAR.get()
+    fetch_ee_implementation_or_noop(
+        "onyx.server.tenants.user_mapping", "remove_users_from_tenant", None
+    )([user_email.user_email], tenant_id)
     number_of_invited_users = write_invited_users(remaining_users)
 
     try:
-        if MULTI_TENANT and not DEV_MODE:
+        if MULTI_TENANT:
             fetch_ee_implementation_or_noop(
                 "onyx.server.tenants.billing", "register_tenant_users", None
-            )(tenant_id, get_live_users_count(db_session))
+            )(CURRENT_TENANT_ID_CONTEXTVAR.get(), get_total_users_count(db_session))
     except Exception:
         logger.error(
             "Request to update number of seats taken in control plane failed. "
@@ -445,10 +413,6 @@ async def delete_user(
     db_session.expunge(user_to_delete)
 
     try:
-        tenant_id = get_current_tenant_id()
-        fetch_ee_implementation_or_noop(
-            "onyx.server.tenants.user_mapping", "remove_users_from_tenant", None
-        )([user_email.user_email], tenant_id)
         delete_user_from_db(user_to_delete, db_session)
         logger.info(f"Deleted user {user_to_delete.email}")
 
@@ -504,7 +468,7 @@ async def get_user_role(user: User = Depends(current_user)) -> UserRoleResponse:
     return UserRoleResponse(role=user.role)
 
 
-def get_current_auth_token_expiration_jwt(
+def get_current_token_expiration_jwt(
     user: User | None, request: Request
 ) -> datetime | None:
     if user is None:
@@ -512,7 +476,7 @@ def get_current_auth_token_expiration_jwt(
 
     try:
         # Get the JWT from the cookie
-        jwt_token = request.cookies.get(FASTAPI_USERS_AUTH_COOKIE_NAME)
+        jwt_token = request.cookies.get("fastapiusersauth")
         if not jwt_token:
             logger.error("No JWT token found in cookies")
             return None
@@ -530,48 +494,6 @@ def get_current_auth_token_expiration_jwt(
 
     except Exception as e:
         logger.error(f"Error decoding JWT: {e}")
-        return None
-
-
-def get_current_auth_token_creation_redis(
-    user: User | None, request: Request
-) -> datetime | None:
-    """Calculate the token creation time from Redis TTL information.
-
-    This function retrieves the authentication token from cookies,
-    checks its TTL in Redis, and calculates when the token was created.
-    Despite the function name, it returns the token creation time, not the expiration time.
-    """
-    if user is None:
-        return None
-    try:
-        # Get the token from the request
-        token = request.cookies.get(FASTAPI_USERS_AUTH_COOKIE_NAME)
-        if not token:
-            logger.debug("No auth token cookie found")
-            return None
-
-        # Get the Redis client
-        redis = get_raw_redis_client()
-        redis_key = REDIS_AUTH_KEY_PREFIX + token
-
-        # Get the TTL of the token
-        ttl = cast(int, redis.ttl(redis_key))
-        if ttl <= 0:
-            logger.error("Token has expired or doesn't exist in Redis")
-            return None
-
-        # Calculate the creation time based on TTL and session expiry
-        # Current time minus (total session length minus remaining TTL)
-        current_time = datetime.now(timezone.utc)
-        token_creation_time = current_time - timedelta(
-            seconds=(SESSION_EXPIRE_TIME_SECONDS - ttl)
-        )
-
-        return token_creation_time
-
-    except Exception as e:
-        logger.error(f"Error retrieving token expiration from Redis: {e}")
         return None
 
 
@@ -602,12 +524,10 @@ def get_current_token_creation(
 
 @router.get("/me")
 def verify_user_logged_in(
-    request: Request,
     user: User | None = Depends(optional_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str | None = Depends(get_current_tenant_id),
 ) -> UserInfo:
-    tenant_id = get_current_tenant_id()
-
     # NOTE: this does not use `current_user` / `current_admin_user` because we don't want
     # to enforce user verification here - the frontend always wants to get the info about
     # the current user regardless of if they are currently verified
@@ -620,55 +540,26 @@ def verify_user_logged_in(
         if anonymous_user_enabled(tenant_id=tenant_id):
             store = get_kv_store()
             return fetch_no_auth_user(store, anonymous_user_enabled=True)
-        raise BasicAuthenticationError(detail="User Not Authenticated")
 
+        raise BasicAuthenticationError(detail="User Not Authenticated")
     if user.oidc_expiry and user.oidc_expiry < datetime.now(timezone.utc):
         raise BasicAuthenticationError(
             detail="Access denied. User's OIDC token has expired.",
         )
 
     token_created_at = (
-        get_current_auth_token_creation_redis(user, request)
-        if AUTH_BACKEND == AuthBackend.REDIS
-        else get_current_token_creation(user, db_session)
+        None if MULTI_TENANT else get_current_token_creation(user, db_session)
     )
-
-    team_name = fetch_ee_implementation_or_noop(
+    organization_name = fetch_ee_implementation_or_noop(
         "onyx.server.tenants.user_mapping", "get_tenant_id_for_email", None
     )(user.email)
 
-    new_tenant: TenantSnapshot | None = None
-    tenant_invitation: TenantSnapshot | None = None
-
-    if MULTI_TENANT:
-        if team_name != get_current_tenant_id():
-            user_count = fetch_ee_implementation_or_noop(
-                "onyx.server.tenants.user_mapping", "get_tenant_count", None
-            )(team_name)
-            new_tenant = TenantSnapshot(tenant_id=team_name, number_of_users=user_count)
-
-        tenant_invitation = fetch_ee_implementation_or_noop(
-            "onyx.server.tenants.user_mapping", "get_tenant_invitation", None
-        )(user.email)
-
-    super_users_list = cast(
-        list[str],
-        fetch_versioned_implementation_with_fallback(
-            "onyx.configs.app_configs",
-            "SUPER_USERS",
-            [],
-        ),
-    )
     user_info = UserInfo.from_model(
         user,
         current_token_created_at=token_created_at,
         expiry_length=SESSION_EXPIRE_TIME_SECONDS,
-        is_cloud_superuser=user.email in super_users_list,
-        team_name=team_name,
-        tenant_info=TenantInfo(
-            new_tenant=new_tenant,
-            invitation=tenant_invitation,
-        ),
+        is_cloud_superuser=user.email in SUPER_USERS,
+        organization_name=organization_name,
     )
 
     return user_info
@@ -677,9 +568,37 @@ def verify_user_logged_in(
 """APIs to adjust user preferences"""
 
 
-@router.patch("/temperature-override-enabled")
-def update_user_temperature_override_enabled(
-    temperature_override_enabled: bool,
+class ChosenDefaultModelRequest(BaseModel):
+    default_model: str | None = None
+
+
+class ChosenDefaultAssistantRequest(BaseModel):
+    default_assistant_id: int | None = None
+
+
+class RecentAssistantsRequest(BaseModel):
+    current_assistant: int
+
+
+def update_recent_assistants(
+    recent_assistants: list[int] | None, current_assistant: int
+) -> list[int]:
+    if recent_assistants is None:
+        recent_assistants = []
+    else:
+        recent_assistants = [x for x in recent_assistants if x != current_assistant]
+
+    # Add current assistant to start of list
+    recent_assistants.insert(0, current_assistant)
+
+    # Keep only the 5 most recent assistants
+    recent_assistants = recent_assistants[:5]
+    return recent_assistants
+
+
+@router.patch("/user/recent-assistants")
+def update_user_recent_assistants(
+    request: RecentAssistantsRequest,
     user: User | None = Depends(current_user),
     db_session: Session = Depends(get_session),
 ) -> None:
@@ -687,24 +606,27 @@ def update_user_temperature_override_enabled(
         if AUTH_TYPE == AuthType.DISABLED:
             store = get_kv_store()
             no_auth_user = fetch_no_auth_user(store)
-            no_auth_user.preferences.temperature_override_enabled = (
-                temperature_override_enabled
+            preferences = no_auth_user.preferences
+            recent_assistants = preferences.recent_assistants
+            updated_preferences = update_recent_assistants(
+                recent_assistants, request.current_assistant
             )
-            set_no_auth_user_preferences(store, no_auth_user.preferences)
+            preferences.recent_assistants = updated_preferences
+            set_no_auth_user_preferences(store, preferences)
             return
         else:
             raise RuntimeError("This should never happen")
 
+    recent_assistants = UserInfo.from_model(user).preferences.recent_assistants
+    updated_recent_assistants = update_recent_assistants(
+        recent_assistants, request.current_assistant
+    )
     db_session.execute(
         update(User)
         .where(User.id == user.id)  # type: ignore
-        .values(temperature_override_enabled=temperature_override_enabled)
+        .values(recent_assistants=updated_recent_assistants)
     )
     db_session.commit()
-
-
-class ChosenDefaultModelRequest(BaseModel):
-    default_model: str | None = None
 
 
 @router.patch("/shortcut-enabled")
@@ -737,6 +659,7 @@ def update_user_auto_scroll(
     user: User | None = Depends(current_user),
     db_session: Session = Depends(get_session),
 ) -> None:
+    logger.info(f"inside update user auto scroll")
     if user is None:
         if AUTH_TYPE == AuthType.DISABLED:
             store = get_kv_store()
@@ -752,7 +675,9 @@ def update_user_auto_scroll(
         .where(User.id == user.id)  # type: ignore
         .values(auto_scroll=request.auto_scroll)
     )
+    logger.info(f"Updated auto_scroll for user {user.id} to {request.auto_scroll}")
     db_session.commit()
+    logger.info(f"Auto_scroll updated for user {user.id}")
 
 
 @router.patch("/user/default-model")
@@ -775,6 +700,30 @@ def update_user_default_model(
         update(User)
         .where(User.id == user.id)  # type: ignore
         .values(default_model=request.default_model)
+    )
+    db_session.commit()
+
+
+@router.patch("/user/default-assistant")
+def update_user_default_assistant(
+    request: ChosenDefaultAssistantRequest,
+    user: User | None = Depends(current_user),
+    db_session: Session = Depends(get_session),
+) -> None:
+    if user is None:
+        if AUTH_TYPE == AuthType.DISABLED:
+            store = get_kv_store()
+            no_auth_user = fetch_no_auth_user(store)
+            no_auth_user.preferences.default_assistant_id = request.default_assistant_id
+            set_no_auth_user_preferences(store, no_auth_user.preferences)
+            return
+        else:
+            raise RuntimeError("This should never happen")
+
+    db_session.execute(
+        update(User)
+        .where(User.id == user.id)  # type: ignore
+        .values(default_assistant_id=request.default_assistant_id)
     )
     db_session.commit()
 
@@ -811,6 +760,30 @@ def update_user_pinned_assistants(
 
 class ChosenAssistantsRequest(BaseModel):
     chosen_assistants: list[int]
+
+
+@router.patch("/user/assistant-list")
+def update_user_assistant_list(
+    request: ChosenAssistantsRequest,
+    user: User | None = Depends(current_user),
+    db_session: Session = Depends(get_session),
+) -> None:
+    if user is None:
+        if AUTH_TYPE == AuthType.DISABLED:
+            store = get_kv_store()
+            no_auth_user = fetch_no_auth_user(store)
+            no_auth_user.preferences.chosen_assistants = request.chosen_assistants
+            set_no_auth_user_preferences(store, no_auth_user.preferences)
+            return
+        else:
+            raise RuntimeError("This should never happen")
+
+    db_session.execute(
+        update(User)
+        .where(User.id == user.id)  # type: ignore
+        .values(chosen_assistants=request.chosen_assistants)
+    )
+    db_session.commit()
 
 
 def update_assistant_visibility(

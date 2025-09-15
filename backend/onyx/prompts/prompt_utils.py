@@ -164,10 +164,15 @@ def find_last_index(lst: list[int], max_prompt_tokens: int) -> int:
             break
 
     if last_ind >= len(lst):
+        largest_message_tokens = max(lst) if lst else 0
         logger.error(
             f"Last message alone is too large! max_prompt_tokens: {max_prompt_tokens}, message_token_counts: {lst}"
         )
-        raise ValueError("Last message alone is too large!")
+        raise ValueError(
+            f"The uploaded content is too large to process. The maximum allowed token limit is {max_prompt_tokens:,} tokens, "
+            f"but your content contains {largest_message_tokens:,} tokens. Please try uploading a smaller file or "
+            f"breaking your content into smaller chunks. This commonly happens with large log files or documents. "
+        )
 
     return last_ind
 

@@ -13,12 +13,14 @@ Do not provide any citations even if there are examples in the chat history.
 """.rstrip()
 
 CITATION_REMINDER = """
-Remember to provide inline citations in the format [1], [2], [3], etc.
+Remember to provide inline citations in the format [1], [2], [3], etc. to reference the document number. \
+DO NOT provide any links following the citations. In other words, avoid using the format [1](https://example.com). \
+Avoid using double brackets like [[1]]. To cite multiple documents, use [1], [2] format instead of [1, 2]. \
+Try to cite inline as opposed to leaving all citations until the very end of the response.
 """
 
 ADDITIONAL_INFO = "\n\nAdditional Information:\n\t- {datetime_info}."
 
-CODE_BLOCK_MARKDOWN = "Formatting re-enabled. "
 
 CHAT_USER_PROMPT = f"""
 Refer to the following context documents when responding to me.{{optional_ignore_statement}}
@@ -135,9 +137,18 @@ Given the following conversation and a follow up input, rephrase the follow up i
 standalone query (which captures any relevant context from previous messages) for a vectorstore.
 IMPORTANT: EDIT THE QUERY TO BE AS CONCISE AS POSSIBLE. Respond with a short, compressed phrase \
 with mainly keywords instead of a complete sentence.
+note: {{note}}
 If there is a clear change in topic, disregard the previous messages.
 Strip out any information that is not relevant for the retrieval task.
-If the follow up message is an error or code snippet, repeat the same input back EXACTLY.
+If the follow up message is an error or code snippet or text added in double quotes, repeat the same input back EXACTLY.
+If the follow up message contains an error or code snippet or text added in double quotes, repeat the part of the message that is not an error or code snippet or text added in double quotes back EXACTLY.
+
+UPLOADED FILES HANDLING:
+- If the user is asking to ANALYZE, SUMMARIZE, EXPLAIN, REVIEW, or PROCESS the uploaded files directly, DO NOT incorporate file content into the search query
+- If the user is asking to SEARCH FOR or FIND information RELATED TO the file content, then incorporate relevant keywords from the files
+- For analysis tasks (analyze logs, summarize document, explain chart, review code, etc.), keep the query focused on the task without file content
+- For search tasks (find similar issues, search for solutions, look up related information, etc.), include relevant file content keywords
+- When in doubt, if the query seems to be about working with the provided files directly, do not add file content to search query
 
 Chat History:
 {GENERAL_SEP_PAT}
@@ -219,108 +230,4 @@ Chat History:
 {GENERAL_SEP_PAT}
 
 Based on the above, what is a short name to convey the topic of the conversation?
-""".strip()
-
-# NOTE: the prompt separation is partially done for efficiency; previously I tried
-# to do it all in one prompt with sequential format() calls but this will cause a backend
-# error when the document contains any {} as python will expect the {} to be filled by
-# format() arguments
-CONTEXTUAL_RAG_PROMPT1 = """<document>
-{document}
-</document>
-Here is the chunk we want to situate within the whole document"""
-
-CONTEXTUAL_RAG_PROMPT2 = """<chunk>
-{chunk}
-</chunk>
-Please give a short succinct context to situate this chunk within the overall document
-for the purposes of improving search retrieval of the chunk. Answer only with the succinct
-context and nothing else. """
-
-CONTEXTUAL_RAG_TOKEN_ESTIMATE = 64  # 19 + 45
-
-DOCUMENT_SUMMARY_PROMPT = """<document>
-{document}
-</document>
-Please give a short succinct summary of the entire document. Answer only with the succinct
-summary and nothing else. """
-
-DOCUMENT_SUMMARY_TOKEN_ESTIMATE = 29
-
-
-QUERY_SEMANTIC_EXPANSION_WITHOUT_HISTORY_PROMPT = """
-Please rephrase the following user question/query as a semantic query that would be appropriate for a \
-search engine.
-
-Note:
- - do not change the meaning of the question! Specifically, if the query is a an instruction, keep it \
-as an instruction!
-
-Here is the user question/query:
-{question}
-
-Respond with EXACTLY and ONLY one rephrased question/query.
-
-Rephrased question/query for search engine:
-""".strip()
-
-
-QUERY_SEMANTIC_EXPANSION_WITH_HISTORY_PROMPT = """
-Following a previous message history, a user created a follow-up question/query.
-Please rephrase that question/query as a semantic query \
-that would be appropriate for a SEARCH ENGINE. Only use the information provided \
-from the history that is relevant to provide the relevant context for the search query, \
-meaning that the rephrased search query should be a suitable stand-alone search query.
-
-Note:
- - do not change the meaning of the question! Specifically, if the query is a an instruction, keep it \
-as an instruction!
-
-Here is the relevant previous message history:
-{history}
-
-Here is the user question:
-{question}
-
-Respond with EXACTLY and ONLY one rephrased query.
-
-Rephrased query for search engine:
-""".strip()
-
-
-QUERY_KEYWORD_EXPANSION_WITHOUT_HISTORY_PROMPT = """
-Please rephrase the following user question as a pure keyword query that would be appropriate for a \
-search engine. IMPORTANT: the rephrased query MUST ONLY use EXISTING KEYWORDS from the original query \
-(exception: critical verbs that are converted to nouns)!
-Also, keywords are usually nouns or adjectives, so you will likely need to drop \
-any verbs. IF AND ONLY IF you really think that a verb would be critical to FINDING the document, \
-convert the verb to a noun. \
-This will be rare though. Verbs like 'find, summarize, describe, etc. would NOT fall into this category, \
-for example, and should be omitted from the rephrased keyword query.
-
-Here is the user question:
-{question}
-
-Respond with EXACTLY and ONLY one rephrased keyword query.
-
-Rephrased keyword query for search engine:
-""".strip()
-
-
-QUERY_KEYWORD_EXPANSION_WITH_HISTORY_PROMPT = """
-Following a previous message history, a user created a follow-up question/query.
-Please rephrase that question/query as a keyword query \
-that would be appropriate for a SEARCH ENGINE. Only use the information provided \
-from the history that is relevant to provide the relevant context for the search query, \
-meaning that the rephrased search query should be a suitable stand-alone search query.
-
-Here is the relevant previous message history:
-{history}
-
-Here is the user question:
-{question}
-
-Respond with EXACTLY and ONLY one rephrased query.
-
-Rephrased query for search engine:
 """.strip()

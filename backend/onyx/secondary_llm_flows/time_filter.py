@@ -11,6 +11,7 @@ from onyx.llm.utils import message_to_string
 from onyx.prompts.filter_extration import TIME_FILTER_PROMPT
 from onyx.prompts.prompt_utils import get_current_llm_day_time
 from onyx.utils.logger import setup_logger
+from onyx.context.search.models import TimeRange
 
 logger = setup_logger()
 
@@ -40,8 +41,8 @@ def best_match_time(time_str: str) -> datetime | None:
         return None
 
 
-def extract_time_filter(query: str, llm: LLM) -> tuple[datetime | None, bool]:
-    """Returns a datetime if a hard time filter should be applied for the given query
+def extract_time_filter(query: str, llm: LLM) -> tuple[TimeRange | None, bool]:
+    """Returns a TimeRange if a time filter should be applied for the given query
     Additionally returns a bool, True if more recently updated Documents should be
     heavily favored"""
 
@@ -86,10 +87,8 @@ def extract_time_filter(query: str, llm: LLM) -> tuple[datetime | None, bool]:
         ]
         return messages
 
-    def _extract_time_filter_from_llm_out(
-        model_out: str,
-    ) -> tuple[datetime | None, bool]:
-        """Returns a datetime for a hard cutoff and a bool for if the"""
+    def _extract_time_filter_from_llm_out(model_out: str) -> tuple[TimeRange | None, bool]:
+        """Returns a TimeRange for a hard cutoff and a bool for if the"""
         try:
             model_json = json.loads(model_out, strict=False)
         except json.JSONDecodeError:
@@ -104,12 +103,22 @@ def extract_time_filter(query: str, llm: LLM) -> tuple[datetime | None, bool]:
         if "hard" in model_json["filter_type"] or "recent" in model_json["filter_type"]:
             favor_recent = "recent" in model_json["filter_type"]
 
+            if "date_range" in model_json:
+                start_date = None
+                end_date = None
+                if "start_date" in model_json["date_range"]:
+                    start_date = best_match_time(model_json["date_range"]["start_date"])
+                if "end_date" in model_json["date_range"]:
+                    end_date = best_match_time(model_json["date_range"]["end_date"])
+                if start_date is not None or end_date is not None:
+                    return TimeRange(start_date=start_date, end_date=end_date), False
+
             if "date" in model_json:
                 extracted_time = best_match_time(model_json["date"])
                 if extracted_time is not None:
-                    # LLM struggles to understand the concept of not sensitive within a time range
-                    # So if a time is extracted, just go with that alone
-                    return extracted_time, False
+                    if model_json.get("is_end_date", False):
+                        return TimeRange(end_date=extracted_time), False
+                    return TimeRange(start_date=extracted_time), False
 
             time_diff = None
             multiplier = 1.0
@@ -137,9 +146,7 @@ def extract_time_filter(query: str, llm: LLM) -> tuple[datetime | None, bool]:
 
             if time_diff is not None:
                 current = datetime.now(timezone.utc)
-                # LLM struggles to understand the concept of not sensitive within a time range
-                # So if a time is extracted, just go with that alone
-                return current - time_diff, False
+                return TimeRange(start_date=current - time_diff, end_date=current), False
 
             # If we failed to extract a hard filter, just pass back the value of favor recent
             return None, favor_recent

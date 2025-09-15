@@ -131,8 +131,7 @@ export function filterAssistants(
 
   if (!hasAnyConnectors) {
     filteredAssistants = filteredAssistants.filter(
-      (assistant) =>
-        assistant.num_chunks === 0 || assistant.document_sets.length > 0
+      (assistant) => assistant.num_chunks === 0
     );
   }
 

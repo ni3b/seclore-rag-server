@@ -1,7 +1,6 @@
 """NOTE: this needs to be separate from models.py because of circular imports.
 Both search/models.py and db/models.py import enums from this file AND
 search/models.py imports from db/models.py."""
-
 from enum import Enum
 
 

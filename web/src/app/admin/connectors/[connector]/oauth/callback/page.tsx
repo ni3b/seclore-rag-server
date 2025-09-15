@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AdminPageTitle } from "@/components/admin/Title";
+import { Button } from "@/components/ui/button";
+import Title from "@/components/ui/title";
 import { KeyIcon } from "@/components/icons/icons";
 import { getSourceMetadata, isValidSource } from "@/lib/sources";
 import { ValidSources } from "@/lib/types";
@@ -24,14 +26,14 @@ export default function OAuthCallbackPage() {
   );
 
   // Extract query parameters
-  const code = searchParams?.get("code");
-  const state = searchParams?.get("state");
+  const code = searchParams.get("code");
+  const state = searchParams.get("state");
 
   const pathname = usePathname();
   const connector = pathname?.split("/")[3];
 
   useEffect(() => {
-    const onFirstLoad = async () => {
+    const handleOAuthCallback = async () => {
       // Examples
       // connector (url segment)= "google-drive"
       // sourceType (for looking up metadata) = "google_drive"
@@ -83,19 +85,10 @@ export default function OAuthCallbackPage() {
         }
 
         setStatusMessage("Success!");
-
-        // set the continuation link
-        if (response.finalize_url) {
-          setRedirectUrl(response.finalize_url);
-          setStatusDetails(
-            `Your authorization with ${sourceMetadata.displayName} completed successfully. Additional steps are required to complete credential setup.`
-          );
-        } else {
-          setRedirectUrl(response.redirect_on_success);
-          setStatusDetails(
-            `Your authorization with ${sourceMetadata.displayName} completed successfully.`
-          );
-        }
+        setStatusDetails(
+          `Your authorization with ${sourceMetadata.displayName} completed successfully.`
+        );
+        setRedirectUrl(response.redirect_on_success); // Extract the redirect URL
         setIsError(false);
       } catch (error) {
         console.error("OAuth error:", error);
@@ -107,15 +100,15 @@ export default function OAuthCallbackPage() {
       }
     };
 
-    onFirstLoad();
+    handleOAuthCallback();
   }, [code, state, connector]);
 
   return (
-    <div className="mx-auto h-screen flex flex-col">
+    <div className="container mx-auto py-8">
       <AdminPageTitle title={pageTitle} icon={<KeyIcon size={32} />} />
 
-      <div className="flex-1 flex flex-col items-center justify-center">
-        <CardSection className="max-w-md w-[500px] h-[250px] p-8">
+      <div className="flex flex-col items-center justify-center min-h-screen">
+        <CardSection className="max-w-md">
           <h1 className="text-2xl font-bold mb-4">{statusMessage}</h1>
           <p className="text-text-500">{statusDetails}</p>
           {redirectUrl && !isError && (

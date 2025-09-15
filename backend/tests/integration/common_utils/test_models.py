@@ -10,7 +10,6 @@ from pydantic import Field
 from onyx.auth.schemas import UserRole
 from onyx.configs.constants import QAFeedbackType
 from onyx.context.search.enums import RecencyBiasSetting
-from onyx.context.search.models import SavedSearchDoc
 from onyx.db.enums import AccessType
 from onyx.server.documents.models import DocumentSource
 from onyx.server.documents.models import IndexAttemptSnapshot
@@ -45,7 +44,6 @@ class DATestUser(BaseModel):
     headers: dict
     role: UserRole
     is_active: bool
-    cookies: dict = {}
 
 
 class DATestPersonaLabel(BaseModel):
@@ -76,7 +74,6 @@ class DATestConnector(BaseModel):
 class SimpleTestDocument(BaseModel):
     id: str
     content: str
-    image_file_id: str | None = None
 
 
 class DATestCCPair(BaseModel):
@@ -159,7 +156,7 @@ class StreamedResponse(BaseModel):
     full_message: str = ""
     rephrased_query: str | None = None
     tool_name: str | None = None
-    top_documents: list[SavedSearchDoc] | None = None
+    top_documents: list[dict[str, Any]] | None = None
     relevance_summaries: list[dict[str, Any]] | None = None
     tool_result: Any | None = None
     user: str | None = None
@@ -174,13 +171,10 @@ class DATestGatingType(str, Enum):
 class DATestSettings(BaseModel):
     """General settings"""
 
-    # is float to allow for fractional days for easier automated testing
-    maximum_chat_retention_days: float | None = None
+    maximum_chat_retention_days: int | None = None
     gpu_enabled: bool | None = None
     product_gating: DATestGatingType = DATestGatingType.NONE
     anonymous_user_enabled: bool | None = None
-    image_extraction_and_analysis_enabled: bool | None = False
-    search_time_image_analysis_enabled: bool | None = False
 
 
 @dataclass
@@ -205,10 +199,8 @@ class DATestIndexAttempt:
             total_docs_indexed=index_attempt.total_docs_indexed,
             docs_removed_from_index=index_attempt.docs_removed_from_index,
             error_msg=index_attempt.error_msg,
-            time_started=(
-                datetime.fromisoformat(index_attempt.time_started)
-                if index_attempt.time_started
-                else None
-            ),
+            time_started=datetime.fromisoformat(index_attempt.time_started)
+            if index_attempt.time_started
+            else None,
             time_updated=datetime.fromisoformat(index_attempt.time_updated),
         )

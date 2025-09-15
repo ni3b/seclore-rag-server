@@ -1,4 +1,8 @@
-import { SlackBotResponseType } from "@/lib/types";
+import {
+  ChannelConfig,
+  SlackBotResponseType,
+  SlackBotTokens,
+} from "@/lib/types";
 import { Persona } from "@/app/admin/assistants/interfaces";
 
 interface SlackChannelConfigCreationRequest {
@@ -10,7 +14,6 @@ interface SlackChannelConfigCreationRequest {
   answer_validity_check_enabled: boolean;
   questionmark_prefilter_enabled: boolean;
   respond_tag_only: boolean;
-  is_ephemeral: boolean;
   respond_to_bots: boolean;
   show_continue_in_web_ui: boolean;
   respond_member_group_list: string[];
@@ -18,7 +21,6 @@ interface SlackChannelConfigCreationRequest {
   usePersona: boolean;
   response_type: SlackBotResponseType;
   standard_answer_categories: number[];
-  disabled: boolean;
 }
 
 const buildFiltersFromCreationRequest = (
@@ -42,7 +44,6 @@ const buildRequestBodyFromCreationRequest = (
     channel_name: creationRequest.channel_name,
     respond_tag_only: creationRequest.respond_tag_only,
     respond_to_bots: creationRequest.respond_to_bots,
-    is_ephemeral: creationRequest.is_ephemeral,
     show_continue_in_web_ui: creationRequest.show_continue_in_web_ui,
     enable_auto_filters: creationRequest.enable_auto_filters,
     respond_member_group_list: creationRequest.respond_member_group_list,
@@ -53,7 +54,6 @@ const buildRequestBodyFromCreationRequest = (
       : { document_sets: creationRequest.document_sets }),
     response_type: creationRequest.response_type,
     standard_answer_categories: creationRequest.standard_answer_categories,
-    disabled: creationRequest.disabled,
   });
 };
 
@@ -94,17 +94,3 @@ export const deleteSlackChannelConfig = async (id: number) => {
 export function isPersonaASlackBotPersona(persona: Persona) {
   return persona.name.startsWith("__slack_bot_persona__");
 }
-
-export const fetchSlackChannels = async (botId: number) => {
-  return fetch(`/api/manage/admin/slack-app/bots/${botId}/channels`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  }).then((response) => {
-    if (!response.ok) {
-      throw new Error("Failed to fetch Slack channels");
-    }
-    return response.json();
-  });
-};

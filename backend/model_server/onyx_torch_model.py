@@ -1,6 +1,5 @@
 import json
 import os
-from typing import cast
 
 import torch
 import torch.nn as nn
@@ -14,14 +13,15 @@ class HybridClassifier(nn.Module):
         super().__init__()
         config = DistilBertConfig()
         self.distilbert = DistilBertModel(config)
-        config = self.distilbert.config  # type: ignore
 
         # Keyword tokenwise binary classification layer
-        self.keyword_classifier = nn.Linear(config.dim, 2)
+        self.keyword_classifier = nn.Linear(self.distilbert.config.dim, 2)
 
         # Intent Classifier layers
-        self.pre_classifier = nn.Linear(config.dim, config.dim)
-        self.intent_classifier = nn.Linear(config.dim, 2)
+        self.pre_classifier = nn.Linear(
+            self.distilbert.config.dim, self.distilbert.config.dim
+        )
+        self.intent_classifier = nn.Linear(self.distilbert.config.dim, 2)
 
         self.device = torch.device("cpu")
 
@@ -30,7 +30,7 @@ class HybridClassifier(nn.Module):
         query_ids: torch.Tensor,
         query_mask: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        outputs = self.distilbert(input_ids=query_ids, attention_mask=query_mask)  # type: ignore
+        outputs = self.distilbert(input_ids=query_ids, attention_mask=query_mask)
         sequence_output = outputs.last_hidden_state
 
         # Intent classification on the CLS token
@@ -79,9 +79,8 @@ class ConnectorClassifier(nn.Module):
 
         self.config = config
         self.distilbert = DistilBertModel(config)
-        config = self.distilbert.config  # type: ignore
-        self.connector_global_classifier = nn.Linear(config.dim, 1)
-        self.connector_match_classifier = nn.Linear(config.dim, 1)
+        self.connector_global_classifier = nn.Linear(self.distilbert.config.dim, 1)
+        self.connector_match_classifier = nn.Linear(self.distilbert.config.dim, 1)
         self.tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
 
         # Token indicating end of connector name, and on which classifier is used
@@ -96,7 +95,7 @@ class ConnectorClassifier(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        hidden_states = self.distilbert(  # type: ignore
+        hidden_states = self.distilbert(
             input_ids=input_ids, attention_mask=attention_mask
         ).last_hidden_state
 
@@ -115,18 +114,13 @@ class ConnectorClassifier(nn.Module):
 
     @classmethod
     def from_pretrained(cls, repo_dir: str) -> "ConnectorClassifier":
-        config = cast(
-            DistilBertConfig,
-            DistilBertConfig.from_pretrained(os.path.join(repo_dir, "config.json")),
-        )
+        config = DistilBertConfig.from_pretrained(os.path.join(repo_dir, "config.json"))
         device = (
             torch.device("cuda")
             if torch.cuda.is_available()
-            else (
-                torch.device("mps")
-                if torch.backends.mps.is_available()
-                else torch.device("cpu")
-            )
+            else torch.device("mps")
+            if torch.backends.mps.is_available()
+            else torch.device("cpu")
         )
         state_dict = torch.load(
             os.path.join(repo_dir, "pytorch_model.pt"),

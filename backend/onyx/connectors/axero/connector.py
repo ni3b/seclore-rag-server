@@ -20,7 +20,7 @@ from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.file_processing.html_utils import parse_html_page_basic
 from onyx.utils.logger import setup_logger
 from onyx.utils.retry_wrapper import retry_builder
@@ -77,7 +77,7 @@ def _get_entities(
 
         # Axero limitations:
         # No next page token, can paginate but things may have changed
-        # for example, a doc that hasn't been read in by Onyx is updated and is now front of the list
+        # for example, a doc that hasn't been read in by Seclore is updated and is now front of the list
         # due to this limitation and the fact that Axero has no rate limiting but API calls can cause
         # increased latency for the team, we have to just fetch all the pages quickly to reduce the
         # chance of missing a document due to an update (it will still get updated next pass)
@@ -221,7 +221,7 @@ def _get_forums(
 def _translate_forum_to_doc(af: AxeroForum) -> Document:
     doc = Document(
         id=af.doc_id,
-        sections=[TextSection(link=af.link, text=reply) for reply in af.responses],
+        sections=[Section(link=af.link, text=reply) for reply in af.responses],
         source=DocumentSource.AXERO,
         semantic_identifier=af.title,
         doc_updated_at=af.last_update,
@@ -244,7 +244,7 @@ def _translate_content_to_doc(content: dict) -> Document:
 
     doc = Document(
         id="AXERO_" + str(content["ContentID"]),
-        sections=[TextSection(link=content["ContentURL"], text=page_text)],
+        sections=[Section(link=content["ContentURL"], text=page_text)],
         source=DocumentSource.AXERO,
         semantic_identifier=content["ContentTitle"],
         doc_updated_at=time_str_to_utc(content["DateUpdated"]),

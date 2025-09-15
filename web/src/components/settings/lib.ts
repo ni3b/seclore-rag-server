@@ -1,9 +1,8 @@
 import {
   CombinedSettings,
   EnterpriseSettings,
-  ApplicationStatus,
+  GatingType,
   Settings,
-  QueryHistoryType,
 } from "@/app/admin/settings/interfaces";
 import {
   CUSTOM_ANALYTICS_ENABLED,
@@ -42,79 +41,56 @@ export async function fetchSettingsSS(): Promise<CombinedSettings | null> {
     const results = await Promise.all(tasks);
 
     let settings: Settings;
-
-    const result_0 = results[0];
-    if (!result_0) {
-      throw new Error("Standard settings fetch failed.");
-    }
-
-    if (!result_0.ok) {
-      if (result_0.status === 403 || result_0.status === 401) {
+    if (!results[0].ok) {
+      if (results[0].status === 403 || results[0].status === 401) {
         settings = {
           auto_scroll: true,
-          application_status: ApplicationStatus.ACTIVE,
+          product_gating: GatingType.NONE,
           gpu_enabled: false,
           maximum_chat_retention_days: null,
           notifications: [],
           needs_reindexing: false,
           anonymous_user_enabled: false,
-          pro_search_enabled: true,
-          temperature_override_enabled: true,
-          query_history_type: QueryHistoryType.NORMAL,
         };
       } else {
         throw new Error(
           `fetchStandardSettingsSS failed: status=${
-            result_0.status
-          } body=${await result_0.text()}`
+            results[0].status
+          } body=${await results[0].text()}`
         );
       }
     } else {
-      settings = await result_0.json();
+      settings = await results[0].json();
     }
 
     let enterpriseSettings: EnterpriseSettings | null = null;
     if (tasks.length > 1) {
-      const result_1 = results[1];
-      if (!result_1) {
-        throw new Error("fetchEnterpriseSettingsSS failed.");
-      }
-
-      if (!result_1.ok) {
-        if (result_1.status !== 403 && result_1.status !== 401) {
+      if (!results[1].ok) {
+        if (results[1].status !== 403 && results[1].status !== 401) {
           throw new Error(
             `fetchEnterpriseSettingsSS failed: status=${
-              result_1.status
-            } body=${await result_1.text()}`
+              results[1].status
+            } body=${await results[1].text()}`
           );
         }
       } else {
-        enterpriseSettings = await result_1.json();
+        enterpriseSettings = await results[1].json();
       }
     }
 
     let customAnalyticsScript: string | null = null;
     if (tasks.length > 2) {
-      const result_2 = results[2];
-      if (!result_2) {
-        throw new Error("fetchCustomAnalyticsScriptSS failed.");
-      }
-
-      if (!result_2.ok) {
-        if (result_2.status !== 403) {
+      if (!results[2].ok) {
+        if (results[2].status !== 403) {
           throw new Error(
             `fetchCustomAnalyticsScriptSS failed: status=${
-              result_2.status
-            } body=${await result_2.text()}`
+              results[2].status
+            } body=${await results[2].text()}`
           );
         }
       } else {
-        customAnalyticsScript = await result_2.json();
+        customAnalyticsScript = await results[2].json();
       }
-    }
-
-    if (settings.pro_search_enabled == null) {
-      settings.pro_search_enabled = true;
     }
 
     const webVersion = getWebVersion();

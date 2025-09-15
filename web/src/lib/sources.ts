@@ -6,6 +6,7 @@ import {
   DiscourseIcon,
   Document360Icon,
   DropboxIcon,
+  FileIcon,
   GithubIcon,
   GitlabIcon,
   GlobeIcon,
@@ -37,16 +38,19 @@ import {
   XenforoIcon,
   ColorDiscordIcon,
   FreshdeskIcon,
+  FreshdeskSolutionIcon,
   FirefliesIcon,
   EgnyteIcon,
   AirtableIcon,
   GlobeIcon2,
   FileIcon2,
-  GitbookIcon,
-  HighspotIcon,
 } from "@/components/icons/icons";
-import { ValidSources } from "./types";
-import { SourceCategory, SourceMetadata } from "./search/interfaces";
+import { ValidSources, DocumentSet } from "./types";
+import {
+  OnyxDocument,
+  SourceCategory,
+  SourceMetadata,
+} from "./search/interfaces";
 import { Persona } from "@/app/admin/assistants/interfaces";
 
 interface PartialSourceMetadata {
@@ -116,7 +120,6 @@ export const SOURCE_METADATA_MAP: SourceMap = {
     displayName: "Confluence",
     category: SourceCategory.Wiki,
     docs: "https://docs.onyx.app/connectors/confluence",
-    oauthSupported: true,
   },
   jira: {
     icon: JiraIcon,
@@ -175,7 +178,7 @@ export const SOURCE_METADATA_MAP: SourceMap = {
   hubspot: {
     icon: HubSpotIcon,
     displayName: "HubSpot",
-    category: SourceCategory.CustomerRelationshipManagement,
+    category: SourceCategory.CustomerSupport,
     docs: "https://docs.onyx.app/connectors/hubspot",
   },
   document360: {
@@ -210,7 +213,7 @@ export const SOURCE_METADATA_MAP: SourceMap = {
   salesforce: {
     icon: SalesforceIcon,
     displayName: "Salesforce",
-    category: SourceCategory.CustomerRelationshipManagement,
+    category: SourceCategory.CustomerSupport,
     docs: "https://docs.onyx.app/connectors/salesforce",
   },
   sharepoint: {
@@ -297,9 +300,15 @@ export const SOURCE_METADATA_MAP: SourceMap = {
   },
   freshdesk: {
     icon: FreshdeskIcon,
-    displayName: "Freshdesk",
+    displayName: "Freshdesk Ticket",
     category: SourceCategory.CustomerSupport,
     docs: "https://docs.onyx.app/connectors/freshdesk",
+  },
+  freshdesk_solutions: {
+    icon: FreshdeskSolutionIcon,
+    displayName: "Freshdesk Solution",
+    category: SourceCategory.CustomerSupport,
+    docs: "https://docs.onyx.app/connectors/freshdesk_solutions",
   },
   fireflies: {
     icon: FirefliesIcon,
@@ -319,30 +328,11 @@ export const SOURCE_METADATA_MAP: SourceMap = {
     category: SourceCategory.Other,
     docs: "https://docs.onyx.app/connectors/airtable",
   },
-  gitbook: {
-    icon: GitbookIcon,
-    displayName: "GitBook",
-    category: SourceCategory.Wiki,
-    docs: "https://docs.onyx.app/connectors/gitbook",
-  },
-  highspot: {
-    icon: HighspotIcon,
-    displayName: "Highspot",
-    category: SourceCategory.Wiki,
-    docs: "https://docs.onyx.app/connectors/highspot",
-  },
   // currently used for the Internet Search tool docs, which is why
   // a globe is used
   not_applicable: {
     icon: GlobeIcon,
     displayName: "Not Applicable",
-    category: SourceCategory.Other,
-  },
-
-  // Just so integration tests don't crash the UI
-  mock_connector: {
-    icon: GlobeIcon,
-    displayName: "Mock Connector",
     category: SourceCategory.Other,
   },
 } as SourceMap;
@@ -368,14 +358,11 @@ export function getSourceMetadata(sourceType: ValidSources): SourceMetadata {
 }
 
 export function listSourceMetadata(): SourceMetadata[] {
-  /* This gives back all the viewable / common sources, primarily for
+  /* This gives back all the viewable / common sources, primarily for 
   display in the Add Connector page */
   const entries = Object.entries(SOURCE_METADATA_MAP)
     .filter(
-      ([source, _]) =>
-        source !== "not_applicable" &&
-        source !== "ingestion_api" &&
-        source !== "mock_connector"
+      ([source, _]) => source !== "not_applicable" && source != "ingestion_api"
     )
     .map(([source, metadata]) => {
       return fillSourceMetadata(metadata, source as ValidSources);
@@ -409,6 +396,10 @@ export function getSourcesForPersona(persona: Persona): ValidSources[] {
     });
   });
   return personaSources;
+}
+
+export function getDocumentSetsForPersona(persona: Persona): DocumentSet[] {
+  return persona.document_sets;
 }
 
 export async function fetchTitleFromUrl(url: string): Promise<string | null> {

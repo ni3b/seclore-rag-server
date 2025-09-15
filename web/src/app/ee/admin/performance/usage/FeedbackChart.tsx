@@ -3,7 +3,7 @@ import { getDatesList, useQueryAnalytics } from "../lib";
 import Text from "@/components/ui/text";
 import Title from "@/components/ui/title";
 
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
 import CardSection from "@/components/admin/CardSection";
 import { AreaChartDisplay } from "@/components/ui/areaChart";
 
@@ -25,11 +25,7 @@ export function FeedbackChart({
         <ThreeDotsLoader />
       </div>
     );
-  } else if (
-    !queryAnalyticsData ||
-    queryAnalyticsData[0] === undefined ||
-    queryAnalyticsError
-  ) {
+  } else if (!queryAnalyticsData || queryAnalyticsError) {
     chart = (
       <div className="h-80 text-red-600 text-bold flex flex-col">
         <p className="m-auto">Failed to fetch feedback data...</p>

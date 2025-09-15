@@ -37,7 +37,7 @@ Follow up input:
 
 TOOL_ARG_SYSTEM_PROMPT = (
     "You are a large language model whose only job is to determine the arguments to pass to an "
-    "external tool."
+    "external tool. Also reframe users query in args where if user says ps make it policy server, dc is desktop client or seclore for windows, so is seclore online and if user asks for release components or version info then add 'in release notes'"
 ).strip()
 
 

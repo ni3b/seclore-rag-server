@@ -60,7 +60,6 @@ def verify_document_content(doc: Document, expected: ExpectedDocument) -> None:
     """Verify a document matches its expected content."""
     assert doc.semantic_identifier == expected.semantic_identifier
     assert len(doc.sections) == 1
-    assert doc.sections[0].text is not None
     assert expected.content in doc.sections[0].text
     verify_document_metadata(doc)
 
@@ -83,22 +82,6 @@ def sharepoint_credentials() -> dict[str, str]:
         "sp_client_secret": os.environ["SHAREPOINT_CLIENT_SECRET"],
         "sp_directory_id": os.environ["SHAREPOINT_CLIENT_DIRECTORY_ID"],
     }
-
-
-def test_sharepoint_connector_all_sites(
-    mock_get_unstructured_api_key: MagicMock,
-    sharepoint_credentials: dict[str, str],
-) -> None:
-    # Initialize connector with no sites
-    connector = SharepointConnector()
-
-    # Load credentials
-    connector.load_credentials(sharepoint_credentials)
-
-    # Not asserting expected sites because that can change in test tenant at any time
-    # Finding any docs is good enough to verify that the connector is working
-    document_batches = list(connector.load_from_state())
-    assert document_batches, "Should find documents from all sites"
 
 
 def test_sharepoint_connector_specific_folder(
@@ -193,35 +176,3 @@ def test_sharepoint_connector_other_library(
     for expected in expected_documents:
         doc = find_document(found_documents, expected.semantic_identifier)
         verify_document_content(doc, expected)
-
-
-def test_sharepoint_connector_poll(
-    mock_get_unstructured_api_key: MagicMock,
-    sharepoint_credentials: dict[str, str],
-) -> None:
-    # Initialize connector with the base site URL
-    connector = SharepointConnector(
-        sites=["https://danswerai.sharepoint.com/sites/sharepoint-tests"]
-    )
-
-    # Load credentials
-    connector.load_credentials(sharepoint_credentials)
-
-    # Set time window to only capture test1.docx (modified at 2025-01-28 20:51:42+00:00)
-    start = datetime(2025, 1, 28, 20, 51, 30, tzinfo=timezone.utc)  # 12 seconds before
-    end = datetime(2025, 1, 28, 20, 51, 50, tzinfo=timezone.utc)  # 8 seconds after
-
-    # Get documents within the time window
-    document_batches = list(connector._fetch_from_sharepoint(start=start, end=end))
-    found_documents: list[Document] = [
-        doc for batch in document_batches for doc in batch
-    ]
-
-    # Should only find test1.docx
-    assert len(found_documents) == 1, "Should only find one document in the time window"
-    doc = found_documents[0]
-    assert doc.semantic_identifier == "test1.docx"
-    verify_document_metadata(doc)
-    verify_document_content(
-        doc, [d for d in EXPECTED_DOCUMENTS if d.semantic_identifier == "test1.docx"][0]
-    )

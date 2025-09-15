@@ -29,24 +29,20 @@ export function AccessTypeForm({
   const isAutoSyncSupported = isValidAutoSyncSource(connector);
   const { isAdmin } = useUser();
 
-  useEffect(
-    () => {
-      // Only set default value if access_type.value is not already set
-      if (!access_type.value) {
-        if (!isPaidEnterpriseEnabled) {
-          access_type_helpers.setValue("public");
-        } else if (isAutoSyncSupported) {
-          access_type_helpers.setValue("sync");
-        } else {
-          access_type_helpers.setValue("private");
-        }
-      }
-    },
-    [
-      // Only run this effect once when the component mounts
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    ]
-  );
+  useEffect(() => {
+    if (!isPaidEnterpriseEnabled) {
+      access_type_helpers.setValue("public");
+    } else if (isAutoSyncSupported) {
+      access_type_helpers.setValue("sync");
+    } else {
+      access_type_helpers.setValue("private");
+    }
+  }, [
+    isAutoSyncSupported,
+    isAdmin,
+    isPaidEnterpriseEnabled,
+    access_type_helpers,
+  ]);
 
   const options = [
     {
@@ -62,7 +58,7 @@ export function AccessTypeForm({
       name: "Public",
       value: "public",
       description:
-        "Everyone with an account on Onyx can access the documents pulled in by this connector",
+        "Everyone with an account on Seclore can access the documents pulled in by this connector",
     });
   }
 
@@ -71,7 +67,7 @@ export function AccessTypeForm({
       name: "Auto Sync Permissions",
       value: "sync",
       description:
-        "We will automatically sync permissions from the source. A document will be searchable in Onyx if and only if the user performing the search has permission to access the document in the source.",
+        "We will automatically sync permissions from the source. A document will be searchable in Seclore if and only if the user performing the search has permission to access the document in the source.",
     });
   }
 
@@ -85,6 +81,7 @@ export function AccessTypeForm({
               Control who has access to the documents indexed by this connector.
             </p>
           </div>
+
           <DefaultDropdown
             options={options}
             selected={access_type.value}
@@ -93,6 +90,7 @@ export function AccessTypeForm({
             }
             includeDefault={false}
           />
+
           {access_type.value === "sync" && isAutoSyncSupported && (
             <AutoSyncOptions connectorType={connector as ValidAutoSyncSource} />
           )}

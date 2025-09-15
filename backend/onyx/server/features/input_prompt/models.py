@@ -12,12 +12,14 @@ class CreateInputPromptRequest(BaseModel):
     prompt: str
     content: str
     is_public: bool
+    assistant_id: int | None = None
 
 
 class UpdateInputPromptRequest(BaseModel):
     prompt: str
     content: str
     active: bool
+    assistant_id: int | None = None
 
 
 class InputPromptResponse(BaseModel):
@@ -25,6 +27,7 @@ class InputPromptResponse(BaseModel):
     prompt: str
     content: str
     active: bool
+    assistant_id: int | None
 
 
 class InputPromptSnapshot(BaseModel):
@@ -34,6 +37,7 @@ class InputPromptSnapshot(BaseModel):
     active: bool
     user_id: UUID | None
     is_public: bool
+    assistant_id: int | None
 
     @classmethod
     def from_model(cls, input_prompt: InputPrompt) -> "InputPromptSnapshot":
@@ -44,4 +48,5 @@ class InputPromptSnapshot(BaseModel):
             active=input_prompt.active,
             user_id=input_prompt.user_id,
             is_public=input_prompt.is_public,
+            assistant_id=input_prompt.assistant_id,
         )

@@ -1,6 +1,6 @@
 import { ThreeDotsLoader } from "@/components/Loading";
 import { getDatesList, useOnyxBotAnalytics } from "../lib";
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
 import Text from "@/components/ui/text";
 import Title from "@/components/ui/title";
 import CardSection from "@/components/admin/CardSection";
@@ -24,11 +24,7 @@ export function OnyxBotChart({
         <ThreeDotsLoader />
       </div>
     );
-  } else if (
-    !onyxBotAnalyticsData ||
-    onyxBotAnalyticsData[0] == undefined ||
-    onyxBotAnalyticsError
-  ) {
+  } else if (!onyxBotAnalyticsData || onyxBotAnalyticsError) {
     chart = (
       <div className="h-80 text-red-600 text-bold flex flex-col">
         <p className="m-auto">Failed to fetch feedback data...</p>

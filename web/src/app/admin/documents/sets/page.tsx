@@ -13,6 +13,7 @@ import {
 import Text from "@/components/ui/text";
 import Title from "@/components/ui/title";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
 import { DocumentSet } from "@/lib/types";
 import { useState } from "react";
 import { useDocumentSets } from "./hooks";
@@ -29,6 +30,7 @@ import {
   FiUnlock,
 } from "react-icons/fi";
 import { DeleteButton } from "@/components/DeleteButton";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { TableHeader } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +40,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import CreateButton from "@/components/ui/createButton";
 
 const numToDisplay = 50;
 
@@ -53,7 +54,7 @@ const EditRow = ({
 
   if (!isEditable) {
     return (
-      <div className="text-text-darkerfont-medium my-auto p-1">
+      <div className="text-emphasis font-medium my-auto p-1">
         {documentSet.name}
       </div>
     );
@@ -66,7 +67,7 @@ const EditRow = ({
           <TooltipTrigger asChild>
             <div
               className={`
-              text-text-darkerfont-medium my-auto p-1 hover:bg-accent-background flex items-center select-none
+              text-emphasis font-medium my-auto p-1 hover:bg-hover-light flex items-center select-none
               ${documentSet.is_up_to_date ? "cursor-pointer" : "cursor-default"}
             `}
               style={{ wordBreak: "normal", overflowWrap: "break-word" }}
@@ -211,7 +212,7 @@ const DocumentSetTable = ({
                       </Badge>
                     ) : (
                       <Badge
-                        variant={isEditable ? "private" : "default"}
+                        variant={isEditable ? "in_progress" : "outline"}
                         icon={FiLock}
                       >
                         Private
@@ -298,19 +299,15 @@ const Main = () => {
       <Text className="mb-3">
         <b>Document Sets</b> allow you to group logically connected documents
         into a single bundle. These can then be used as a filter when performing
-        searches to control the scope of information Onyx searches over.
+        searches to control the scope of information Seclore searches over.
       </Text>
 
       <div className="mb-3"></div>
 
       <div className="flex mb-6">
-        <CreateButton
-          href="/admin/documents/sets/new"
-          text="New Document Set"
-        />
-        {/* <Link href="/admin/documents/sets/new">
+        <Link href="/admin/documents/sets/new">
           <Button variant="navigate">New Document Set</Button>
-        </Link> */}
+        </Link>
       </div>
 
       {documentSets.length > 0 && (

@@ -1,4 +1,5 @@
 import * as Yup from "yup";
+import { IsPublicGroupSelectorFormType } from "@/components/IsPublicGroupSelector";
 import { ConfigurableSources, ValidInputTypes, ValidSources } from "../types";
 import { AccessTypeGroupSelectorFormType } from "@/components/admin/connectors/AccessTypeGroupSelector";
 import { Credential } from "@/lib/connectors/credentials"; // Import Credential type
@@ -42,19 +43,12 @@ export interface Option {
     currentCredential: Credential<any> | null
   ) => boolean;
   wrapInCollapsible?: boolean;
-  disabled?: boolean | ((currentCredential: Credential<any> | null) => boolean);
 }
 
 export interface SelectOption extends Option {
   type: "select";
   options?: StringWithDescription[];
   default?: string;
-}
-
-export interface MultiSelectOption extends Option {
-  type: "multiselect";
-  options?: StringWithDescription[];
-  default?: string[];
 }
 
 export interface ListOption extends Option {
@@ -66,7 +60,6 @@ export interface ListOption extends Option {
 export interface TextOption extends Option {
   type: "text";
   default?: string;
-  initial?: string | ((currentCredential: Credential<any> | null) => string);
   isTextArea?: boolean;
 }
 
@@ -102,7 +95,6 @@ export interface TabOption extends Option {
       | TextOption
       | NumberOption
       | SelectOption
-      | MultiSelectOption
       | FileOption
       | StringTabOption
     )[];
@@ -113,14 +105,12 @@ export interface TabOption extends Option {
 export interface ConnectionConfiguration {
   description: string;
   subtext?: string;
-  initialConnectorName?: string; // a key in the credential to prepopulate the connector name field
   values: (
     | BooleanOption
     | ListOption
     | TextOption
     | NumberOption
     | SelectOption
-    | MultiSelectOption
     | FileOption
     | TabOption
   )[];
@@ -130,15 +120,10 @@ export interface ConnectionConfiguration {
     | TextOption
     | NumberOption
     | SelectOption
-    | MultiSelectOption
     | FileOption
     | TabOption
   )[];
   overrideDefaultFreq?: number;
-  advancedValuesVisibleCondition?: (
-    values: any,
-    currentCredential: Credential<any> | null
-  ) => boolean;
 }
 
 export const connectorConfigs: Record<
@@ -167,17 +152,7 @@ export const connectorConfigs: Record<
         ],
       },
     ],
-    advanced_values: [
-      {
-        type: "checkbox",
-        query: "Scroll before scraping:",
-        label: "Scroll before scraping",
-        description:
-          "Enable if the website requires scrolling for the desired content to load",
-        name: "scroll_before_scraping",
-        optional: true,
-      },
-    ],
+    advanced_values: [],
     overrideDefaultFreq: 60 * 60 * 24,
   },
   github: {
@@ -185,61 +160,32 @@ export const connectorConfigs: Record<
     values: [
       {
         type: "text",
-        query: "Enter the GitHub username or organization:",
+        query: "Enter the repository owner:",
         label: "Repository Owner",
         name: "repo_owner",
         optional: false,
       },
       {
-        type: "tab",
-        name: "github_mode",
-        label: "What should we index from GitHub?",
-        optional: true,
-        tabs: [
-          {
-            value: "repo",
-            label: "Specific Repository",
-            fields: [
-              {
-                type: "text",
-                query: "Enter the repository name(s):",
-                label: "Repository Name(s)",
-                name: "repositories",
-                optional: false,
-                description:
-                  "For multiple repositories, enter comma-separated names (e.g., repo1,repo2,repo3)",
-              },
-            ],
-          },
-          {
-            value: "everything",
-            label: "Everything",
-            fields: [
-              {
-                type: "string_tab",
-                label: "Everything",
-                name: "everything",
-                description:
-                  "This connector will index all repositories the provided credentials have access to!",
-              },
-            ],
-          },
-        ],
+        type: "text",
+        query: "Enter the repository name:",
+        label: "Repository Name",
+        name: "repo_name",
+        optional: false,
       },
       {
         type: "checkbox",
         query: "Include pull requests?",
         label: "Include pull requests?",
-        description: "Index pull requests from repositories",
+        description: "Index pull requests from this repository",
         name: "include_prs",
         optional: true,
       },
       {
         type: "checkbox",
         query: "Include issues?",
-        label: "Include Issues?",
+        label: "Include Issues",
         name: "include_issues",
-        description: "Index issues from repositories",
+        description: "Index issues from this repository",
         optional: true,
       },
     ],
@@ -262,40 +208,21 @@ export const connectorConfigs: Record<
         name: "project_name",
         optional: false,
       },
-    ],
-    advanced_values: [
       {
         type: "checkbox",
         query: "Include merge requests?",
         label: "Include MRs",
         name: "include_mrs",
-        description: "Index merge requests from repositories",
         default: true,
+        hidden: true,
       },
       {
         type: "checkbox",
         query: "Include issues?",
         label: "Include Issues",
         name: "include_issues",
-        description: "Index issues from repositories",
-        default: true,
-      },
-    ],
-  },
-  gitbook: {
-    description: "Configure GitBook connector",
-    values: [
-      {
-        type: "text",
-        query: "Enter the space ID:",
-        label: "Space ID",
-        name: "space_id",
-        optional: false,
-        description:
-          "The ID of the GitBook space to index. This can be found in the URL " +
-          "of a page in the space. For example, if your URL looks like " +
-          "`https://app.gitbook.com/o/ccLx08XZ5wZ54LwdP9QU/s/8JkzVx8QCIGRrmxhGHU8/`, " +
-          "then your space ID is `8JkzVx8QCIGRrmxhGHU8`.",
+        optional: true,
+        hidden: true,
       },
     ],
     advanced_values: [],
@@ -318,8 +245,8 @@ export const connectorConfigs: Record<
                 label: "Include shared drives?",
                 description: (currentCredential) => {
                   return currentCredential?.credential_json?.google_tokens
-                    ? "This will allow Onyx to index everything in the shared drives you have access to."
-                    : "This will allow Onyx to index everything in your Organization's shared drives.";
+                    ? "This will allow Seclore to index everything in the shared drives you have access to."
+                    : "This will allow Seclore to index everything in your Organization's shared drives.";
                 },
                 name: "include_shared_drives",
                 default: false,
@@ -333,8 +260,8 @@ export const connectorConfigs: Record<
                 },
                 description: (currentCredential) => {
                   return currentCredential?.credential_json?.google_tokens
-                    ? "This will allow Onyx to index everything in your My Drive."
-                    : "This will allow Onyx to index everything in everyone's My Drives.";
+                    ? "This will allow Seclore to index everything in your My Drive."
+                    : "This will allow Seclore to index everything in everyone's My Drives.";
                 },
                 name: "include_my_drives",
                 default: false,
@@ -342,7 +269,7 @@ export const connectorConfigs: Record<
               {
                 type: "checkbox",
                 description:
-                  "This will allow Onyx to index all files shared with you.",
+                  "This will allow Seclore to index all files shared with you.",
                 label: "Include All Files Shared With You?",
                 name: "include_files_shared_with_me",
                 visibleCondition: (values, currentCredential) =>
@@ -393,20 +320,7 @@ export const connectorConfigs: Record<
         defaultTab: "space",
       },
     ],
-    advanced_values: [
-      {
-        type: "text",
-        description:
-          "Enter a comma separated list of specific user emails to index. This will only index files accessible to these users.",
-        label: "Specific User Emails",
-        name: "specific_user_emails",
-        optional: true,
-        default: "",
-        isTextArea: true,
-      },
-    ],
-    advancedValuesVisibleCondition: (values, currentCredential) =>
-      !currentCredential?.credential_json?.google_tokens,
+    advanced_values: [],
   },
   gmail: {
     description: "Configure Gmail connector",
@@ -420,7 +334,6 @@ export const connectorConfigs: Record<
   },
   confluence: {
     description: "Configure Confluence connector",
-    initialConnectorName: "cloud_name",
     values: [
       {
         type: "checkbox",
@@ -431,12 +344,6 @@ export const connectorConfigs: Record<
         default: true,
         description:
           "Check if this is a Confluence Cloud instance, uncheck for Confluence Server/Data Center",
-        disabled: (currentCredential) => {
-          if (currentCredential?.credential_json?.confluence_refresh_token) {
-            return true;
-          }
-          return false;
-        },
       },
       {
         type: "text",
@@ -444,15 +351,6 @@ export const connectorConfigs: Record<
         label: "Wiki Base URL",
         name: "wiki_base",
         optional: false,
-        initial: (currentCredential) => {
-          return currentCredential?.credential_json?.wiki_base ?? "";
-        },
-        disabled: (currentCredential) => {
-          if (currentCredential?.credential_json?.confluence_refresh_token) {
-            return true;
-          }
-          return false;
-        },
         description:
           "The base URL of your Confluence instance (e.g., https://your-domain.atlassian.net/wiki)",
       },
@@ -536,52 +434,14 @@ export const connectorConfigs: Record<
   },
   jira: {
     description: "Configure Jira connector",
-    subtext: `Configure which Jira content to index. You can index everything or specify a particular project.`,
+    subtext: `Specify any link to a Jira page below and click "Index" to Index. Based on the provided link, we will index the ENTIRE PROJECT, not just the specified page. For example, entering https://onyx.atlassian.net/jira/software/projects/DAN/boards/1 and clicking the Index button will index the whole DAN Jira project.`,
     values: [
       {
         type: "text",
-        query: "Enter the Jira base URL:",
-        label: "Jira Base URL",
-        name: "jira_base_url",
+        query: "Enter the Jira project URL:",
+        label: "Jira Project URL",
+        name: "jira_project_url",
         optional: false,
-        description:
-          "The base URL of your Jira instance (e.g., https://your-domain.atlassian.net)",
-      },
-      {
-        type: "tab",
-        name: "indexing_scope",
-        label: "How Should We Index Your Jira?",
-        optional: true,
-        tabs: [
-          {
-            value: "everything",
-            label: "Everything",
-            fields: [
-              {
-                type: "string_tab",
-                label: "Everything",
-                name: "everything",
-                description:
-                  "This connector will index all issues the provided credentials have access to!",
-              },
-            ],
-          },
-          {
-            value: "project",
-            label: "Project",
-            fields: [
-              {
-                type: "text",
-                query: "Enter the project key:",
-                label: "Project Key",
-                name: "project_key",
-                description:
-                  "The key of a specific project to index (e.g., 'PROJ').",
-              },
-            ],
-          },
-        ],
-        defaultTab: "everything",
       },
       {
         type: "list",
@@ -604,7 +464,7 @@ export const connectorConfigs: Record<
         label: "Requested Objects",
         name: "requested_objects",
         optional: true,
-        description: `Specify the Salesforce object types you want us to index. If unsure, don't specify any objects and Onyx will default to indexing by 'Account'.
+        description: `Specify the Salesforce object types you want us to index. If unsure, don't specify any objects and Seclore will default to indexing by 'Account'.
 
 Hint: Use the singular form of the object name (e.g., 'Opportunity' instead of 'Opportunities').`,
       },
@@ -810,24 +670,7 @@ For example, specifying .*-support.* as a "channel" will cause the connector to 
   },
   hubspot: {
     description: "Configure HubSpot connector",
-    values: [
-      {
-        type: "multiselect",
-        query: "Select which HubSpot objects to index:",
-        label: "Object Types",
-        name: "object_types",
-        options: [
-          { name: "Tickets", value: "tickets" },
-          { name: "Companies", value: "companies" },
-          { name: "Deals", value: "deals" },
-          { name: "Contacts", value: "contacts" },
-        ],
-        default: ["tickets", "companies", "deals", "contacts"],
-        description:
-          "Choose which HubSpot object types to index. All types are selected by default.",
-        optional: false,
-      },
-    ],
+    values: [],
     advanced_values: [],
   },
   document360: {
@@ -929,7 +772,7 @@ For example, specifying .*-support.* as a "channel" will cause the connector to 
     advanced_values: [],
   },
   linear: {
-    description: "Configure Linear connector",
+    description: "Configure Dropbox connector",
     values: [],
     advanced_values: [],
   },
@@ -1225,6 +1068,11 @@ For example, specifying .*-support.* as a "channel" will cause the connector to 
     values: [],
     advanced_values: [],
   },
+  freshdesk_solutions: {
+    description: "Configure Freshdesk Solutions connector",
+    values: [],
+    advanced_values: [],
+  },
   fireflies: {
     description: "Configure Fireflies connector",
     values: [],
@@ -1272,66 +1120,8 @@ For example, specifying .*-support.* as a "channel" will cause the connector to 
         optional: false,
       },
     ],
-    advanced_values: [
-      {
-        type: "text",
-        label: "View ID",
-        name: "view_id",
-        optional: true,
-        description:
-          "If you need to link to a specific View, put that ID here e.g. viwVUEJjWPd8XYjh8.",
-      },
-      {
-        type: "text",
-        label: "Share ID",
-        name: "share_id",
-        optional: true,
-        description:
-          "If you need to link to a specific Share, put that ID here e.g. shrkfjEzDmLaDtK83.",
-      },
-    ],
-    overrideDefaultFreq: 60 * 60 * 24,
-  },
-  highspot: {
-    description: "Configure Highspot connector",
-    values: [
-      {
-        type: "tab",
-        name: "highspot_scope",
-        label: "What should we index from Highspot?",
-        optional: true,
-        tabs: [
-          {
-            value: "spots",
-            label: "Specific Spots",
-            fields: [
-              {
-                type: "list",
-                query: "Enter the spot name(s):",
-                label: "Spot Name(s)",
-                name: "spot_names",
-                optional: false,
-                description: "For multiple spots, enter your spot one by one.",
-              },
-            ],
-          },
-          {
-            value: "everything",
-            label: "Everything",
-            fields: [
-              {
-                type: "string_tab",
-                label: "Everything",
-                name: "everything",
-                description:
-                  "This connector will index all spots the provided credentials have access to!",
-              },
-            ],
-          },
-        ],
-      },
-    ],
     advanced_values: [],
+    overrideDefaultFreq: 60 * 60 * 24,
   },
 };
 export function createConnectorInitialValues(
@@ -1348,8 +1138,6 @@ export function createConnectorInitialValues(
         if (field.type === "select") {
           acc[field.name] = null;
         } else if (field.type === "list") {
-          acc[field.name] = field.default || [];
-        } else if (field.type === "multiselect") {
           acc[field.name] = field.default || [];
         } else if (field.type === "checkbox") {
           acc[field.name] = field.default || false;
@@ -1368,23 +1156,21 @@ export function createConnectorValidationSchema(
 ): Yup.ObjectSchema<Record<string, any>> {
   const configuration = connectorConfigs[connector];
 
-  const object = Yup.object().shape({
+  return Yup.object().shape({
     access_type: Yup.string().required("Access Type is required"),
     name: Yup.string().required("Connector Name is required"),
-    ...[...configuration.values, ...configuration.advanced_values].reduce(
+    ...configuration.values.reduce(
       (acc, field) => {
         let schema: any =
           field.type === "select"
             ? Yup.string()
             : field.type === "list"
               ? Yup.array().of(Yup.string())
-              : field.type === "multiselect"
-                ? Yup.array().of(Yup.string())
-                : field.type === "checkbox"
-                  ? Yup.boolean()
-                  : field.type === "file"
-                    ? Yup.mixed()
-                    : Yup.string();
+              : field.type === "checkbox"
+                ? Yup.boolean()
+                : field.type === "file"
+                  ? Yup.mixed()
+                  : Yup.string();
 
         if (!field.optional) {
           schema = schema.required(`${field.label} is required`);
@@ -1400,8 +1186,6 @@ export function createConnectorValidationSchema(
     pruneFreq: Yup.number().min(0, "Prune frequency must be non-negative"),
     refreshFreq: Yup.number().min(0, "Refresh frequency must be non-negative"),
   });
-
-  return object;
 }
 
 export const defaultPruneFreqDays = 30; // 30 days
@@ -1418,7 +1202,6 @@ export interface ConnectorBase<T> {
   indexing_start: Date | null;
   access_type: string;
   groups?: number[];
-  from_beginning?: boolean;
 }
 
 export interface Connector<T> extends ConnectorBase<T> {
@@ -1440,7 +1223,6 @@ export interface ConnectorSnapshot {
   indexing_start: number | null;
   time_created: string;
   time_updated: string;
-  from_beginning?: boolean;
 }
 
 export interface WebConfig {
@@ -1450,7 +1232,7 @@ export interface WebConfig {
 
 export interface GithubConfig {
   repo_owner: string;
-  repositories: string; // Comma-separated list of repository names
+  repo_name: string;
   include_prs: boolean;
   include_issues: boolean;
 }
@@ -1485,7 +1267,6 @@ export interface ConfluenceConfig {
 
 export interface JiraConfig {
   jira_project_url: string;
-  project_key?: string;
   comment_email_blacklist?: string[];
 }
 
@@ -1538,7 +1319,6 @@ export interface LoopioConfig {
 
 export interface FileConfig {
   file_locations: string[];
-  zip_metadata: Record<string, any>;
 }
 
 export interface ZulipConfig {
@@ -1550,9 +1330,7 @@ export interface NotionConfig {
   root_page_id?: string;
 }
 
-export interface HubSpotConfig {
-  object_types?: string[];
-}
+export interface HubSpotConfig {}
 
 export interface Document360Config {
   workspace: string;

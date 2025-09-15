@@ -14,7 +14,8 @@ import { pageType } from "@/app/chat/sessionSidebar/types";
 import { NavigationItem, Notification } from "@/app/admin/settings/interfaces";
 import DynamicFaIcon, { preloadIcons } from "./icons/DynamicFaIcon";
 import { useUser } from "./user/UserProvider";
-import { Notifications } from "./chat/Notifications";
+import { usePaidEnterpriseFeaturesEnabled } from "./settings/usePaidEnterpriseFeaturesEnabled";
+import { Notifications } from "./chat_search/Notifications";
 import useSWR from "swr";
 import { errorHandlingFetcher } from "@/lib/fetcher";
 
@@ -34,7 +35,7 @@ const DropdownOption: React.FC<DropdownOptionProps> = ({
   openInNewTab,
 }) => {
   const content = (
-    <div className="flex py-1.5 text-sm px-2 gap-x-2 text-black text-sm cursor-pointer rounded hover:bg-background-300">
+    <div className="flex py-1.5 text-sm px-2 gap-x-2 text-t text-sm cursor-pointer rounded hover:bg-[#f1eee8]">
       {icon}
       {label}
     </div>
@@ -103,7 +104,7 @@ export function UserDropdown({
 
       // Construct the current URL
       const currentUrl = `${pathname}${
-        searchParams?.toString() ? `?${searchParams.toString()}` : ""
+        searchParams.toString() ? `?${searchParams.toString()}` : ""
       }`;
 
       // Encode the current URL to use as a redirect parameter
@@ -132,14 +133,13 @@ export function UserDropdown({
         onOpenChange={onOpenChange}
         content={
           <div
-            id="onyx-user-dropdown"
             onClick={() => setUserInfoVisible(!userInfoVisible)}
             className="flex relative cursor-pointer"
           >
             <div
               className="
                 my-auto
-                bg-background-900
+                bg-userdropdown-background
                 ring-2
                 ring-transparent
                 group-hover:ring-background-300/50
@@ -157,9 +157,7 @@ export function UserDropdown({
                 text-base
               "
             >
-              {user && user.email
-                ? user.email[0] !== undefined && user.email[0].toUpperCase()
-                : "A"}
+              {user && user.email ? user.email[0].toUpperCase() : "A"}
             </div>
             {notifications && notifications.length > 0 && (
               <div className="absolute -right-0.5 -top-0.5 w-3 h-3 bg-red-500 rounded-full"></div>
@@ -170,13 +168,12 @@ export function UserDropdown({
           <div
             className={`
                 p-2
-                ${page != "admin" && showNotifications ? "w-72" : "w-[175px]"}
+                w-[175px]
                 text-strong 
                 text-sm
                 border 
                 border-border 
                 bg-background
-                dark:bg-[#2F2F2F]
                 rounded-lg
                 shadow-lg 
                 flex 

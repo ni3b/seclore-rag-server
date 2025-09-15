@@ -1,7 +1,4 @@
-import os
 from datetime import datetime
-
-import pytest
 
 from onyx.configs.constants import QAFeedbackType
 from tests.integration.common_utils.managers.query_history import QueryHistoryManager
@@ -50,10 +47,6 @@ def _verify_query_history_pagination(
     assert all_expected_sessions == all_retrieved_sessions
 
 
-@pytest.mark.skipif(
-    os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() != "true",
-    reason="Query history tests are enterprise only",
-)
 def test_query_history_pagination(reset: None) -> None:
     (
         admin_user,

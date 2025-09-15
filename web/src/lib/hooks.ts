@@ -10,22 +10,24 @@ import {
 } from "@/lib/types";
 import useSWR, { mutate, useSWRConfig } from "swr";
 import { errorHandlingFetcher } from "./fetcher";
-import { useContext, useEffect, useMemo, useState } from "react";
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
-import { SourceMetadata } from "./search/interfaces";
-import { parseLlmDescriptor } from "./llm/utils";
+import { useContext, useEffect, useState } from "react";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
+import { Filters, SourceMetadata } from "./search/interfaces";
+import {
+  destructureValue,
+  findProviderForModel,
+  structureValue,
+} from "./llm/utils";
 import { ChatSession } from "@/app/chat/interfaces";
 import { AllUsersResponse } from "./types";
 import { Credential } from "./connectors/credentials";
 import { SettingsContext } from "@/components/settings/SettingsProvider";
 import { Persona, PersonaLabel } from "@/app/admin/assistants/interfaces";
 import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
-import { isAnthropic } from "@/app/admin/configuration/llm/utils";
+import { isAnthropic } from "@/app/admin/configuration/llm/interfaces";
 import { getSourceMetadata } from "./sources";
 import { AuthType, NEXT_PUBLIC_CLOUD_ENABLED } from "./constants";
 import { useUser } from "@/components/user/UserProvider";
-import { SEARCH_TOOL_ID } from "@/app/chat/tools/constants";
-import { updateTemperatureOverrideForChatSession } from "@/app/chat/lib";
 
 const CREDENTIAL_URL = "/api/manage/admin/credential";
 
@@ -338,12 +340,8 @@ export function useFilters(): FilterManager {
   };
 }
 
-interface UseUsersParams {
-  includeApiKeys: boolean;
-}
-
-export const useUsers = ({ includeApiKeys }: UseUsersParams) => {
-  const url = `/api/manage/users?include_api_keys=${includeApiKeys}`;
+export const useUsers = () => {
+  const url = "/api/manage/users";
 
   const swrResponse = useSWR<AllUsersResponse>(url, errorHandlingFetcher);
 
@@ -353,30 +351,22 @@ export const useUsers = ({ includeApiKeys }: UseUsersParams) => {
   };
 };
 
-export interface LlmDescriptor {
+export interface LlmOverride {
   name: string;
   provider: string;
   modelName: string;
 }
 
-export interface LlmManager {
-  currentLlm: LlmDescriptor;
-  updateCurrentLlm: (newOverride: LlmDescriptor) => void;
-  temperature: number;
-  updateTemperature: (temperature: number) => void;
-  updateModelOverrideBasedOnChatSession: (chatSession?: ChatSession) => void;
+export interface LlmOverrideManager {
+  llmOverride: LlmOverride;
+  updateLLMOverride: (newOverride: LlmOverride) => void;
+  temperature: number | null;
+  updateTemperature: (temperature: number | null) => void;
+  updateModelOverrideForChatSession: (chatSession?: ChatSession) => void;
   imageFilesPresent: boolean;
   updateImageFilesPresent: (present: boolean) => void;
   liveAssistant: Persona | null;
-  maxTemperature: number;
 }
-
-// Things to test
-// 1. User override
-// 2. User preference (defaults to system wide default if no preference set)
-// 3. Current assistant
-// 4. Current chat session
-// 5. Live assistant
 
 /*
 LLM Override is as follows (i.e. this order)
@@ -393,99 +383,65 @@ Thus, the input should be
 
 Changes take place as
 - liveAssistant or currentChatSession changes (and the associated model override is set)
-- (updateCurrentLlm) User explicitly setting a model override (and we explicitly override and set the userSpecifiedOverride which we'll use in place of the user preferences unless overridden by an assistant)
+- (uploadLLMOverride) User explicitly setting a model override (and we explicitly override and set the userSpecifiedOverride which we'll use in place of the user preferences unless overridden by an assistant)
 
 If we have a live assistant, we should use that model override
-
-Relevant test: `llm_ordering.spec.ts`.
-
-Temperature override is set as follows:
-- For existing chat sessions:
-  - If the user has previously overridden the temperature for a specific chat session,
-    that value is persisted and used when the user returns to that chat.
-  - This persistence applies even if the temperature was set before sending the first message in the chat.
-- For new chat sessions:
-  - If the search tool is available, the default temperature is set to 0.
-  - If the search tool is not available, the default temperature is set to 0.5.
-
-This approach ensures that user preferences are maintained for existing chats while
-providing appropriate defaults for new conversations based on the available tools.
 */
 
-export function useLlmManager(
+export function useLlmOverride(
   llmProviders: LLMProviderDescriptor[],
   currentChatSession?: ChatSession,
   liveAssistant?: Persona
-): LlmManager {
+): LlmOverrideManager {
   const { user } = useUser();
 
-  const [userHasManuallyOverriddenLLM, setUserHasManuallyOverriddenLLM] =
-    useState(false);
   const [chatSession, setChatSession] = useState<ChatSession | null>(null);
-  const [currentLlm, setCurrentLlm] = useState<LlmDescriptor>({
-    name: "",
-    provider: "",
-    modelName: "",
-  });
 
-  const llmUpdate = () => {
-    /* Should be called when the live assistant or current chat session changes */
+  const llmOverrideUpdate = () => {
+    if (!chatSession && currentChatSession) {
+      setChatSession(currentChatSession || null);
+      return;
+    }
 
-    // separate function so we can `return` to break out
-    const _llmUpdate = () => {
-      // if the user has overridden in this session and just switched to a brand
-      // new session, use their manually specified model
-      if (userHasManuallyOverriddenLLM && !currentChatSession) {
-        return;
+    if (liveAssistant?.llm_model_version_override) {
+      setLlmOverride(
+        getValidLlmOverride(liveAssistant.llm_model_version_override)
+      );
+    } else if (currentChatSession?.current_alternate_model) {
+      setLlmOverride(
+        getValidLlmOverride(currentChatSession.current_alternate_model)
+      );
+    } else if (user?.preferences?.default_model) {
+      setLlmOverride(getValidLlmOverride(user.preferences.default_model));
+      return;
+    } else {
+      const defaultProvider = llmProviders.find(
+        (provider) => provider.is_default_provider
+      );
+
+      if (defaultProvider) {
+        setLlmOverride({
+          name: defaultProvider.name,
+          provider: defaultProvider.provider,
+          modelName: defaultProvider.default_model_name,
+        });
       }
-
-      if (currentChatSession?.current_alternate_model) {
-        setCurrentLlm(
-          getValidLlmDescriptor(currentChatSession.current_alternate_model)
-        );
-      } else if (liveAssistant?.llm_model_version_override) {
-        setCurrentLlm(
-          getValidLlmDescriptor(liveAssistant.llm_model_version_override)
-        );
-      } else if (userHasManuallyOverriddenLLM) {
-        // if the user has an override and there's nothing special about the
-        // current chat session, use the override
-        return;
-      } else if (user?.preferences?.default_model) {
-        setCurrentLlm(getValidLlmDescriptor(user.preferences.default_model));
-      } else {
-        const defaultProvider = llmProviders.find(
-          (provider) => provider.is_default_provider
-        );
-
-        if (defaultProvider) {
-          setCurrentLlm({
-            name: defaultProvider.name,
-            provider: defaultProvider.provider,
-            modelName: defaultProvider.default_model_name,
-          });
-        }
-      }
-    };
-
-    _llmUpdate();
+    }
     setChatSession(currentChatSession || null);
   };
 
-  const getValidLlmDescriptor = (
-    modelName: string | null | undefined
-  ): LlmDescriptor => {
-    if (modelName) {
-      const model = parseLlmDescriptor(modelName);
+  const getValidLlmOverride = (
+    overrideModel: string | null | undefined
+  ): LlmOverride => {
+    if (overrideModel) {
+      const model = destructureValue(overrideModel);
       if (!(model.modelName && model.modelName.length > 0)) {
         const provider = llmProviders.find((p) =>
-          p.model_configurations
-            .map((modelConfiguration) => modelConfiguration.name)
-            .includes(modelName)
+          p.model_names.includes(overrideModel)
         );
         if (provider) {
           return {
-            modelName: modelName,
+            modelName: overrideModel,
             name: provider.name,
             provider: provider.provider,
           };
@@ -493,13 +449,11 @@ export function useLlmManager(
       }
 
       const provider = llmProviders.find((p) =>
-        p.model_configurations
-          .map((modelConfiguration) => modelConfiguration.name)
-          .includes(model.modelName)
+        p.model_names.includes(model.modelName)
       );
 
       if (provider) {
-        return { ...model, provider: provider.provider };
+        return { ...model, name: provider.name };
       }
     }
     return { name: "", provider: "", modelName: "" };
@@ -511,93 +465,60 @@ export function useLlmManager(
     setImageFilesPresent(present);
   };
 
-  // Manually set the LLM
-  const updateCurrentLlm = (newLlm: LlmDescriptor) => {
-    setCurrentLlm(newLlm);
-    setUserHasManuallyOverriddenLLM(true);
-  };
-
-  const updateModelOverrideBasedOnChatSession = (chatSession?: ChatSession) => {
-    if (chatSession && chatSession.current_alternate_model?.length > 0) {
-      setCurrentLlm(getValidLlmDescriptor(chatSession.current_alternate_model));
-    }
-  };
-
-  const [temperature, setTemperature] = useState<number>(() => {
-    llmUpdate();
-
-    if (currentChatSession?.current_temperature_override != null) {
-      return Math.min(
-        currentChatSession.current_temperature_override,
-        isAnthropic(currentLlm.provider, currentLlm.modelName) ? 1.0 : 2.0
-      );
-    } else if (
-      liveAssistant?.tools.some((tool) => tool.name === SEARCH_TOOL_ID)
-    ) {
-      return 0;
-    }
-    return 0.5;
+  const [llmOverride, setLlmOverride] = useState<LlmOverride>({
+    name: "",
+    provider: "",
+    modelName: "",
   });
 
-  const maxTemperature = useMemo(() => {
-    return isAnthropic(currentLlm.provider, currentLlm.modelName) ? 1.0 : 2.0;
-  }, [currentLlm]);
+  // Manually set the override
+  const updateLLMOverride = (newOverride: LlmOverride) => {
+    const provider =
+      newOverride.provider ||
+      findProviderForModel(llmProviders, newOverride.modelName);
+    const structuredValue = structureValue(
+      newOverride.name,
+      provider,
+      newOverride.modelName
+    );
+    setLlmOverride(getValidLlmOverride(structuredValue));
+  };
+
+  const updateModelOverrideForChatSession = (chatSession?: ChatSession) => {
+    if (chatSession && chatSession.current_alternate_model?.length > 0) {
+      setLlmOverride(getValidLlmOverride(chatSession.current_alternate_model));
+    }
+  };
+
+  const [temperature, setTemperature] = useState<number | null>(0);
 
   useEffect(() => {
-    if (isAnthropic(currentLlm.provider, currentLlm.modelName)) {
-      const newTemperature = Math.min(temperature, 1.0);
-      setTemperature(newTemperature);
-      if (chatSession?.id) {
-        updateTemperatureOverrideForChatSession(chatSession.id, newTemperature);
-      }
-    }
-  }, [currentLlm]);
-
-  useEffect(() => {
-    llmUpdate();
-
-    if (!chatSession && currentChatSession) {
-      if (temperature) {
-        updateTemperatureOverrideForChatSession(
-          currentChatSession.id,
-          temperature
-        );
-      }
-      return;
-    }
-
-    if (currentChatSession?.current_temperature_override) {
-      setTemperature(currentChatSession.current_temperature_override);
-    } else if (
-      liveAssistant?.tools.some((tool) => tool.name === SEARCH_TOOL_ID)
-    ) {
-      setTemperature(0);
-    } else {
-      setTemperature(0.5);
-    }
+    llmOverrideUpdate();
   }, [liveAssistant, currentChatSession]);
 
-  const updateTemperature = (temperature: number) => {
-    if (isAnthropic(currentLlm.provider, currentLlm.modelName)) {
-      setTemperature((prevTemp) => Math.min(temperature, 1.0));
+  useEffect(() => {
+    if (isAnthropic(llmOverride.provider, llmOverride.modelName)) {
+      setTemperature((prevTemp) => Math.min(prevTemp ?? 0, 1.0));
+    }
+  }, [llmOverride]);
+
+  const updateTemperature = (temperature: number | null) => {
+    if (isAnthropic(llmOverride.provider, llmOverride.modelName)) {
+      setTemperature((prevTemp) => Math.min(temperature ?? 0, 1.0));
     } else {
       setTemperature(temperature);
-    }
-    if (chatSession) {
-      updateTemperatureOverrideForChatSession(chatSession.id, temperature);
     }
   };
 
   return {
-    updateModelOverrideBasedOnChatSession,
-    currentLlm,
-    updateCurrentLlm,
+    updateModelOverrideForChatSession,
+    llmOverride,
+    updateLLMOverride,
     temperature,
     updateTemperature,
     imageFilesPresent,
     updateImageFilesPresent,
     liveAssistant: liveAssistant ?? null,
-    maxTemperature,
   };
 }
 
@@ -618,7 +539,7 @@ export function useAuthType(): AuthType | null {
   return data.auth_type;
 }
 
-/*
+/* 
 EE Only APIs
 */
 
@@ -656,18 +577,61 @@ export const useUserGroups = (): {
   };
 };
 
+export const useMicrosoftADGroups = (): {
+  data: { groups: Array<{ id: string; display_name: string; description?: string; mail?: string; is_member: boolean }> } | undefined;
+  isLoading: boolean;
+  error: string;
+  refreshMicrosoftADGroups: () => void;
+} => {
+  const authType = useAuthType();
+  const isOIDC = authType === "oidc";
+  
+  // Always fetch all groups once, no search query needed
+  const MICROSOFT_AD_GROUPS_URL = "/api/auth/oidc/microsoft-groups";
+
+  const swrResponse = useSWR<{ groups: Array<{ id: string; display_name: string; description?: string; mail?: string; is_member: boolean }> }>(
+    isOIDC ? MICROSOFT_AD_GROUPS_URL : null,
+    errorHandlingFetcher
+  );
+
+  if (!isOIDC) {
+    return {
+      ...{
+        data: { groups: [] },
+        isLoading: false,
+        error: "",
+      },
+      refreshMicrosoftADGroups: () => {},
+    };
+  }
+
+  return {
+    ...swrResponse,
+    refreshMicrosoftADGroups: () => mutate(MICROSOFT_AD_GROUPS_URL),
+  };
+};
+
+export const useMicrosoftADGroupUsers = (groupId: string | null) => {
+  const { data, error, isLoading, mutate } = useSWR<{ users: Array<{ id: string; display_name: string; user_principal_name: string; mail?: string }> }>(
+    groupId ? `/api/auth/oidc/microsoft-groups/${groupId}/users` : null,
+    errorHandlingFetcher
+  );
+
+  return {
+    data: data?.users,
+    isLoading,
+    error: error?.message || "",
+    refreshGroupUsers: () => mutate(),
+  };
+};
+
 const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   // OpenAI models
-  "o1-2025-12-17": "o1 (December 2025)",
-  "o3-mini": "o3 Mini",
-  "o1-mini": "o1 Mini",
-  "o1-preview": "o1 Preview",
-  o1: "o1",
-  "gpt-4.1": "GPT 4.1",
+  "o1-mini": "O1 Mini",
+  "o1-preview": "O1 Preview",
+  "o1-2024-12-17": "O1",
   "gpt-4": "GPT 4",
   "gpt-4o": "GPT 4o",
-  "o4-mini": "o4 Mini",
-  o3: "o3",
   "gpt-4o-2024-08-06": "GPT 4o (Structured Outputs)",
   "gpt-4o-mini": "GPT 4o Mini",
   "gpt-4-0314": "GPT 4 (March 2023)",
@@ -699,10 +663,6 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   "phi-3.5-mini-instruct": "Phi 3.5 Mini",
   "phi-3.5-moe-instruct": "Phi 3.5 MoE",
   "phi-3.5-vision-instruct": "Phi 3.5 Vision",
-  "phi-4": "Phi 4",
-
-  // Deepseek Models
-  "deepseek-r1": "DeepSeek R1",
 
   // Anthropic models
   "claude-3-opus-20240229": "Claude 3 Opus",
@@ -711,57 +671,28 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   "claude-2.1": "Claude 2.1",
   "claude-2.0": "Claude 2.0",
   "claude-instant-1.2": "Claude Instant 1.2",
-  "claude-3-5-sonnet-20240620": "Claude 3.5 Sonnet (June 2024)",
-  "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet",
-  "claude-3-7-sonnet-20250219": "Claude 3.7 Sonnet",
-  "claude-3-5-sonnet-v2@20241022": "Claude 3.5 Sonnet",
-  "claude-3.5-sonnet-v2@20241022": "Claude 3.5 Sonnet",
+  "claude-3-5-sonnet-20240620": "Claude 3.5 Sonnet",
+  "claude-3-5-sonnet-20241022": "Claude 3.5 Sonnet (New)",
+  "claude-3-5-sonnet-v2@20241022": "Claude 3.5 Sonnet (New)",
+  "claude-3.5-sonnet-v2@20241022": "Claude 3.5 Sonnet (New)",
   "claude-3-5-haiku-20241022": "Claude 3.5 Haiku",
-  "claude-3-5-haiku@20241022": "Claude 3.5 Haiku",
-  "claude-3.5-haiku@20241022": "Claude 3.5 Haiku",
-  "claude-3.7-sonnet@202502019": "Claude 3.7 Sonnet",
-  "claude-3-7-sonnet-202502019": "Claude 3.7 Sonnet",
 
   // Google Models
-
-  // 2.5 pro models
-  "gemini-2.5-pro-preview-05-06": "Gemini 2.5 Pro (Preview May 6th)",
-
-  // 2.0 flash lite models
-  "gemini-2.0-flash-lite": "Gemini 2.0 Flash Lite",
-  "gemini-2.0-flash-lite-001": "Gemini 2.0 Flash Lite (v1)",
-  // "gemini-2.0-flash-lite-preview-02-05": "Gemini 2.0 Flash Lite (Prv)",
-  // "gemini-2.0-pro-exp-02-05": "Gemini 2.0 Pro (Exp)",
-
-  // 2.0 flash models
-  "gemini-2.0-flash": "Gemini 2.0 Flash",
-  "gemini-2.0-flash-001": "Gemini 2.0 Flash (v1)",
-  "gemini-2.0-flash-exp": "Gemini 2.0 Flash (Experimental)",
-  "gemini-2.5-flash-preview-05-20": "Gemini 2.5 Flash (Preview May 20th)",
-  // "gemini-2.0-flash-thinking-exp-01-02":
-  //   "Gemini 2.0 Flash Thinking (Experimental January 2nd)",
-  // "gemini-2.0-flash-thinking-exp-01-21":
-  //   "Gemini 2.0 Flash Thinking (Experimental January 21st)",
-
-  // 1.5 pro models
   "gemini-1.5-pro": "Gemini 1.5 Pro",
-  "gemini-1.5-pro-latest": "Gemini 1.5 Pro (Latest)",
-  "gemini-1.5-pro-001": "Gemini 1.5 Pro (v1)",
-  "gemini-1.5-pro-002": "Gemini 1.5 Pro (v2)",
-
-  // 1.5 flash models
   "gemini-1.5-flash": "Gemini 1.5 Flash",
-  "gemini-1.5-flash-latest": "Gemini 1.5 Flash (Latest)",
+  "gemini-1.5-pro-001": "Gemini 1.5 Pro",
+  "gemini-1.5-flash-001": "Gemini 1.5 Flash",
+  "gemini-1.5-pro-002": "Gemini 1.5 Pro (v2)",
   "gemini-1.5-flash-002": "Gemini 1.5 Flash (v2)",
-  "gemini-1.5-flash-001": "Gemini 1.5 Flash (v1)",
+  "gemini-2.0-flash-exp": "Gemini 2.0 Flash (Experimental)",
 
   // Mistral Models
   "mistral-large-2411": "Mistral Large 24.11",
   "mistral-large@2411": "Mistral Large 24.11",
-  "ministral-3b": "Ministral 3B",
 
   // Bedrock models
   "meta.llama3-1-70b-instruct-v1:0": "Llama 3.1 70B",
+  "us.meta.llama3-3-70b-instruct-v1:0": "Llama 3.3 70B",
   "meta.llama3-1-8b-instruct-v1:0": "Llama 3.1 8B",
   "meta.llama3-70b-instruct-v1:0": "Llama 3 70B",
   "meta.llama3-2-1b-instruct-v1:0": "Llama 3.2 1B",
@@ -779,12 +710,14 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
   "anthropic.claude-v2:1": "Claude v2.1",
   "anthropic.claude-v2": "Claude v2",
   "anthropic.claude-v1": "Claude v1",
-  "anthropic.claude-3-7-sonnet-20250219-v1:0": "Claude 3.7 Sonnet",
-  "us.anthropic.claude-3-7-sonnet-20250219-v1:0": "Claude 3.7 Sonnet",
   "anthropic.claude-3-opus-20240229-v1:0": "Claude 3 Opus",
   "anthropic.claude-3-haiku-20240307-v1:0": "Claude 3 Haiku",
   "anthropic.claude-3-5-sonnet-20240620-v1:0": "Claude 3.5 Sonnet",
+  "us.anthropic.claude-3-7-sonnet-20250219-v1:0": "Claude 3.7 Sonnet - Bedrock",
+  "us.anthropic.claude-3-5-sonnet-20240620-v1:0": "Claude 3.5 Sonnet - Bedrock",
+  "us.anthropic.claude-sonnet-4-20250514-v1:0": "Claude Sonnet 4 - Bedrock",
   "anthropic.claude-3-5-sonnet-20241022-v2:0": "Claude 3.5 Sonnet (New)",
+  "us.anthropic.claude-3-5-sonnet-20241022-v2:0": "Claude 3.5 Sonnet - Bedrock",
   "anthropic.claude-3-sonnet-20240229-v1:0": "Claude 3 Sonnet",
   "mistral.mistral-large-2402-v1:0": "Mistral Large",
   "mistral.mixtral-8x7b-instruct-v0:1": "Mixtral 8x7B Instruct",
@@ -797,39 +730,20 @@ const MODEL_DISPLAY_NAMES: { [key: string]: string } = {
 };
 
 export function getDisplayNameForModel(modelName: string): string {
-  if (modelName.startsWith("bedrock/")) {
-    const parts = modelName.split("/");
-    const lastPart = parts[parts.length - 1];
-    if (lastPart === undefined) {
-      return "";
-    }
-
-    const displayName = MODEL_DISPLAY_NAMES[lastPart];
-    return displayName || lastPart;
-  }
-
   return MODEL_DISPLAY_NAMES[modelName] || modelName;
 }
 
 export const defaultModelsByProvider: { [name: string]: string[] } = {
-  openai: [
-    "gpt-4",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4.1",
-    "o3-mini",
-    "o1-mini",
-    "o1",
-    "o4-mini",
-    "o3",
-  ],
+  openai: ["gpt-4", "gpt-4o", "gpt-4o-mini", "o1-mini", "o1-preview"],
   bedrock: [
     "meta.llama3-1-70b-instruct-v1:0",
     "meta.llama3-1-8b-instruct-v1:0",
     "anthropic.claude-3-opus-20240229-v1:0",
     "mistral.mistral-large-2402-v1:0",
     "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "anthropic.claude-3-7-sonnet-20250219-v1:0",
+    "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+    "us.meta.llama3-3-70b-instruct-v1:0",
+    "us.anthropic.claude-sonnet-4-20250514-v1:0",
   ],
   anthropic: ["claude-3-opus-20240229", "claude-3-5-sonnet-20241022"],
 };

@@ -42,7 +42,7 @@ def run_jobs() -> None:
         "--loglevel=INFO",
         "--hostname=light@%n",
         "-Q",
-        "vespa_metadata_sync,connector_deletion,doc_permissions_upsert,checkpoint_cleanup",
+        "vespa_metadata_sync,connector_deletion,doc_permissions_upsert",
     ]
 
     cmd_worker_heavy = [
@@ -56,7 +56,7 @@ def run_jobs() -> None:
         "--loglevel=INFO",
         "--hostname=heavy@%n",
         "-Q",
-        "connector_pruning,connector_doc_permissions_sync,connector_external_group_sync,csv_generation",
+        "connector_pruning,connector_doc_permissions_sync,connector_external_group_sync",
     ]
 
     cmd_worker_indexing = [
@@ -72,19 +72,6 @@ def run_jobs() -> None:
         "--queues=connector_indexing",
     ]
 
-    cmd_worker_user_files_indexing = [
-        "celery",
-        "-A",
-        "onyx.background.celery.versioned_apps.indexing",
-        "worker",
-        "--pool=threads",
-        "--concurrency=1",
-        "--prefetch-multiplier=1",
-        "--loglevel=INFO",
-        "--hostname=user_files_indexing@%n",
-        "--queues=user_files_indexing",
-    ]
-
     cmd_worker_monitoring = [
         "celery",
         "-A",
@@ -96,19 +83,6 @@ def run_jobs() -> None:
         "--loglevel=INFO",
         "--hostname=monitoring@%n",
         "--queues=monitoring",
-    ]
-
-    cmd_worker_kg_processing = [
-        "celery",
-        "-A",
-        "onyx.background.celery.versioned_apps.kg_processing",
-        "worker",
-        "--pool=threads",
-        "--concurrency=4",
-        "--prefetch-multiplier=1",
-        "--loglevel=INFO",
-        "--hostname=kg_processing@%n",
-        "--queues=kg_processing",
     ]
 
     cmd_beat = [
@@ -136,22 +110,8 @@ def run_jobs() -> None:
         cmd_worker_indexing, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
 
-    worker_user_files_indexing_process = subprocess.Popen(
-        cmd_worker_user_files_indexing,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-
     worker_monitoring_process = subprocess.Popen(
         cmd_worker_monitoring,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-
-    worker_kg_processing_process = subprocess.Popen(
-        cmd_worker_kg_processing,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -174,15 +134,8 @@ def run_jobs() -> None:
     worker_indexing_thread = threading.Thread(
         target=monitor_process, args=("INDEX", worker_indexing_process)
     )
-    worker_user_files_indexing_thread = threading.Thread(
-        target=monitor_process,
-        args=("USER_FILES_INDEX", worker_user_files_indexing_process),
-    )
     worker_monitoring_thread = threading.Thread(
         target=monitor_process, args=("MONITORING", worker_monitoring_process)
-    )
-    worker_kg_processing_thread = threading.Thread(
-        target=monitor_process, args=("KG_PROCESSING", worker_kg_processing_process)
     )
     beat_thread = threading.Thread(target=monitor_process, args=("BEAT", beat_process))
 
@@ -190,18 +143,14 @@ def run_jobs() -> None:
     worker_light_thread.start()
     worker_heavy_thread.start()
     worker_indexing_thread.start()
-    worker_user_files_indexing_thread.start()
     worker_monitoring_thread.start()
-    worker_kg_processing_thread.start()
     beat_thread.start()
 
     worker_primary_thread.join()
     worker_light_thread.join()
     worker_heavy_thread.join()
     worker_indexing_thread.join()
-    worker_user_files_indexing_thread.join()
     worker_monitoring_thread.join()
-    worker_kg_processing_thread.join()
     beat_thread.join()
 
 

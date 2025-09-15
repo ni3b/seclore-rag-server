@@ -1,9 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import timedelta
-from typing import Any
-from typing import cast
-from typing import Tuple
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -12,30 +9,19 @@ from sqlalchemy import desc
 from sqlalchemy import func
 from sqlalchemy import nullsfirst
 from sqlalchemy import or_
-from sqlalchemy import Row
 from sqlalchemy import select
 from sqlalchemy import update
 from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm import Session
 
-from onyx.agents.agent_search.shared_graph_utils.models import CombinedAgentMetrics
-from onyx.agents.agent_search.shared_graph_utils.models import (
-    SubQuestionAnswerResults,
-)
 from onyx.auth.schemas import UserRole
 from onyx.chat.models import DocumentRelevance
 from onyx.configs.chat_configs import HARD_DELETE_CHATS
-from onyx.configs.constants import DocumentSource
 from onyx.configs.constants import MessageType
-from onyx.context.search.models import InferenceSection
 from onyx.context.search.models import RetrievalDocs
 from onyx.context.search.models import SavedSearchDoc
 from onyx.context.search.models import SearchDoc as ServerSearchDoc
-from onyx.context.search.utils import chunks_or_sections_to_search_docs
-from onyx.db.models import AgentSearchMetrics
-from onyx.db.models import AgentSubQuery
-from onyx.db.models import AgentSubQuestion
 from onyx.db.models import ChatMessage
 from onyx.db.models import ChatMessage__SearchDoc
 from onyx.db.models import ChatSession
@@ -45,19 +31,15 @@ from onyx.db.models import SearchDoc
 from onyx.db.models import SearchDoc as DBSearchDoc
 from onyx.db.models import ToolCall
 from onyx.db.models import User
-from onyx.db.models import UserFile
 from onyx.db.persona import get_best_persona_id_for_user
-from onyx.file_store.file_store import get_default_file_store
+from onyx.db.pg_file_store import delete_lobj_by_name
 from onyx.file_store.models import FileDescriptor
-from onyx.file_store.models import InMemoryChatFile
 from onyx.llm.override_models import LLMOverride
 from onyx.llm.override_models import PromptOverride
 from onyx.server.query_and_chat.models import ChatMessageDetail
-from onyx.server.query_and_chat.models import SubQueryDetail
-from onyx.server.query_and_chat.models import SubQuestionDetail
 from onyx.tools.tool_runner import ToolCallFinalResult
 from onyx.utils.logger import setup_logger
-from onyx.utils.special_types import JSON_ro
+
 
 logger = setup_logger()
 
@@ -173,6 +155,7 @@ def get_chat_sessions_by_user(
     if not include_onyxbot_flows:
         stmt = stmt.where(ChatSession.onyxbot_flow.is_(False))
 
+    # stmt = stmt.order_by(desc(ChatSession.time_created))
     stmt = stmt.order_by(desc(ChatSession.time_updated))
 
     if deleted is not None:
@@ -228,15 +211,12 @@ def delete_messages_and_files_from_chat_session(
     for id, files in messages_with_files:
         delete_tool_call_for_message_id(message_id=id, db_session=db_session)
         delete_search_doc_message_relationship(message_id=id, db_session=db_session)
+        for file_info in files or {}:
+            lobj_name = file_info.get("id")
+            if lobj_name:
+                logger.info(f"Deleting file with name: {lobj_name}")
+                delete_lobj_by_name(lobj_name, db_session)
 
-        file_store = get_default_file_store(db_session)
-        for file_info in files or []:
-            file_store.delete_file(file_id=file_info.get("id"))
-
-    # Delete ChatMessage records - CASCADE constraints will automatically handle:
-    # - AgentSubQuery records (via AgentSubQuestion)
-    # - AgentSubQuestion records
-    # - ChatMessage__StandardAnswer relationship records
     db_session.execute(
         delete(ChatMessage).where(ChatMessage.chat_session_id == chat_session_id)
     )
@@ -358,17 +338,13 @@ def delete_chat_session(
     user_id: UUID | None,
     chat_session_id: UUID,
     db_session: Session,
-    include_deleted: bool = False,
     hard_delete: bool = HARD_DELETE_CHATS,
 ) -> None:
     chat_session = get_chat_session_by_id(
-        chat_session_id=chat_session_id,
-        user_id=user_id,
-        db_session=db_session,
-        include_deleted=include_deleted,
+        chat_session_id=chat_session_id, user_id=user_id, db_session=db_session
     )
 
-    if chat_session.deleted and not include_deleted:
+    if chat_session.deleted:
         raise ValueError("Cannot delete an already deleted chat session")
 
     if hard_delete:
@@ -383,33 +359,16 @@ def delete_chat_session(
     db_session.commit()
 
 
-def get_chat_sessions_older_than(
-    days_old: int, db_session: Session
-) -> list[tuple[UUID | None, UUID]]:
-    """
-    Retrieves chat sessions older than a specified number of days.
-
-    Args:
-        days_old: The number of days to consider as "old".
-        db_session: The database session.
-
-    Returns:
-        A list of tuples, where each tuple contains the user_id (can be None) and the chat_session_id of an old chat session.
-    """
-
+def delete_chat_sessions_older_than(days_old: int, db_session: Session) -> None:
     cutoff_time = datetime.utcnow() - timedelta(days=days_old)
-    old_sessions: Sequence[Row[Tuple[UUID | None, UUID]]] = db_session.execute(
+    old_sessions = db_session.execute(
         select(ChatSession.user_id, ChatSession.id).where(
             ChatSession.time_created < cutoff_time
         )
     ).fetchall()
 
-    # convert old_sessions to a conventional list of tuples
-    returned_sessions: list[tuple[UUID | None, UUID]] = [
-        (user_id, session_id) for user_id, session_id in old_sessions
-    ]
-
-    return returned_sessions
+    for user_id, session_id in old_sessions:
+        delete_chat_session(user_id, session_id, db_session, hard_delete=True)
 
 
 def get_chat_message(
@@ -423,7 +382,9 @@ def get_chat_message(
     chat_message = result.scalar_one_or_none()
 
     if not chat_message:
-        raise ValueError("Invalid Chat Message specified")
+        #raise ValueError("Invalid Chat Message specified")
+        raise ValueError(f"An error occurred while processing your request."
+                         f"For continued conversation, please start a new chat session.")
 
     chat_user = chat_message.chat_session.user
     expected_user_id = chat_user.id if chat_user is not None else None
@@ -538,7 +499,6 @@ def get_chat_messages_by_session(
     prefetch_tool_calls: bool = False,
 ) -> list[ChatMessage]:
     if not skip_permission_check:
-        # bug if we ever call this expecting the permission check to not be skipped
         get_chat_session_by_id(
             chat_session_id=chat_session_id, user_id=user_id, db_session=db_session
         )
@@ -550,12 +510,7 @@ def get_chat_messages_by_session(
     )
 
     if prefetch_tool_calls:
-        stmt = stmt.options(
-            joinedload(ChatMessage.tool_call),
-            joinedload(ChatMessage.sub_questions).joinedload(
-                AgentSubQuestion.sub_queries
-            ),
-        )
+        stmt = stmt.options(joinedload(ChatMessage.tool_call))
         result = db_session.scalars(stmt).unique().all()
     else:
         result = db_session.scalars(stmt).all()
@@ -568,6 +523,12 @@ def get_or_create_root_message(
     db_session: Session,
 ) -> ChatMessage:
     try:
+        chat_session = get_chat_session_by_id(
+            chat_session_id=chat_session_id,
+            user_id=None,  # No user_id check needed for root message
+            db_session=db_session,
+            include_deleted=False
+        )
         root_message: ChatMessage | None = (
             db_session.query(ChatMessage)
             .filter(
@@ -582,6 +543,8 @@ def get_or_create_root_message(
         )
 
     if root_message is not None:
+        message = root_message.message
+        logger.debug(f"root_message {message}")
         return root_message
     else:
         new_root_message = ChatMessage(
@@ -589,12 +552,14 @@ def get_or_create_root_message(
             prompt_id=None,
             parent_message=None,
             latest_child_message=None,
-            message="",
+            message=chat_session.persona.prompts[0].system_prompt,
             token_count=0,
             message_type=MessageType.SYSTEM,
         )
         db_session.add(new_root_message)
         db_session.commit()
+        message = new_root_message.message
+        logger.debug(f"new root_message {message}")
         return new_root_message
 
 
@@ -604,6 +569,13 @@ def reserve_message_id(
     parent_message: int,
     message_type: MessageType,
 ) -> int:
+    # Get the next message number for this chat session
+    last_message = db_session.query(ChatMessage).filter(
+        ChatMessage.chat_session_id == chat_session_id
+    ).order_by(ChatMessage.time_sent).first()
+    
+    next_message_number = 0 if last_message is None else last_message.id + 1
+
     # Create an empty chat message
     empty_message = ChatMessage(
         chat_session_id=chat_session_id,
@@ -612,6 +584,7 @@ def reserve_message_id(
         message="",
         token_count=0,
         message_type=message_type,
+        time_sent=datetime.utcnow(),
     )
 
     # Add the empty message to the session
@@ -645,8 +618,6 @@ def create_new_chat_message(
     commit: bool = True,
     reserved_message_id: int | None = None,
     overridden_model: str | None = None,
-    refined_answer_improvement: bool | None = None,
-    is_agentic: bool = False,
 ) -> ChatMessage:
     if reserved_message_id is not None:
         # Edit existing message
@@ -667,8 +638,7 @@ def create_new_chat_message(
         existing_message.error = error
         existing_message.alternate_assistant_id = alternate_assistant_id
         existing_message.overridden_model = overridden_model
-        existing_message.refined_answer_improvement = refined_answer_improvement
-        existing_message.is_agentic = is_agentic
+
         new_chat_message = existing_message
     else:
         # Create new message
@@ -687,8 +657,7 @@ def create_new_chat_message(
             error=error,
             alternate_assistant_id=alternate_assistant_id,
             overridden_model=overridden_model,
-            refined_answer_improvement=refined_answer_improvement,
-            is_agentic=is_agentic,
+            time_sent=datetime.utcnow(),
         )
         db_session.add(new_chat_message)
 
@@ -700,6 +669,12 @@ def create_new_chat_message(
     db_session.flush()
 
     parent_message.latest_child_message = new_chat_message.id
+
+    # Update the chat session's time_updated field
+    chat_session = db_session.query(ChatSession).get(chat_session_id)
+    if chat_session is not None:
+        chat_session.time_updated = datetime.utcnow()
+
     if commit:
         db_session.commit()
 
@@ -860,90 +835,6 @@ def get_db_search_doc_by_id(doc_id: int, db_session: Session) -> DBSearchDoc | N
     return search_doc
 
 
-def create_search_doc_from_user_file(
-    db_user_file: UserFile, associated_chat_file: InMemoryChatFile, db_session: Session
-) -> SearchDoc:
-    """Create a SearchDoc in the database from a UserFile and return it.
-    This ensures proper ID generation by SQLAlchemy and prevents duplicate key errors.
-    """
-    blurb = ""
-    if associated_chat_file and associated_chat_file.content:
-        try:
-            # Try to decode as UTF-8, but handle errors gracefully
-            content_sample = associated_chat_file.content[:100]
-            # Remove null bytes which can cause SQL errors
-            content_sample = content_sample.replace(b"\x00", b"")
-
-            # NOTE(rkuo): this used to be "replace" instead of strict, but
-            # that would bypass the binary handling below
-            blurb = content_sample.decode("utf-8", errors="strict")
-        except Exception:
-            # If decoding fails completely, provide a generic description
-            blurb = f"[Binary file: {db_user_file.name}]"
-
-    db_search_doc = SearchDoc(
-        document_id=db_user_file.document_id,
-        chunk_ind=0,  # Default to 0 for user files
-        semantic_id=db_user_file.name,
-        link=db_user_file.link_url,
-        blurb=blurb,
-        source_type=DocumentSource.FILE,  # Assuming internal source for user files
-        boost=0,  # Default boost
-        hidden=False,  # Default visibility
-        doc_metadata={},  # Empty metadata
-        score=0.0,  # Default score of 0.0 instead of None
-        is_relevant=None,  # No relevance initially
-        relevance_explanation=None,  # No explanation initially
-        match_highlights=[],  # No highlights initially
-        updated_at=db_user_file.created_at,  # Use created_at as updated_at
-        primary_owners=[],  # Empty list instead of None
-        secondary_owners=[],  # Empty list instead of None
-        is_internet=False,  # Not from internet
-    )
-
-    db_session.add(db_search_doc)
-    db_session.flush()  # Get the ID but don't commit yet
-
-    return db_search_doc
-
-
-def translate_db_user_file_to_search_doc(
-    db_user_file: UserFile, associated_chat_file: InMemoryChatFile
-) -> SearchDoc:
-    blurb = ""
-    if associated_chat_file and associated_chat_file.content:
-        try:
-            # Try to decode as UTF-8, but handle errors gracefully
-            content_sample = associated_chat_file.content[:100]
-            # Remove null bytes which can cause SQL errors
-            content_sample = content_sample.replace(b"\x00", b"")
-            blurb = content_sample.decode("utf-8", errors="replace")
-        except Exception:
-            # If decoding fails completely, provide a generic description
-            blurb = f"[Binary file: {db_user_file.name}]"
-
-    return SearchDoc(
-        # Don't set ID - let SQLAlchemy auto-generate it
-        document_id=db_user_file.document_id,
-        chunk_ind=0,  # Default to 0 for user files
-        semantic_id=db_user_file.name,
-        link=db_user_file.link_url,
-        blurb=blurb,
-        source_type=DocumentSource.FILE,  # Assuming internal source for user files
-        boost=0,  # Default boost
-        hidden=False,  # Default visibility
-        doc_metadata={},  # Empty metadata
-        score=0.0,  # Default score of 0.0 instead of None
-        is_relevant=None,  # No relevance initially
-        relevance_explanation=None,  # No explanation initially
-        match_highlights=[],  # No highlights initially
-        updated_at=db_user_file.created_at,  # Use created_at as updated_at
-        primary_owners=[],  # Empty list instead of None
-        secondary_owners=[],  # Empty list instead of None
-        is_internet=False,  # Not from internet
-    )
-
-
 def translate_db_search_doc_to_server_search_doc(
     db_search_doc: SearchDoc,
     remove_doc_content: bool = False,
@@ -974,62 +865,27 @@ def translate_db_search_doc_to_server_search_doc(
     )
 
 
-def translate_db_sub_questions_to_server_objects(
-    db_sub_questions: list[AgentSubQuestion],
-) -> list[SubQuestionDetail]:
-    sub_questions = []
-    for sub_question in db_sub_questions:
-        sub_queries = []
-        docs: dict[str, SearchDoc] = {}
-        doc_results = cast(
-            list[dict[str, JSON_ro]], sub_question.sub_question_doc_results
-        )
-        verified_doc_ids = [x["document_id"] for x in doc_results]
-        for sub_query in sub_question.sub_queries:
-            doc_ids = [doc.id for doc in sub_query.search_docs]
-            sub_queries.append(
-                SubQueryDetail(
-                    query=sub_query.sub_query,
-                    query_id=sub_query.id,
-                    doc_ids=doc_ids,
-                )
-            )
-            for doc in sub_query.search_docs:
-                docs[doc.document_id] = doc
-
-        verified_docs = [
-            docs[cast(str, doc_id)] for doc_id in verified_doc_ids if doc_id in docs
-        ]
-
-        sub_questions.append(
-            SubQuestionDetail(
-                level=sub_question.level,
-                level_question_num=sub_question.level_question_num,
-                question=sub_question.sub_question,
-                answer=sub_question.sub_answer,
-                sub_queries=sub_queries,
-                context_docs=get_retrieval_docs_from_search_docs(
-                    verified_docs, sort_by_score=False
-                ),
-            )
-        )
-    return sub_questions
-
-
-def get_retrieval_docs_from_search_docs(
-    search_docs: list[SearchDoc],
-    remove_doc_content: bool = False,
-    sort_by_score: bool = True,
+def get_retrieval_docs_from_chat_message(
+    chat_message: ChatMessage, remove_doc_content: bool = False
 ) -> RetrievalDocs:
     top_documents = [
         translate_db_search_doc_to_server_search_doc(
             db_doc, remove_doc_content=remove_doc_content
         )
-        for db_doc in search_docs
+        for db_doc in chat_message.search_docs
     ]
-    if sort_by_score:
-        top_documents = sorted(top_documents, key=lambda doc: doc.score, reverse=True)  # type: ignore
+    top_documents = sorted(top_documents, key=lambda doc: doc.score, reverse=True)  # type: ignore
     return RetrievalDocs(top_documents=top_documents)
+
+
+def tool_call_to_final_result(tool_call):
+    if not tool_call:
+        return None
+    return ToolCallFinalResult(
+        tool_name=tool_call.tool_name,
+        tool_args=tool_call.tool_arguments,
+        tool_result=tool_call.tool_result,
+    )
 
 
 def translate_db_message_to_chat_message_detail(
@@ -1043,158 +899,15 @@ def translate_db_message_to_chat_message_detail(
         latest_child_message=chat_message.latest_child_message,
         message=chat_message.message,
         rephrased_query=chat_message.rephrased_query,
-        context_docs=get_retrieval_docs_from_search_docs(
-            chat_message.search_docs, remove_doc_content=remove_doc_content
+        context_docs=get_retrieval_docs_from_chat_message(
+            chat_message, remove_doc_content=remove_doc_content
         ),
         message_type=chat_message.message_type,
         time_sent=chat_message.time_sent,
+        overridden_model=chat_message.overridden_model,
+        alternate_assistant_id=chat_message.alternate_assistant_id,
         citations=chat_message.citations,
         files=chat_message.files or [],
-        tool_call=(
-            ToolCallFinalResult(
-                tool_name=chat_message.tool_call.tool_name,
-                tool_args=chat_message.tool_call.tool_arguments,
-                tool_result=chat_message.tool_call.tool_result,
-            )
-            if chat_message.tool_call
-            else None
-        ),
-        alternate_assistant_id=chat_message.alternate_assistant_id,
-        overridden_model=chat_message.overridden_model,
-        sub_questions=translate_db_sub_questions_to_server_objects(
-            chat_message.sub_questions
-        ),
-        refined_answer_improvement=chat_message.refined_answer_improvement,
-        is_agentic=chat_message.is_agentic,
-        error=chat_message.error,
+        tool_call=tool_call_to_final_result(chat_message.tool_call),
     )
-
     return chat_msg_detail
-
-
-def log_agent_metrics(
-    db_session: Session,
-    user_id: UUID | None,
-    persona_id: int | None,  # Can be none if temporary persona is used
-    agent_type: str,
-    start_time: datetime | None,
-    agent_metrics: CombinedAgentMetrics,
-) -> AgentSearchMetrics:
-    agent_timings = agent_metrics.timings
-    agent_base_metrics = agent_metrics.base_metrics
-    agent_refined_metrics = agent_metrics.refined_metrics
-    agent_additional_metrics = agent_metrics.additional_metrics
-
-    agent_metric_tracking = AgentSearchMetrics(
-        user_id=user_id,
-        persona_id=persona_id,
-        agent_type=agent_type,
-        start_time=start_time,
-        base_duration_s=agent_timings.base_duration_s,
-        full_duration_s=agent_timings.full_duration_s,
-        base_metrics=vars(agent_base_metrics) if agent_base_metrics else None,
-        refined_metrics=vars(agent_refined_metrics) if agent_refined_metrics else None,
-        all_metrics=(
-            vars(agent_additional_metrics) if agent_additional_metrics else None
-        ),
-    )
-
-    db_session.add(agent_metric_tracking)
-    db_session.flush()
-
-    return agent_metric_tracking
-
-
-def log_agent_sub_question_results(
-    db_session: Session,
-    chat_session_id: UUID | None,
-    primary_message_id: int | None,
-    sub_question_answer_results: list[SubQuestionAnswerResults],
-) -> None:
-    def _create_citation_format_list(
-        document_citations: list[InferenceSection],
-    ) -> list[dict[str, Any]]:
-        citation_list: list[dict[str, Any]] = []
-        for document_citation in document_citations:
-            document_citation_dict = {
-                "link": "",
-                "blurb": document_citation.center_chunk.blurb,
-                "content": document_citation.center_chunk.content,
-                "metadata": document_citation.center_chunk.metadata,
-                "updated_at": str(document_citation.center_chunk.updated_at),
-                "document_id": document_citation.center_chunk.document_id,
-                "source_type": "file",
-                "source_links": document_citation.center_chunk.source_links,
-                "match_highlights": document_citation.center_chunk.match_highlights,
-                "semantic_identifier": document_citation.center_chunk.semantic_identifier,
-            }
-
-            citation_list.append(document_citation_dict)
-
-        return citation_list
-
-    now = datetime.now()
-
-    for sub_question_answer_result in sub_question_answer_results:
-        level, level_question_num = [
-            int(x) for x in sub_question_answer_result.question_id.split("_")
-        ]
-        sub_question = sub_question_answer_result.question
-        sub_answer = sub_question_answer_result.answer
-        sub_document_results = _create_citation_format_list(
-            sub_question_answer_result.context_documents
-        )
-
-        sub_question_object = AgentSubQuestion(
-            chat_session_id=chat_session_id,
-            primary_question_id=primary_message_id,
-            level=level,
-            level_question_num=level_question_num,
-            sub_question=sub_question,
-            sub_answer=sub_answer,
-            sub_question_doc_results=sub_document_results,
-        )
-
-        db_session.add(sub_question_object)
-        db_session.commit()
-
-        sub_question_id = sub_question_object.id
-
-        for sub_query in sub_question_answer_result.sub_query_retrieval_results:
-            sub_query_object = AgentSubQuery(
-                parent_question_id=sub_question_id,
-                chat_session_id=chat_session_id,
-                sub_query=sub_query.query,
-                time_created=now,
-            )
-
-            db_session.add(sub_query_object)
-            db_session.commit()
-
-            search_docs = chunks_or_sections_to_search_docs(
-                sub_query.retrieved_documents
-            )
-            for doc in search_docs:
-                db_doc = create_db_search_doc(doc, db_session)
-                db_session.add(db_doc)
-                sub_query_object.search_docs.append(db_doc)
-            db_session.commit()
-
-    return None
-
-
-def update_chat_session_updated_at_timestamp(
-    chat_session_id: UUID, db_session: Session
-) -> None:
-    """
-    Explicitly update the timestamp on a chat session without modifying other fields.
-    This is useful when adding messages to a chat session to reflect recent activity.
-    """
-
-    # Direct SQL update to avoid loading the entire object if it's not already loaded
-    db_session.execute(
-        update(ChatSession)
-        .where(ChatSession.id == chat_session_id)
-        .values(time_updated=func.now())
-    )
-    # No commit - the caller is responsible for committing the transaction

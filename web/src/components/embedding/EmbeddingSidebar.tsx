@@ -19,9 +19,10 @@ export default function EmbeddingSidebar() {
   const settingSteps = ["Embedding Model", "Reranking Model", "Advanced"];
 
   return (
-    <div className="flex bg-background-sidebar text-default">
+    <div className="flex bg-background text-default">
       <div
         className={`flex-none
+                  bg-background-100
                   h-screen
                   transition-all
                   bg-opacity-80
@@ -30,7 +31,7 @@ export default function EmbeddingSidebar() {
                   w-[250px]
                   `}
       >
-        <div className="fixed h-full left-0 top-0 bg- w-[250px]">
+        <div className="fixed h-full left-0 top-0 bg-background-100 w-[250px]">
           <div className="ml-4 mr-3 flex flex gap-x-1 items-center mt-2 my-auto text-text-700 text-xl">
             <div className="mr-1 my-auto h-6 w-6">
               <Logo height={24} width={24} />
@@ -40,7 +41,7 @@ export default function EmbeddingSidebar() {
               {enterpriseSettings && enterpriseSettings.application_name ? (
                 <HeaderTitle>{enterpriseSettings.application_name}</HeaderTitle>
               ) : (
-                <HeaderTitle>Onyx</HeaderTitle>
+                <HeaderTitle>Seclore</HeaderTitle>
               )}
             </div>
           </div>
@@ -48,7 +49,7 @@ export default function EmbeddingSidebar() {
           <div className="mx-3 mt-6 gap-y-1 flex-col flex gap-x-1.5 items-center items-center">
             <Link
               href={"/admin/configuration/search"}
-              className="w-full p-2 bg-[#fff] dark:bg-neutral-950 border-border border dark:border-neutral-800 dark:hover:bg-neutral-900 rounded items-center hover:bg-background-200 cursor-pointer transition-all duration-150 flex gap-x-2"
+              className="w-full p-2 bg-white border-border border rounded items-center hover:bg-background-200 cursor-pointer transition-all duration-150 flex gap-x-2"
             >
               <SettingsIcon className="flex-none " />
               <p className="my-auto flex items-center text-sm">
@@ -60,7 +61,7 @@ export default function EmbeddingSidebar() {
           <div className="h-full flex">
             <div className="mx-auto w-full max-w-2xl px-4 py-8">
               <div className="relative">
-                <div className="absolute h-[85%] left-[6px] top-[8px] bottom-0 w-0.5 bg-background-300"></div>
+                <div className="absolute h-[85%] left-[6px] top-[8px] bottom-0 w-0.5 bg-gray-300"></div>
                 {settingSteps.map((step, index) => {
                   return (
                     <div
@@ -79,7 +80,7 @@ export default function EmbeddingSidebar() {
                       </div>
                       <div
                         className={`${
-                          index <= formStep ? "text-text-800" : "text-text-500"
+                          index <= formStep ? "text-gray-800" : "text-gray-500"
                         }`}
                       >
                         {step}

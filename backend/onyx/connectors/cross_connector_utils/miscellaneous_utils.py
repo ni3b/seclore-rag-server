@@ -1,9 +1,7 @@
-import re
 from collections.abc import Callable
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import timezone
-from typing import Any
 from typing import TypeVar
 
 from dateutil.parser import parse
@@ -11,7 +9,6 @@ from dateutil.parser import parse
 from onyx.configs.app_configs import CONNECTOR_LOCALHOST_OVERRIDE
 from onyx.configs.constants import IGNORE_FOR_QA
 from onyx.connectors.models import BasicExpertInfo
-from onyx.connectors.models import OnyxMetadata
 from onyx.utils.text_processing import is_valid_email
 
 
@@ -27,22 +24,16 @@ def datetime_to_utc(dt: datetime) -> datetime:
 
 
 def time_str_to_utc(datetime_str: str) -> datetime:
-    # Remove all timezone abbreviations in parentheses
-    datetime_str = re.sub(r"\([A-Z]+\)", "", datetime_str).strip()
-
-    # Remove any remaining parentheses and their contents
-    datetime_str = re.sub(r"\(.*?\)", "", datetime_str).strip()
-
     try:
         dt = parse(datetime_str)
     except ValueError:
-        # Fix common format issues (e.g. "0000" => "+0000")
+        # Handle malformed timezone by attempting to fix common format issues
         if "0000" in datetime_str:
-            datetime_str = datetime_str.replace(" 0000", " +0000")
-            dt = parse(datetime_str)
+            # Convert "0000" to "+0000" for proper timezone parsing
+            fixed_dt_str = datetime_str.replace(" 0000", " +0000")
+            dt = parse(fixed_dt_str)
         else:
             raise
-
     return datetime_to_utc(dt)
 
 
@@ -83,68 +74,8 @@ def get_metadata_keys_to_ignore() -> list[str]:
     return [IGNORE_FOR_QA]
 
 
-def process_onyx_metadata(
-    metadata: dict[str, Any],
-) -> tuple[OnyxMetadata, dict[str, Any]]:
-    """
-    Users may set Onyx metadata and custom tags in text files. https://docs.onyx.app/connectors/file
-    Any unrecognized fields are treated as custom tags.
-    """
-    p_owner_names = metadata.get("primary_owners")
-    p_owners = (
-        [BasicExpertInfo(display_name=name) for name in p_owner_names]
-        if p_owner_names
-        else None
-    )
-
-    s_owner_names = metadata.get("secondary_owners")
-    s_owners = (
-        [BasicExpertInfo(display_name=name) for name in s_owner_names]
-        if s_owner_names
-        else None
-    )
-
-    dt_str = metadata.get("doc_updated_at")
-    doc_updated_at = time_str_to_utc(dt_str) if dt_str else None
-
-    return (
-        OnyxMetadata(
-            source_type=metadata.get("connector_type"),
-            link=metadata.get("link"),
-            file_display_name=metadata.get("file_display_name"),
-            title=metadata.get("title"),
-            primary_owners=p_owners,
-            secondary_owners=s_owners,
-            doc_updated_at=doc_updated_at,
-        ),
-        {
-            k: v
-            for k, v in metadata.items()
-            if k
-            not in [
-                "document_id",
-                "time_updated",
-                "doc_updated_at",
-                "link",
-                "primary_owners",
-                "secondary_owners",
-                "filename",
-                "file_display_name",
-                "title",
-                "connector_type",
-                "pdf_password",
-                "mime_type",
-            ]
-        },
-    )
-
-
 def get_oauth_callback_uri(base_domain: str, connector_id: str) -> str:
     if CONNECTOR_LOCALHOST_OVERRIDE:
         # Used for development
         base_domain = CONNECTOR_LOCALHOST_OVERRIDE
     return f"{base_domain.strip('/')}/connector/oauth/callback/{connector_id}"
-
-
-def is_atlassian_date_error(e: Exception) -> bool:
-    return "field 'updated' is invalid" in str(e)

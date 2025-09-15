@@ -9,15 +9,11 @@ const DeactivateUserButton = ({
   deactivate,
   setPopup,
   mutate,
-  className,
-  children,
 }: {
   user: User;
   deactivate: boolean;
   setPopup: (spec: PopupSpec) => void;
   mutate: () => void;
-  className?: string;
-  children?: React.ReactNode;
 }) => {
   const { trigger, isMutating } = useSWRMutation(
     deactivate
@@ -38,12 +34,12 @@ const DeactivateUserButton = ({
   );
   return (
     <Button
-      className={className}
+      className="w-min"
       onClick={() => trigger({ user_email: user.email })}
       disabled={isMutating}
-      variant="ghost"
+      size="sm"
     >
-      {children}
+      {deactivate ? "Deactivate" : "Activate"}
     </Button>
   );
 };

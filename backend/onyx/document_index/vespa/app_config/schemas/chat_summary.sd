@@ -1,0 +1,46 @@
+schema chat_summary {
+    document chat_summary {
+        field chat_session_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field user_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field assistant_id type int {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field last_message_id type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field last_message_number type int {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field summary type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field created_at type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+        field document_type type string {
+            indexing: summary | attribute
+            attribute: fast-search
+        }
+    }
+
+    fieldset default {
+        fields: summary
+    }
+
+    rank-profile default {
+        first-phase {
+            expression: nativeRank(summary)
+        }
+    }
+} 

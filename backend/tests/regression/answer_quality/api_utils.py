@@ -30,7 +30,7 @@ def get_answer_from_query(
     filters = IndexFilters(
         source_type=None,
         document_set=None,
-        time_cutoff=None,
+        time_range=None,
         tags=None,
         access_control_list=None,
     )
@@ -42,7 +42,7 @@ def get_answer_from_query(
         prompt_id=0,
         persona_id=0,
         retrieval_options=RetrievalDetails(
-            run_search=OptionalSearchSetting.ALWAYS,
+            run_search=OptionalSearchSetting.AUTO,
             real_time=True,
             filters=filters,
             enable_auto_detect_filters=False,
@@ -160,7 +160,7 @@ def create_connector(env_name: str, file_paths: list[str]) -> int:
         name=connector_name,
         source=DocumentSource.FILE,
         input_type=InputType.LOAD_STATE,
-        connector_specific_config={"file_locations": file_paths, "zip_metadata": {}},
+        connector_specific_config={"file_locations": file_paths},
         refresh_freq=None,
         prune_freq=None,
         indexing_start=None,

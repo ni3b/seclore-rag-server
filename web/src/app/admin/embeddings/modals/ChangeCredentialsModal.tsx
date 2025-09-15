@@ -4,7 +4,7 @@ import { Callout } from "@/components/ui/callout";
 import Text from "@/components/ui/text";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/Field";
+import { Label } from "@/components/admin/connectors/Field";
 import { CloudEmbeddingProvider } from "../../../../components/embedding/interfaces";
 import {
   EMBEDDING_PROVIDERS_ADMIN_URL,
@@ -113,11 +113,6 @@ export function ChangeCredentialsModal({
     const normalizedProviderType = provider.provider_type
       .toLowerCase()
       .split(" ")[0];
-
-    if (!normalizedProviderType) {
-      setTestError("Provider type is invalid or missing.");
-      return;
-    }
 
     try {
       const testResponse = await testEmbedding({

@@ -1,5 +1,5 @@
 import { PopupSpec, usePopup } from "@/components/admin/connectors/Popup";
-import { LLMProviderView, WellKnownLLMProviderDescriptor } from "./interfaces";
+import { FullLLMProvider, WellKnownLLMProviderDescriptor } from "./interfaces";
 import { Modal } from "@/components/Modal";
 import { LLMProviderUpdateForm } from "./LLMProviderUpdateForm";
 import { CustomLLMProviderUpdateForm } from "./CustomLLMProviderUpdateForm";
@@ -8,7 +8,7 @@ import { LLM_PROVIDERS_ADMIN_URL } from "./constants";
 import { mutate } from "swr";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { isSubset } from "@/lib/utils";
+import isEqual from "lodash/isEqual";
 
 function LLMProviderUpdateModal({
   llmProviderDescriptor,
@@ -19,21 +19,20 @@ function LLMProviderUpdateModal({
 }: {
   llmProviderDescriptor: WellKnownLLMProviderDescriptor | null | undefined;
   onClose: () => void;
-  existingLlmProvider?: LLMProviderView;
+  existingLlmProvider?: FullLLMProvider;
   shouldMarkAsDefault?: boolean;
   setPopup?: (popup: PopupSpec) => void;
 }) {
   const providerName = existingLlmProvider?.name
     ? `"${existingLlmProvider.name}"`
-    : llmProviderDescriptor?.display_name ||
+    : null ||
+      llmProviderDescriptor?.display_name ||
       llmProviderDescriptor?.name ||
       "Custom LLM Provider";
-
   return (
     <Modal
       title={`${llmProviderDescriptor ? "Configure" : "Setup"} ${providerName}`}
       onOutsideClick={() => onClose()}
-      hideOverflow={true}
     >
       <div className="max-h-[70vh] overflow-y-auto px-4">
         {llmProviderDescriptor ? (
@@ -63,7 +62,7 @@ function LLMProviderDisplay({
   shouldMarkAsDefault,
 }: {
   llmProviderDescriptor: WellKnownLLMProviderDescriptor | null | undefined;
-  existingLlmProvider: LLMProviderView;
+  existingLlmProvider: FullLLMProvider;
   shouldMarkAsDefault?: boolean;
 }) {
   const [formIsVisible, setFormIsVisible] = useState(false);
@@ -76,7 +75,7 @@ function LLMProviderDisplay({
   return (
     <div>
       {popup}
-      <div className="border border-border p-3 dark:bg-neutral-800 dark:border-neutral-700 rounded w-96 flex shadow-md">
+      <div className="border border-border p-3 rounded w-96 flex shadow-md">
         <div className="my-auto">
           <div className="font-bold">{providerName} </div>
           <div className="text-xs italic">({existingLlmProvider.provider})</div>
@@ -114,7 +113,7 @@ function LLMProviderDisplay({
         {existingLlmProvider && (
           <div className="my-auto ml-3">
             {existingLlmProvider.is_default_provider ? (
-              <Badge variant="agent">Default</Badge>
+              <Badge variant="orange">Default</Badge>
             ) : (
               <Badge variant="success">Enabled</Badge>
             )}
@@ -148,7 +147,7 @@ export function ConfiguredLLMProviderDisplay({
   existingLlmProviders,
   llmProviderDescriptors,
 }: {
-  existingLlmProviders: LLMProviderView[];
+  existingLlmProviders: FullLLMProvider[];
   llmProviderDescriptors: WellKnownLLMProviderDescriptor[];
 }) {
   existingLlmProviders = existingLlmProviders.sort((a, b) => {
@@ -176,16 +175,7 @@ export function ConfiguredLLMProviderDisplay({
             // then the provider is custom - don't use the default
             // provider descriptor
             llmProviderDescriptor={
-              isSubset(
-                defaultProviderDesciptor
-                  ? defaultProviderDesciptor.model_configurations.map(
-                      (model_configuration) => model_configuration.name
-                    )
-                  : [],
-                provider.model_configurations.map(
-                  (model_configuration) => model_configuration.name
-                )
-              )
+              isEqual(provider.model_names, defaultProviderDesciptor?.llm_names)
                 ? defaultProviderDesciptor
                 : null
             }

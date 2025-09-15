@@ -10,7 +10,7 @@ import { Calendar } from "@/components/ui/calendar"; // or wherever your Calenda
 import { FilterDropdown } from "@/components/search/filtering/FilterDropdown";
 import { listSourceMetadata } from "@/lib/sources";
 import { getDateRangeString } from "@/lib/dateUtils";
-import { DateRangePickerValue } from "../../dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "../../../app/ee/admin/performance/DateRangeSelector";
 import { Tag } from "@/lib/types";
 import { SourceIcon } from "@/components/SourceIcon";
 export interface SourceSelectorProps {
@@ -99,7 +99,7 @@ export function HorizontalSourceSelector({
             className="
               flex items-center space-x-1 border 
               border-border rounded-lg px-3 py-1.5 
-              hover:bg-accent-background-hovered text-sm cursor-pointer
+              hover:bg-hover text-sm cursor-pointer
               bg-background-search-filter
             "
           >

@@ -15,7 +15,7 @@ export function MakePublicAssistantModal({
   return (
     <Modal onOutsideClick={onClose} width="max-w-3xl">
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold text-text-darker">
+        <h2 className="text-2xl font-bold text-emphasis">
           {isPublic ? "Public Assistant" : "Make Assistant Public"}
         </h2>
 

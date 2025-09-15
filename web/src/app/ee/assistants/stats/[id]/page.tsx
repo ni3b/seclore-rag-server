@@ -26,7 +26,7 @@ export default async function GalleryPage(props: {
     chatSessions,
     folders,
     openedFolders,
-    sidebarInitiallyVisible,
+    toggleSidebar,
     shouldShowWelcomeModal,
     availableSources,
     ccPairs,
@@ -35,7 +35,6 @@ export default async function GalleryPage(props: {
     llmProviders,
     defaultAssistantId,
     inputPrompts,
-    proSearchToggled,
   } = data;
 
   return (
@@ -43,8 +42,7 @@ export default async function GalleryPage(props: {
       value={{
         inputPrompts,
         chatSessions,
-        proSearchToggled,
-        sidebarInitiallyVisible,
+        toggledSidebar: toggleSidebar,
         availableSources,
         ccPairs,
         documentSets,

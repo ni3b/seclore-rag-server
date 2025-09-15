@@ -165,6 +165,10 @@ def parse_html_page_basic(text: str | IO[bytes]) -> str:
     soup = bs4.BeautifulSoup(text, "html.parser")
     return format_document_soup(soup)
 
+def parse_html_page_basic_less_strict(text: str | IO[bytes]) -> str:
+    soup = bs4.BeautifulSoup(text, "lxml")
+    return format_document_soup(soup)
+
 
 def web_html_cleanup(
     page_content: str | bs4.BeautifulSoup,
@@ -216,6 +220,6 @@ def web_html_cleanup(
         page_text = format_document_soup(soup)
 
     # 200B is ZeroWidthSpace which we don't care for
-    cleaned_text = page_text.replace("\u200b", "")
+    cleaned_text = page_text.replace("\u200B", "")
 
     return ParsedHTML(title=title, cleaned_text=cleaned_text)

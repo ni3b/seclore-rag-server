@@ -1,5 +1,5 @@
 # This file is used to demonstrate how to use the backend APIs directly
-# In this case, the equivalent of asking a question in Onyx Chat in a new chat session
+# In this case, the equivalent of asking a question in Seclore Chat in a new chat session
 import argparse
 import json
 import os
@@ -39,7 +39,7 @@ def process_question(onyx_url: str, question: str, api_key: str | None) -> None:
         # Not specifying any specific docs to chat to, we want to run a search
         "search_doc_ids": None,
         "retrieval_options": {
-            "run_search": "always",
+            "run_search": "auto",
             "real_time": True,
             "enable_auto_detect_filters": False,
             # No filters applied, check all sources, document-sets, time ranges, etc.
@@ -68,17 +68,17 @@ if __name__ == "__main__":
         "--onyx-url",
         type=str,
         default="http://localhost:80",
-        help="Onyx URL, should point to Onyx nginx.",
+        help="Seclore URL, should point to Seclore nginx.",
     )
     parser.add_argument(
         "--test-question",
         type=str,
-        default="What is Onyx?",
+        default="What is Seclore?",
         help="Test question for new Chat Session.",
     )
 
     # Not needed if Auth is disabled
-    # Or for Onyx MIT API key must be replaced with session cookie
+    # Or for Seclore MIT API key must be replaced with session cookie
     api_key = os.environ.get("DANSWER_API_KEY")
 
     args = parser.parse_args()

@@ -1,7 +1,8 @@
-import { MinimalOnyxDocument, OnyxDocument } from "@/lib/search/interfaces";
+import { OnyxDocument } from "@/lib/search/interfaces";
 import { ChatDocumentDisplay } from "./ChatDocumentDisplay";
+import { usePopup } from "@/components/admin/connectors/Popup";
 import { removeDuplicateDocs } from "@/lib/documentUtils";
-import { ChatFileType, Message } from "../interfaces";
+import { Message } from "../interfaces";
 import {
   Dispatch,
   ForwardedRef,
@@ -10,12 +11,9 @@ import {
   useEffect,
   useState,
 } from "react";
-import { XIcon } from "@/components/icons/icons";
-import { FileSourceCardInResults } from "../message/SourcesDisplay";
-import { useDocumentsContext } from "../my-documents/DocumentsContext";
+import { SourcesIcon, XIcon } from "@/components/icons/icons";
+
 interface DocumentResultsProps {
-  agenticMessage: boolean;
-  humanMessage: Message | null;
   closeSidebar: () => void;
   selectedMessage: Message | null;
   selectedDocuments: OnyxDocument[] | null;
@@ -27,15 +25,13 @@ interface DocumentResultsProps {
   isOpen: boolean;
   isSharedChat?: boolean;
   modal: boolean;
-  setPresentingDocument: Dispatch<SetStateAction<MinimalOnyxDocument | null>>;
+  setPresentingDocument: Dispatch<SetStateAction<OnyxDocument | null>>;
   removeHeader?: boolean;
 }
 
 export const DocumentResults = forwardRef<HTMLDivElement, DocumentResultsProps>(
   (
     {
-      agenticMessage,
-      humanMessage,
       closeSidebar,
       modal,
       selectedMessage,
@@ -55,6 +51,12 @@ export const DocumentResults = forwardRef<HTMLDivElement, DocumentResultsProps>(
     const [delayedSelectedDocumentCount, setDelayedSelectedDocumentCount] =
       useState(0);
 
+    const handleOutsideClick = (event: MouseEvent) => {
+      const sidebar = document.getElementById("onyx-chat-sidebar");
+      if (sidebar && !sidebar.contains(event.target as Node)) {
+        closeSidebar();
+      }
+    };
     useEffect(() => {
       const timer = setTimeout(
         () => {
@@ -65,14 +67,7 @@ export const DocumentResults = forwardRef<HTMLDivElement, DocumentResultsProps>(
 
       return () => clearTimeout(timer);
     }, [selectedDocuments]);
-    const { files: allUserFiles } = useDocumentsContext();
 
-    const humanFileDescriptors = humanMessage?.files.filter(
-      (file) => file.type == ChatFileType.USER_KNOWLEDGE
-    );
-    const userFiles = allUserFiles?.filter((file) =>
-      humanFileDescriptors?.some((descriptor) => descriptor.id === file.file_id)
-    );
     const selectedDocumentIds =
       selectedDocuments?.map((document) => document.document_id) || [];
 
@@ -82,14 +77,13 @@ export const DocumentResults = forwardRef<HTMLDivElement, DocumentResultsProps>(
     const tokenLimitReached = selectedDocumentTokens > maxTokens - 75;
 
     const hasSelectedDocuments = selectedDocumentIds.length > 0;
+
     return (
       <>
         <div
           id="onyx-chat-sidebar"
           className={`relative -mb-8 bg-background max-w-full ${
-            !modal
-              ? "border-l border-t h-[105vh]  border-sidebar-border dark:border-neutral-700"
-              : ""
+            !modal ? "border-l border-t h-[105vh]  border-sidebar-border" : ""
           }`}
           onClick={(e) => {
             if (e.target === e.currentTarget) {
@@ -104,52 +98,34 @@ export const DocumentResults = forwardRef<HTMLDivElement, DocumentResultsProps>(
               width: modal ? undefined : initialWidth,
             }}
           >
-            <div className="flex flex-col h-full">
-              {!removeHeader && (
-                <>
-                  <div className="p-4 flex items-center justify-between gap-x-2">
-                    <div className="flex items-center gap-x-2">
-                      <h2 className="text-xl font-bold text-text-900">
-                        Sources
-                      </h2>
-                    </div>
-                    <button className="my-auto" onClick={closeSidebar}>
-                      <XIcon size={16} />
-                    </button>
+          <div className="flex flex-col h-full min-h-0">
+            {!removeHeader && (
+              <>
+                <div className="p-4 flex items-center justify-between gap-x-2">
+                  <div className="flex items-center gap-x-2">
+                    <h2 className="text-xl font-bold text-text-900">
+                      Sources
+                    </h2>
                   </div>
-                  <div className="border-b border-divider-history-sidebar-bar mx-3" />
-                </>
-              )}
+                  <button className="my-auto" onClick={closeSidebar}>
+                    <XIcon size={16} />
+                  </button>
+                </div>
+                <div className="border-b border-divider-history-sidebar-bar mx-3" />
+              </>
+            )}
 
-              <div className="overflow-y-auto h-fit mb-8 pb-8 sm:mx-0 flex-grow gap-y-0 default-scrollbar dark-scrollbar flex flex-col">
-                {userFiles && userFiles.length > 0 ? (
-                  <div className=" gap-y-2 flex flex-col pt-2 mx-3">
-                    {userFiles?.map((file, index) => (
-                      <FileSourceCardInResults
-                        key={index}
-                        relevantDocument={dedupedDocuments.find(
-                          (doc) =>
-                            doc.document_id ===
-                            `FILE_CONNECTOR__${file.file_id}`
-                        )}
-                        document={file}
-                        setPresentingDocument={() =>
-                          setPresentingDocument({
-                            document_id: file.document_id,
-                            semantic_identifier: file.file_id || null,
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
-                ) : dedupedDocuments.length > 0 ? (
+            <div
+              className="overflow-y-auto min-h-0 mb-8 pb-8 sm:mx-0 flex-1 gap-y-0 default-scrollbar dark-scrollbar flex flex-col"
+              style={{ WebkitOverflowScrolling: "touch" }}
+            >
+              {dedupedDocuments.length > 0 ? (
                   dedupedDocuments.map((document, ind) => (
                     <div
                       key={document.document_id}
                       className={`desktop:px-2 w-full`}
                     >
                       <ChatDocumentDisplay
-                        agenticMessage={agenticMessage}
                         setPresentingDocument={setPresentingDocument}
                         closeSidebar={closeSidebar}
                         modal={modal}
@@ -169,7 +145,9 @@ export const DocumentResults = forwardRef<HTMLDivElement, DocumentResultsProps>(
                       />
                     </div>
                   ))
-                ) : null}
+                ) : (
+                  <div className="mx-3" />
+                )}
               </div>
             </div>
           </div>

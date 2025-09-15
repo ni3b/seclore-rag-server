@@ -1,14 +1,16 @@
 "use client";
 
 import { ErrorCallout } from "@/components/ErrorCallout";
+import { FiPlusSquare } from "react-icons/fi";
 import { ThreeDotsLoader } from "@/components/Loading";
 import { InstantSSRAutoRefresh } from "@/components/SSRAutoRefresh";
 import { AdminPageTitle } from "@/components/admin/Title";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
 import { SourceIcon } from "@/components/SourceIcon";
 import { SlackBotTable } from "./SlackBotTable";
 import { useSlackBots } from "./[bot-id]/hooks";
 import { ValidSources } from "@/lib/types";
-import CreateButton from "@/components/ui/createButton";
 
 const Main = () => {
   const {
@@ -37,8 +39,8 @@ const Main = () => {
       {/* {popup} */}
 
       <p className="mb-2 text-sm text-muted-foreground">
-        Setup Slack bots that connect to Onyx. Once setup, you will be able to
-        ask questions to Onyx directly from Slack. Additionally, you can:
+        Setup Slack bots that connect to Seclore. Once setup, you will be able to
+        ask questions to Seclore directly from Slack. Additionally, you can:
       </p>
 
       <div className="mb-2">
@@ -66,10 +68,30 @@ const Main = () => {
         >
           guide{" "}
         </a>
-        found in the Onyx documentation to get started!
+        found in the Seclore documentation to get started!
       </p>
 
-      <CreateButton href="/admin/bots/new" text="New Slack Bot" />
+      <Link
+        className="
+            flex
+            py-2
+            px-4
+            mt-2
+            border
+            border-border
+            h-fit
+            cursor-pointer
+            hover:bg-hover
+            text-sm
+            w-40
+          "
+        href="/admin/bots/new"
+      >
+        <div className="mx-auto flex">
+          <FiPlusSquare className="my-auto mr-2" />
+          New Slack Bot
+        </div>
+      </Link>
 
       <SlackBotTable slackBots={slackBots} />
     </div>

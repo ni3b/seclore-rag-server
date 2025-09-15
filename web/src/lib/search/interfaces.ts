@@ -1,4 +1,4 @@
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
 import { Tag, ValidSources } from "../types";
 import { Persona } from "@/app/admin/assistants/interfaces";
 
@@ -15,54 +15,6 @@ export const SearchType = {
 };
 export type SearchType = (typeof SearchType)[keyof typeof SearchType];
 
-export interface ProSearchPacket {
-  sub_question?: string;
-  answer_piece?: string;
-  sub_query?: string;
-  tool_response?: ToolResponse;
-  level: number;
-  level_question_num: number;
-}
-
-export interface RefinedAnswerImprovement {
-  refined_answer_improvement: boolean;
-}
-
-export interface AgentAnswerPiece {
-  answer_piece: string;
-  level: number;
-  level_question_num: number;
-  answer_type: "agent_sub_answer" | "agent_level_answer";
-}
-
-export interface SubQuestionPiece {
-  sub_question: string;
-  level: number;
-  level_question_num: number;
-}
-
-export interface SubQueryPiece {
-  sub_query: string;
-  level: number;
-  level_question_num: number;
-  query_id: number;
-}
-
-export interface SubQuestionSearchDoc {
-  context_docs: OnyxDocument[];
-  level_question_num: number;
-  level: number;
-}
-
-export interface ToolResponse {
-  id?: string | null;
-  response?: any;
-}
-export interface ExtendedToolResponse extends ToolResponse {
-  level: number;
-  level_question_num: number;
-}
-
 export interface AnswerPiecePacket {
   answer_piece: string;
 }
@@ -74,9 +26,6 @@ export enum StreamStopReason {
 
 export interface StreamStopInfo {
   stop_reason: StreamStopReason;
-  level?: number;
-  level_question_num?: number;
-  stream_type?: "sub_answer" | "sub_questions" | "main_answer";
 }
 
 export interface ErrorMessagePacket {
@@ -95,15 +44,13 @@ export interface Quote {
 export interface QuotesInfoPacket {
   quotes: Quote[];
 }
-export interface MinimalOnyxDocument {
-  document_id: string;
-  semantic_identifier: string | null;
-}
 
-export interface OnyxDocument extends MinimalOnyxDocument {
+export interface OnyxDocument {
+  document_id: string;
   link: string;
   source_type: ValidSources;
   blurb: string;
+  semantic_identifier: string | null;
   boost: number;
   hidden: boolean;
   score: number;
@@ -115,7 +62,6 @@ export interface OnyxDocument extends MinimalOnyxDocument {
   is_internet: boolean;
   validationState?: null | "good" | "bad";
 }
-
 export interface LoadedOnyxDocument extends OnyxDocument {
   icon: React.FC<{ size?: number; className?: string }>;
 }
@@ -132,7 +78,9 @@ export interface DocumentInfoPacket {
   top_documents: OnyxDocument[];
   predicted_flow: FlowType | null;
   predicted_search: SearchType | null;
-  time_cutoff: string | null;
+  // Previous implementation used a single cutoff date
+  // time_cutoff: string | null;
+  // New implementation uses a date range in the Filters interface
   favor_recent: boolean;
 }
 
@@ -165,7 +113,6 @@ export enum SourceCategory {
   Storage = "Storage",
   Wiki = "Wiki",
   CustomerSupport = "Customer Support",
-  CustomerRelationshipManagement = "Customer Relationship Management",
   Messaging = "Messaging",
   ProjectManagement = "Project Management",
   CodeRepository = "Code Repository",
@@ -190,9 +137,14 @@ export interface SearchDefaultOverrides {
 export interface Filters {
   source_type: string[] | null;
   document_set: string[] | null;
-  time_cutoff: Date | null;
-  user_file_ids: number[] | null;
-  // user_folder_ids: number[] | null;
+  // Previous implementation used a single cutoff date
+  // time_cutoff: Date | null;
+  // New implementation uses a date range
+  time_range: {
+    start_date: Date | null;
+    end_date: Date | null;
+  } | null;
+  tags: Tag[];
 }
 
 export interface SearchRequestArgs {

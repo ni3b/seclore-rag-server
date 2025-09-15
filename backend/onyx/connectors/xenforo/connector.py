@@ -10,7 +10,6 @@ forum, followed by the board name. For example:
 The `load_from_state` method is used to load documents from the forum. It takes an optional `state` parameter, which
 can be used to specify a state from which to start loading documents.
 """
-
 import re
 from datetime import datetime
 from datetime import timedelta
@@ -29,7 +28,7 @@ from onyx.connectors.interfaces import GenerateDocumentsOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -105,7 +104,7 @@ def scrape_page_posts(
             # id. We may want to de-dupe this stuff inside the indexing service.
             document = Document(
                 id=f"{DocumentSource.XENFORO.value}_{title}_{page_index}_{formatted_time}",
-                sections=[TextSection(link=url, text=post_text)],
+                sections=[Section(link=url, text=post_text)],
                 title=title,
                 source=DocumentSource.XENFORO,
                 semantic_identifier=title,

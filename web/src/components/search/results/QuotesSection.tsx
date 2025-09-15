@@ -8,12 +8,20 @@ const QuoteDisplay = ({ quoteInfo }: { quoteInfo: Quote }) => {
   const [detailIsOpen, setDetailIsOpen] = useState(false);
   const [copyClicked, setCopyClicked] = useState(false);
 
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(quoteInfo.quote);
+      setCopyClicked(true);
+      setTimeout(() => setCopyClicked(false), 1000);
+    } catch (error) {
+      console.error("Failed to copy text: ", error);
+    }
+  };
+
   return (
     <div
       className="relative"
-      onMouseEnter={() => {
-        setDetailIsOpen(true);
-      }}
+      onMouseEnter={() => setDetailIsOpen(true)}
       onMouseLeave={() => setDetailIsOpen(false)}
     >
       {detailIsOpen && (
@@ -22,22 +30,10 @@ const QuoteDisplay = ({ quoteInfo }: { quoteInfo: Quote }) => {
             <div>
               <b>Quote:</b> <i>{quoteInfo.quote}</i>
             </div>
-            <div
-              className="my-auto pl-3 ml-auto"
-              onClick={() => {
-                navigator.clipboard.writeText(quoteInfo.quote);
-                setCopyClicked(true);
-                setTimeout(() => {
-                  setCopyClicked(false);
-                }, 1000);
-              }}
-            >
-              <div className="p-1 rounded hover:bg-accent-background-hovered cursor-pointer">
+            <div className="my-auto pl-3 ml-auto" onClick={handleCopy}>
+              <div className="p-1 rounded hover:bg-hover cursor-pointer">
                 {copyClicked ? (
-                  <CheckmarkIcon
-                    className="my-auto flex flex-shrink-0"
-                    size={16}
-                  />
+                  <CheckmarkIcon className="my-auto flex flex-shrink-0" size={16} />
                 ) : (
                   <CopyIcon className="my-auto flex flex-shrink-0" size={16} />
                 )}
@@ -48,7 +44,7 @@ const QuoteDisplay = ({ quoteInfo }: { quoteInfo: Quote }) => {
       )}
       <button className="text-sm flex w-fit">
         <a
-          className="flex max-w-[250px] shrink box-border p-2 border border-border rounded-lg hover:bg-accent-background"
+          className="flex max-w-[250px] shrink box-border p-2 border border-border rounded-lg hover:bg-hover-light"
           href={quoteInfo.link || undefined}
           target="_blank"
           rel="noopener noreferrer"
@@ -72,13 +68,11 @@ const QuotesHeader = ({ quotes, isFetching }: QuotesSectionProps) => {
   if ((!quotes || quotes.length === 0) && isFetching) {
     return <>Extracting quotes...</>;
   }
-
   return <>Quotes</>;
 };
 
 const QuotesBody = ({ quotes, isFetching }: QuotesSectionProps) => {
   if (!quotes && isFetching) {
-    // height of quotes section to avoid extra "jumps" from the quotes loading
     return <div className="h-[42px]"></div>;
   }
 
@@ -94,21 +88,13 @@ const QuotesBody = ({ quotes, isFetching }: QuotesSectionProps) => {
 export const QuotesSection = (props: QuotesSectionProps) => {
   let status: StatusOptions = "in-progress";
   if (!props.isFetching) {
-    if (props.quotes && props.quotes.length > 0) {
-      status = "success";
-    } else {
-      status = "failed";
-    }
+    status = props.quotes && props.quotes.length > 0 ? "success" : "failed";
   }
 
   return (
     <ResponseSection
       status={status}
-      header={
-        <div className="ml-2 text-text-darker font-bold">
-          {<QuotesHeader {...props} />}
-        </div>
-      }
+      header={<div className="ml-2 text-emphasis font-bold"><QuotesHeader {...props} /></div>}
       body={<QuotesBody {...props} />}
       desiredOpenStatus={true}
       isNotControllable={true}

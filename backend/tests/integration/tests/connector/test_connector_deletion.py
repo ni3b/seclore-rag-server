@@ -5,15 +5,11 @@ This file contains tests for the following:
     - updates the document sets and user groups to remove the connector
 - Ensure that deleting a connector that is part of an overlapping document set and/or user group works as expected
 """
-
-import os
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from onyx.connectors.models import ConnectorFailure
-from onyx.connectors.models import DocumentFailure
-from onyx.db.engine.sql_engine import get_sqlalchemy_engine
+from onyx.db.engine import get_sqlalchemy_engine
 from onyx.db.enums import IndexingStatus
 from onyx.db.index_attempt import create_index_attempt
 from onyx.db.index_attempt import create_index_attempt_error
@@ -34,13 +30,6 @@ from tests.integration.common_utils.vespa import vespa_fixture
 
 
 def test_connector_deletion(reset: None, vespa_client: vespa_fixture) -> None:
-    user_group_1: DATestUserGroup
-    user_group_2: DATestUserGroup
-
-    is_ee = (
-        os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() == "true"
-    )
-
     # Creating an admin user (first user created is automatically an admin)
     admin_user: DATestUser = UserManager.create(name="admin_user")
     # create api key
@@ -87,17 +76,16 @@ def test_connector_deletion(reset: None, vespa_client: vespa_fixture) -> None:
 
     print("Document sets created and synced")
 
-    if is_ee:
-        # create user groups
-        user_group_1 = UserGroupManager.create(
-            cc_pair_ids=[cc_pair_1.id],
-            user_performing_action=admin_user,
-        )
-        user_group_2 = UserGroupManager.create(
-            cc_pair_ids=[cc_pair_1.id, cc_pair_2.id],
-            user_performing_action=admin_user,
-        )
-        UserGroupManager.wait_for_sync(user_performing_action=admin_user)
+    # create user groups
+    user_group_1: DATestUserGroup = UserGroupManager.create(
+        cc_pair_ids=[cc_pair_1.id],
+        user_performing_action=admin_user,
+    )
+    user_group_2: DATestUserGroup = UserGroupManager.create(
+        cc_pair_ids=[cc_pair_1.id, cc_pair_2.id],
+        user_performing_action=admin_user,
+    )
+    UserGroupManager.wait_for_sync(user_performing_action=admin_user)
 
     # inject a finished index attempt and index attempt error (exercises foreign key errors)
     with Session(get_sqlalchemy_engine()) as db_session:
@@ -113,15 +101,10 @@ def test_connector_deletion(reset: None, vespa_client: vespa_fixture) -> None:
 
         create_index_attempt_error(
             index_attempt_id=new_attempt.id,
-            connector_credential_pair_id=cc_pair_1.id,
-            failure=ConnectorFailure(
-                failure_message="Test error",
-                failed_document=DocumentFailure(
-                    document_id=cc_pair_1.documents[0].id,
-                    document_link=None,
-                ),
-                failed_entity=None,
-            ),
+            batch=1,
+            docs=[],
+            exception_msg="",
+            exception_traceback="",
             db_session=db_session,
         )
 
@@ -144,26 +127,20 @@ def test_connector_deletion(reset: None, vespa_client: vespa_fixture) -> None:
         )
         create_index_attempt_error(
             index_attempt_id=attempt_id,
-            connector_credential_pair_id=cc_pair_1.id,
-            failure=ConnectorFailure(
-                failure_message="Test error",
-                failed_document=DocumentFailure(
-                    document_id=cc_pair_1.documents[0].id,
-                    document_link=None,
-                ),
-                failed_entity=None,
-            ),
+            batch=1,
+            docs=[],
+            exception_msg="",
+            exception_traceback="",
             db_session=db_session,
         )
 
     # Update local records to match the database for later comparison
+    user_group_1.cc_pair_ids = []
+    user_group_2.cc_pair_ids = [cc_pair_2.id]
     doc_set_1.cc_pair_ids = []
     doc_set_2.cc_pair_ids = [cc_pair_2.id]
     cc_pair_1.groups = []
-    if is_ee:
-        cc_pair_2.groups = [user_group_2.id]
-    else:
-        cc_pair_2.groups = []
+    cc_pair_2.groups = [user_group_2.id]
 
     CCPairManager.wait_for_deletion_completion(
         cc_pair_id=cc_pair_1.id, user_performing_action=admin_user
@@ -179,15 +156,11 @@ def test_connector_deletion(reset: None, vespa_client: vespa_fixture) -> None:
         verify_deleted=True,
     )
 
-    cc_pair_2_group_name_expected = []
-    if is_ee:
-        cc_pair_2_group_name_expected = [user_group_2.name]
-
     DocumentManager.verify(
         vespa_client=vespa_client,
         cc_pair=cc_pair_2,
         doc_set_names=[doc_set_2.name],
-        group_names=cc_pair_2_group_name_expected,
+        group_names=[user_group_2.name],
         doc_creating_user=admin_user,
         verify_deleted=False,
     )
@@ -208,19 +181,15 @@ def test_connector_deletion(reset: None, vespa_client: vespa_fixture) -> None:
         user_performing_action=admin_user,
     )
 
-    if is_ee:
-        user_group_1.cc_pair_ids = []
-        user_group_2.cc_pair_ids = [cc_pair_2.id]
-
-        # validate user groups
-        UserGroupManager.verify(
-            user_group=user_group_1,
-            user_performing_action=admin_user,
-        )
-        UserGroupManager.verify(
-            user_group=user_group_2,
-            user_performing_action=admin_user,
-        )
+    # validate user groups
+    UserGroupManager.verify(
+        user_group=user_group_1,
+        user_performing_action=admin_user,
+    )
+    UserGroupManager.verify(
+        user_group=user_group_2,
+        user_performing_action=admin_user,
+    )
 
 
 def test_connector_deletion_for_overlapping_connectors(
@@ -229,13 +198,6 @@ def test_connector_deletion_for_overlapping_connectors(
     """Checks to make sure that connectors with overlapping documents work properly. Specifically, that the overlapping
     document (1) still exists and (2) has the right document set / group post-deletion of one of the connectors.
     """
-    user_group_1: DATestUserGroup
-    user_group_2: DATestUserGroup
-
-    is_ee = (
-        os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() == "true"
-    )
-
     # Creating an admin user (first user created is automatically an admin)
     admin_user: DATestUser = UserManager.create(name="admin_user")
     # create api key
@@ -307,48 +269,47 @@ def test_connector_deletion_for_overlapping_connectors(
         doc_creating_user=admin_user,
     )
 
-    if is_ee:
-        # create a user group and attach it to connector 1
-        user_group_1 = UserGroupManager.create(
-            name="Test User Group 1",
-            cc_pair_ids=[cc_pair_1.id],
-            user_performing_action=admin_user,
-        )
-        UserGroupManager.wait_for_sync(
-            user_groups_to_check=[user_group_1],
-            user_performing_action=admin_user,
-        )
-        cc_pair_1.groups = [user_group_1.id]
+    # create a user group and attach it to connector 1
+    user_group_1: DATestUserGroup = UserGroupManager.create(
+        name="Test User Group 1",
+        cc_pair_ids=[cc_pair_1.id],
+        user_performing_action=admin_user,
+    )
+    UserGroupManager.wait_for_sync(
+        user_groups_to_check=[user_group_1],
+        user_performing_action=admin_user,
+    )
+    cc_pair_1.groups = [user_group_1.id]
 
-        print("User group 1 created and synced")
+    print("User group 1 created and synced")
 
-        # create a user group and attach it to connector 2
-        user_group_2 = UserGroupManager.create(
-            name="Test User Group 2",
-            cc_pair_ids=[cc_pair_2.id],
-            user_performing_action=admin_user,
-        )
-        UserGroupManager.wait_for_sync(
-            user_groups_to_check=[user_group_2],
-            user_performing_action=admin_user,
-        )
-        cc_pair_2.groups = [user_group_2.id]
+    # create a user group and attach it to connector 2
+    user_group_2: DATestUserGroup = UserGroupManager.create(
+        name="Test User Group 2",
+        cc_pair_ids=[cc_pair_2.id],
+        user_performing_action=admin_user,
+    )
+    UserGroupManager.wait_for_sync(
+        user_groups_to_check=[user_group_2],
+        user_performing_action=admin_user,
+    )
+    cc_pair_2.groups = [user_group_2.id]
 
-        print("User group 2 created and synced")
+    print("User group 2 created and synced")
 
-        # verify vespa document is in the user group
-        DocumentManager.verify(
-            vespa_client=vespa_client,
-            cc_pair=cc_pair_1,
-            group_names=[user_group_1.name, user_group_2.name],
-            doc_creating_user=admin_user,
-        )
-        DocumentManager.verify(
-            vespa_client=vespa_client,
-            cc_pair=cc_pair_2,
-            group_names=[user_group_1.name, user_group_2.name],
-            doc_creating_user=admin_user,
-        )
+    # verify vespa document is in the user group
+    DocumentManager.verify(
+        vespa_client=vespa_client,
+        cc_pair=cc_pair_1,
+        group_names=[user_group_1.name, user_group_2.name],
+        doc_creating_user=admin_user,
+    )
+    DocumentManager.verify(
+        vespa_client=vespa_client,
+        cc_pair=cc_pair_2,
+        group_names=[user_group_1.name, user_group_2.name],
+        doc_creating_user=admin_user,
+    )
 
     # delete connector 1
     CCPairManager.pause_cc_pair(
@@ -381,15 +342,11 @@ def test_connector_deletion_for_overlapping_connectors(
 
     # verify the document is not in any document sets
     # verify the document is only in user group 2
-    group_names_expected = []
-    if is_ee:
-        group_names_expected = [user_group_2.name]
-
     DocumentManager.verify(
         vespa_client=vespa_client,
         cc_pair=cc_pair_2,
         doc_set_names=[],
-        group_names=group_names_expected,
+        group_names=[user_group_2.name],
         doc_creating_user=admin_user,
         verify_deleted=False,
     )

@@ -43,21 +43,14 @@ const CsvContent: React.FC<ContentComponentProps> = ({
 
       const csvData = await response.text();
       const rows = csvData.trim().split("\n");
-      const firstRow = rows[0];
-      if (!firstRow) {
-        throw new Error("CSV file is empty");
-      }
-      const parsedHeaders = firstRow.split(",");
+      const parsedHeaders = rows[0].split(",");
       setHeaders(parsedHeaders);
 
       const parsedData: Record<string, string>[] = rows.slice(1).map((row) => {
         const values = row.split(",");
         return parsedHeaders.reduce<Record<string, string>>(
           (obj, header, index) => {
-            const val = values[index];
-            if (val !== undefined) {
-              obj[header] = val;
-            }
+            obj[header] = values[index];
             return obj;
           },
           {}

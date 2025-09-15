@@ -1,5 +1,5 @@
 import { SourceIcon } from "@/components/SourceIcon";
-import { MinimalOnyxDocument, OnyxDocument } from "@/lib/search/interfaces";
+import { OnyxDocument } from "@/lib/search/interfaces";
 import { FiTag } from "react-icons/fi";
 import { DocumentSelector } from "./DocumentSelector";
 import { buildDocumentSummaryDisplay } from "@/components/search/DocumentDisplay";
@@ -10,7 +10,6 @@ import { Dispatch, SetStateAction } from "react";
 import { openDocument } from "@/lib/search/utils";
 
 interface DocumentDisplayProps {
-  agenticMessage: boolean;
   closeSidebar: () => void;
   document: OnyxDocument;
   modal?: boolean;
@@ -18,7 +17,7 @@ interface DocumentDisplayProps {
   handleSelect: (documentId: string) => void;
   tokenLimitReached: boolean;
   hideSelection?: boolean;
-  setPresentingDocument: Dispatch<SetStateAction<MinimalOnyxDocument | null>>;
+  setPresentingDocument: Dispatch<SetStateAction<OnyxDocument | null>>;
 }
 
 export function DocumentMetadataBlock({
@@ -39,6 +38,7 @@ export function DocumentMetadataBlock({
 
       {metadataEntries.length > 0 && (
         <>
+          <div className="mx-1 h-4 border-l border-border" />
           <div className="flex items-center overflow-hidden">
             {metadataEntries
               .slice(0, MAX_METADATA_ITEMS)
@@ -50,7 +50,7 @@ export function DocumentMetadataBlock({
                 />
               ))}
             {metadataEntries.length > MAX_METADATA_ITEMS && (
-              <span className="ml-1 text-xs text-text-500">...</span>
+              <span className="ml-1 text-xs text-gray-500">...</span>
             )}
           </div>
         </>
@@ -60,7 +60,6 @@ export function DocumentMetadataBlock({
 }
 
 export function ChatDocumentDisplay({
-  agenticMessage,
   closeSidebar,
   document,
   modal,
@@ -82,10 +81,8 @@ export function ChatDocumentDisplay({
   return (
     <div className="desktop:max-w-[400px] opacity-100 w-full">
       <div
-        className={`flex relative  flex-col px-3 py-2.5 gap-0.5  rounded-xl my-1 ${
-          isSelected
-            ? "bg-accent-background-hovered"
-            : " hover:bg-accent-background"
+        className={`flex relative flex-col px-3 py-2.5 gap-0.5 rounded-xl my-1 ${
+          isSelected ? "bg-[#ebe7de]" : "bg- hover:bg-[#ebe7de]/80"
         }`}
       >
         <button
@@ -98,7 +95,7 @@ export function ChatDocumentDisplay({
             ) : (
               <SourceIcon sourceType={document.source_type} iconSize={18} />
             )}
-            <div className="line-clamp-1 text-neutral-900 dark:text-neutral-300 text-sm font-semibold">
+            <div className="line-clamp-1 text-text-900 text-sm font-semibold">
               {(document.semantic_identifier || document.document_id).length >
               (modal ? 30 : 40)
                 ? `${(document.semantic_identifier || document.document_id)
@@ -111,18 +108,17 @@ export function ChatDocumentDisplay({
             <DocumentMetadataBlock modal={modal} document={document} />
           )}
           <div
-            className={`line-clamp-3 text-sm font-normal leading-snug text-neutral-900 dark:text-neutral-300 ${
+            className={`line-clamp-3 text-sm font-normal leading-snug text-gray-600 ${
               hasMetadata ? "mt-2" : ""
             }`}
           >
-            {!agenticMessage
-              ? buildDocumentSummaryDisplay(
-                  document.match_highlights,
-                  document.blurb
-                )
-              : document.blurb}
+            {buildDocumentSummaryDisplay(
+              document.match_highlights,
+              document.blurb
+            )}
           </div>
-          <div className="absolute top-2 right-2">
+          {/* TODO: comment out for now as it is not having any meaning (issue reported by QA) */}
+          {/* <div className="absolute top-2 right-2">
             {!isInternet && !hideSelection && (
               <DocumentSelector
                 isSelected={isSelected}
@@ -130,7 +126,7 @@ export function ChatDocumentDisplay({
                 isDisabled={tokenLimitReached && !isSelected}
               />
             )}
-          </div>
+          </div> */}
         </button>
       </div>
     </div>

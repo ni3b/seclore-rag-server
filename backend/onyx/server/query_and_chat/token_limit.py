@@ -11,8 +11,9 @@ from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from onyx.auth.users import current_chat_accessible_user
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.auth.users import current_chat_accesssible_user
+from onyx.db.engine import get_session_context_manager
+from onyx.db.engine import get_session_with_tenant
 from onyx.db.models import ChatMessage
 from onyx.db.models import ChatSession
 from onyx.db.models import TokenRateLimit
@@ -20,6 +21,7 @@ from onyx.db.models import User
 from onyx.db.token_limit import fetch_all_global_token_rate_limits
 from onyx.utils.logger import setup_logger
 from onyx.utils.variable_functionality import fetch_versioned_implementation
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
 
 logger = setup_logger()
@@ -29,7 +31,7 @@ TOKEN_BUDGET_UNIT = 1_000
 
 
 def check_token_rate_limits(
-    user: User | None = Depends(current_chat_accessible_user),
+    user: User | None = Depends(current_chat_accesssible_user),
 ) -> None:
     # short circuit if no rate limits are set up
     # NOTE: result of `any_rate_limit_exists` is cached, so this call is fast 99% of the time
@@ -37,13 +39,13 @@ def check_token_rate_limits(
         return
 
     versioned_rate_limit_strategy = fetch_versioned_implementation(
-        "onyx.server.query_and_chat.token_limit", _check_token_rate_limits.__name__
+        "onyx.server.query_and_chat.token_limit", "_check_token_rate_limits"
     )
-    return versioned_rate_limit_strategy(user)
+    return versioned_rate_limit_strategy(user, CURRENT_TENANT_ID_CONTEXTVAR.get())
 
 
-def _check_token_rate_limits(_: User | None) -> None:
-    _user_is_rate_limited_by_global()
+def _check_token_rate_limits(_: User | None, tenant_id: str | None) -> None:
+    _user_is_rate_limited_by_global(tenant_id)
 
 
 """
@@ -51,8 +53,8 @@ Global rate limits
 """
 
 
-def _user_is_rate_limited_by_global() -> None:
-    with get_session_with_current_tenant() as db_session:
+def _user_is_rate_limited_by_global(tenant_id: str | None) -> None:
+    with get_session_with_tenant(tenant_id) as db_session:
         global_rate_limits = fetch_all_global_token_rate_limits(
             db_session=db_session, enabled_only=True, ordered=False
         )
@@ -124,7 +126,7 @@ def any_rate_limit_exists() -> bool:
     """Checks if any rate limit exists in the database. Is cached, so that if no rate limits
     are setup, we don't have any effect on average query latency."""
     logger.debug("Checking for any rate limits...")
-    with get_session_with_current_tenant() as db_session:
+    with get_session_context_manager() as db_session:
         return (
             db_session.scalar(
                 select(TokenRateLimit.id).where(

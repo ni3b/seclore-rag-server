@@ -1,14 +1,10 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { Formik, Form } from "formik";
+import { Formik } from "formik";
 import * as Yup from "yup";
 import { usePopup } from "@/components/admin/connectors/Popup";
-import {
-  DocumentSet,
-  SlackChannelConfig,
-  SlackBotResponseType,
-} from "@/lib/types";
+import { DocumentSet, SlackChannelConfig } from "@/lib/types";
 import {
   createSlackChannelConfig,
   isPersonaASlackBotPersona,
@@ -18,7 +14,7 @@ import CardSection from "@/components/admin/CardSection";
 import { useRouter } from "next/navigation";
 import { Persona } from "@/app/admin/assistants/interfaces";
 import { StandardAnswerCategoryResponse } from "@/components/standardAnswers/getStandardAnswerCategoriesIfEE";
-import { SEARCH_TOOL_ID } from "@/app/chat/tools/constants";
+import { SEARCH_TOOL_ID, SEARCH_TOOL_NAME } from "@/app/chat/tools/constants";
 import { SlackChannelConfigFormFields } from "./SlackChannelConfigFormFields";
 
 export const SlackChannelConfigCreationForm = ({
@@ -37,43 +33,26 @@ export const SlackChannelConfigCreationForm = ({
   const { popup, setPopup } = usePopup();
   const router = useRouter();
   const isUpdate = Boolean(existingSlackChannelConfig);
-  const isDefault = existingSlackChannelConfig?.is_default || false;
   const existingSlackBotUsesPersona = existingSlackChannelConfig?.persona
     ? !isPersonaASlackBotPersona(existingSlackChannelConfig.persona)
     : false;
-  const existingPersonaHasSearchTool = existingSlackChannelConfig?.persona
-    ? existingSlackChannelConfig.persona.tools.some(
-        (tool) => tool.in_code_tool_id === SEARCH_TOOL_ID
-      )
-    : false;
 
-  const [searchEnabledAssistants, nonSearchAssistants] = useMemo(() => {
-    return personas.reduce(
-      (acc, persona) => {
-        if (
-          persona.tools.some((tool) => tool.in_code_tool_id === SEARCH_TOOL_ID)
-        ) {
-          acc[0].push(persona);
-        } else {
-          acc[1].push(persona);
-        }
-        return acc;
-      },
-      [[], []] as [Persona[], Persona[]]
-    );
+  const searchEnabledAssistants = useMemo(() => {
+    return personas.filter((persona) => {
+      return persona.tools.some(
+        (tool) => tool.in_code_tool_id == SEARCH_TOOL_ID
+      );
+    });
   }, [personas]);
 
   return (
-    <CardSection className="!px-12 max-w-4xl">
+    <CardSection className="max-w-4xl">
       {popup}
-
       <Formik
         initialValues={{
           slack_bot_id: slack_bot_id,
-          channel_name: isDefault
-            ? ""
-            : existingSlackChannelConfig?.channel_config.channel_name || "",
-          response_type: "citations" as SlackBotResponseType,
+          channel_name:
+            existingSlackChannelConfig?.channel_config.channel_name || "",
           answer_validity_check_enabled: (
             existingSlackChannelConfig?.channel_config?.answer_filters || []
           ).includes("well_answered_postfilter"),
@@ -83,8 +62,6 @@ export const SlackChannelConfigCreationForm = ({
           respond_tag_only:
             existingSlackChannelConfig?.channel_config?.respond_tag_only ||
             false,
-          is_ephemeral:
-            existingSlackChannelConfig?.channel_config?.is_ephemeral || false,
           respond_to_bots:
             existingSlackChannelConfig?.channel_config?.respond_to_bots ||
             false,
@@ -113,31 +90,26 @@ export const SlackChannelConfigCreationForm = ({
             !isPersonaASlackBotPersona(existingSlackChannelConfig.persona)
               ? existingSlackChannelConfig.persona.id
               : null,
+          response_type:
+            existingSlackChannelConfig?.response_type || "citations",
           standard_answer_categories:
             existingSlackChannelConfig?.standard_answer_categories || [],
           knowledge_source: existingSlackBotUsesPersona
-            ? existingPersonaHasSearchTool
-              ? "assistant"
-              : "non_search_assistant"
+            ? "assistant"
             : existingSlackChannelConfig?.persona
               ? "document_sets"
               : "all_public",
-          disabled:
-            existingSlackChannelConfig?.channel_config?.disabled ?? false,
         }}
         validationSchema={Yup.object().shape({
           slack_bot_id: Yup.number().required(),
-          channel_name: isDefault
-            ? Yup.string()
-            : Yup.string().required("Channel Name is required"),
-          response_type: Yup.mixed<SlackBotResponseType>()
+          channel_name: Yup.string().required("Channel Name is required"),
+          response_type: Yup.string()
             .oneOf(["quotes", "citations"])
-            .required(),
+            .required("Response type is required"),
           answer_validity_check_enabled: Yup.boolean().required(),
           questionmark_prefilter_enabled: Yup.boolean().required(),
           respond_tag_only: Yup.boolean().required(),
           respond_to_bots: Yup.boolean().required(),
-          is_ephemeral: Yup.boolean().required(),
           show_continue_in_web_ui: Yup.boolean().required(),
           enable_auto_filters: Yup.boolean().required(),
           respond_member_group_list: Yup.array().of(Yup.string()).required(),
@@ -164,14 +136,8 @@ export const SlackChannelConfigCreationForm = ({
             }),
           standard_answer_categories: Yup.array(),
           knowledge_source: Yup.string()
-            .oneOf([
-              "all_public",
-              "document_sets",
-              "assistant",
-              "non_search_assistant",
-            ])
+            .oneOf(["all_public", "document_sets", "assistant"])
             .required(),
-          disabled: Yup.boolean().optional().default(false),
         })}
         onSubmit={async (values, formikHelpers) => {
           formikHelpers.setSubmitting(true);
@@ -181,23 +147,18 @@ export const SlackChannelConfigCreationForm = ({
             slack_bot_id,
             channel_name: values.channel_name,
             respond_member_group_list: values.respond_member_group_list,
-            usePersona:
-              values.knowledge_source === "assistant" ||
-              values.knowledge_source === "non_search_assistant",
+            usePersona: values.knowledge_source === "assistant",
             document_sets:
               values.knowledge_source === "document_sets"
                 ? values.document_sets
                 : [],
             persona_id:
-              values.knowledge_source === "assistant" ||
-              values.knowledge_source === "non_search_assistant"
+              values.knowledge_source === "assistant"
                 ? values.persona_id
                 : null,
             standard_answer_categories: values.standard_answer_categories.map(
               (category: any) => category.id
             ),
-            response_type: values.response_type as SlackBotResponseType,
-            disabled: values.disabled ?? false,
           };
 
           if (!cleanedValues.still_need_help_enabled) {
@@ -230,24 +191,13 @@ export const SlackChannelConfigCreationForm = ({
           }
         }}
       >
-        {({ isSubmitting, values, setFieldValue, ...formikProps }) => (
-          <Form>
-            <div className="pb-6 w-full">
-              <SlackChannelConfigFormFields
-                {...values}
-                isUpdate={isUpdate}
-                isDefault={isDefault}
-                documentSets={documentSets}
-                searchEnabledAssistants={searchEnabledAssistants}
-                nonSearchAssistants={nonSearchAssistants}
-                standardAnswerCategoryResponse={standardAnswerCategoryResponse}
-                setPopup={setPopup}
-                slack_bot_id={slack_bot_id}
-                formikProps={formikProps}
-              />
-            </div>
-          </Form>
-        )}
+        <SlackChannelConfigFormFields
+          isUpdate={isUpdate}
+          documentSets={documentSets}
+          searchEnabledAssistants={searchEnabledAssistants}
+          standardAnswerCategoryResponse={standardAnswerCategoryResponse}
+          setPopup={setPopup}
+        />
       </Formik>
     </CardSection>
   );

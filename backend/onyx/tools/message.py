@@ -4,7 +4,7 @@ from typing import Any
 from langchain_core.messages.ai import AIMessage
 from langchain_core.messages.tool import ToolCall
 from langchain_core.messages.tool import ToolMessage
-from pydantic import BaseModel
+from pydantic.v1 import BaseModel as BaseModel__v1
 
 from onyx.natural_language_processing.utils import BaseTokenizer
 
@@ -21,14 +21,9 @@ def build_tool_message(
     )
 
 
-class ToolCallSummary(BaseModel):
+class ToolCallSummary(BaseModel__v1):
     tool_call_request: AIMessage
     tool_call_result: ToolMessage
-
-    # This is a workaround to allow arbitrary types in the model
-    # TODO: Remove this once we have a better solution
-    class Config:
-        arbitrary_types_allowed = True
 
 
 def tool_call_tokens(

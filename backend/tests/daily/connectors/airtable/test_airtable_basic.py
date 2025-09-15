@@ -1,5 +1,4 @@
 import os
-from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,10 +7,7 @@ from pydantic import BaseModel
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.airtable.airtable_connector import AirtableConnector
 from onyx.connectors.models import Document
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
-
-BASE_VIEW_ID = "viwVUEJjWPd8XYjh8"
+from onyx.connectors.models import Section
 
 
 class AirtableConfig(BaseModel):
@@ -50,8 +46,6 @@ def create_test_document(
     days_since_status_change: int | None,
     attachments: list[tuple[str, str]] | None = None,
     all_fields_as_metadata: bool = False,
-    share_id: str | None = None,
-    view_id: str | None = None,
 ) -> Document:
     base_id = os.environ.get("AIRTABLE_TEST_BASE_ID")
     table_id = os.environ.get("AIRTABLE_TEST_TABLE_ID")
@@ -66,23 +60,17 @@ def create_test_document(
             f"Required environment variables not set: {', '.join(missing_vars)}. "
             "These variables are required to run Airtable connector tests."
         )
-    link_base = f"https://airtable.com/{base_id}"
-    if share_id:
-        link_base = f"{link_base}/{share_id}"
-    link_base = f"{link_base}/{table_id}"
-    if view_id:
-        link_base = f"{link_base}/{view_id}"
-
+    link_base = f"https://airtable.com/{base_id}/{table_id}"
     sections = []
 
     if not all_fields_as_metadata:
         sections.extend(
             [
-                TextSection(
+                Section(
                     text=f"Title:\n------------------------\n{title}\n------------------------",
                     link=f"{link_base}/{id}",
                 ),
-                TextSection(
+                Section(
                     text=f"Description:\n------------------------\n{description}\n------------------------",
                     link=f"{link_base}/{id}",
                 ),
@@ -92,7 +80,7 @@ def create_test_document(
     if attachments:
         for attachment_text, attachment_link in attachments:
             sections.append(
-                TextSection(
+                Section(
                     text=f"Attachment:\n------------------------\n{attachment_text}\n------------------------",
                     link=attachment_link,
                 ),
@@ -124,7 +112,7 @@ def create_test_document(
 
     return Document(
         id=f"airtable__{id}",
-        sections=cast(list[TextSection | ImageSection], sections),
+        sections=sections,
         source=DocumentSource.AIRTABLE,
         semantic_identifier=f"{os.environ.get('AIRTABLE_TEST_TABLE_NAME', '')}: {title}",
         metadata=metadata,
@@ -226,7 +214,6 @@ def test_airtable_connector_basic(
             assignee="Chris Weaver (chris@onyx.app)",
             submitted_by="Chris Weaver (chris@onyx.app)",
             all_fields_as_metadata=False,
-            view_id=BASE_VIEW_ID,
         ),
         create_test_document(
             id="reccSlIA4pZEFxPBg",
@@ -247,7 +234,6 @@ def test_airtable_connector_basic(
                 )
             ],
             all_fields_as_metadata=False,
-            view_id=BASE_VIEW_ID,
         ),
     ]
 
@@ -299,81 +285,6 @@ def test_airtable_connector_all_metadata(
                 )
             ],
             all_fields_as_metadata=True,
-            view_id=BASE_VIEW_ID,
-        ),
-    ]
-
-    # Compare documents using the utility function
-    compare_documents(doc_batch, expected_docs)
-
-
-def test_airtable_connector_with_share_and_view(
-    mock_get_unstructured_api_key: MagicMock, airtable_config: AirtableConfig
-) -> None:
-    """Test behavior when using share_id and view_id for URL generation."""
-    SHARE_ID = "shrkfjEzDmLaDtK83"
-
-    connector = AirtableConnector(
-        base_id=airtable_config.base_id,
-        table_name_or_id=airtable_config.table_identifier,
-        treat_all_non_attachment_fields_as_metadata=False,
-        share_id=SHARE_ID,
-        view_id=BASE_VIEW_ID,
-    )
-    connector.load_credentials(
-        {
-            "airtable_access_token": airtable_config.access_token,
-        }
-    )
-    doc_batch_generator = connector.load_from_state()
-    doc_batch = next(doc_batch_generator)
-    with pytest.raises(StopIteration):
-        next(doc_batch_generator)
-
-    assert len(doc_batch) == 2
-
-    expected_docs = [
-        create_test_document(
-            id="rec8BnxDLyWeegOuO",
-            title="Slow Internet",
-            description="The internet connection is very slow.",
-            priority="Medium",
-            status="In Progress",
-            ticket_id="2",
-            created_time="2024-12-24T21:02:49.000Z",
-            status_last_changed="2024-12-24T21:02:49.000Z",
-            days_since_status_change=0,
-            assignee="Chris Weaver (chris@onyx.app)",
-            submitted_by="Chris Weaver (chris@onyx.app)",
-            all_fields_as_metadata=False,
-            share_id=SHARE_ID,
-            view_id=BASE_VIEW_ID,
-        ),
-        create_test_document(
-            id="reccSlIA4pZEFxPBg",
-            title="Printer Issue",
-            description="The office printer is not working.",
-            priority="High",
-            status="Open",
-            ticket_id="1",
-            created_time="2024-12-24T21:02:49.000Z",
-            status_last_changed="2024-12-24T21:02:49.000Z",
-            days_since_status_change=0,
-            assignee="Chris Weaver (chris@onyx.app)",
-            submitted_by="Chris Weaver (chris@onyx.app)",
-            attachments=[
-                (
-                    "Test.pdf:\ntesting!!!",
-                    (
-                        f"https://airtable.com/{airtable_config.base_id}/{SHARE_ID}/"
-                        f"{os.environ['AIRTABLE_TEST_TABLE_ID']}/{BASE_VIEW_ID}/reccSlIA4pZEFxPBg/"
-                        "fld1u21zkJACIvAEF/attlj2UBWNEDZngCc?blocks=hide"
-                    ),
-                )
-            ],
-            all_fields_as_metadata=False,
-            share_id=SHARE_ID,
-            view_id=BASE_VIEW_ID,
         ),
     ]
 

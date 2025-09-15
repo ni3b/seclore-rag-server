@@ -50,9 +50,6 @@ function useLocalStorageState<T>(
   return [state, setValue];
 }
 
-const firstLightExtensionImage = lightExtensionImages[0]!;
-const firstDarkExtensionImage = darkExtensionImages[0]!;
-
 export function NRFPreferencesProvider({
   children,
 }: {
@@ -65,12 +62,12 @@ export function NRFPreferencesProvider({
   const [defaultLightBackgroundUrl, setDefaultLightBackgroundUrl] =
     useLocalStorageState<string>(
       LocalStorageKeys.LIGHT_BG_URL,
-      firstLightExtensionImage
+      lightExtensionImages[0]
     );
   const [defaultDarkBackgroundUrl, setDefaultDarkBackgroundUrl] =
     useLocalStorageState<string>(
       LocalStorageKeys.DARK_BG_URL,
-      firstDarkExtensionImage
+      darkExtensionImages[0]
     );
   const [shortcuts, setShortcuts] = useLocalStorageState<Shortcut[]>(
     LocalStorageKeys.SHORTCUTS,

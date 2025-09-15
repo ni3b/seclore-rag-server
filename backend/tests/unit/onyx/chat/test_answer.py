@@ -2,7 +2,6 @@ import json
 from typing import cast
 from unittest.mock import MagicMock
 from unittest.mock import Mock
-from uuid import UUID
 
 import pytest
 from langchain_core.messages import AIMessageChunk
@@ -11,8 +10,6 @@ from langchain_core.messages import HumanMessage
 from langchain_core.messages import SystemMessage
 from langchain_core.messages import ToolCall
 from langchain_core.messages import ToolCallChunk
-from pytest_mock import MockerFixture
-from sqlalchemy.orm import Session
 
 from onyx.chat.answer import Answer
 from onyx.chat.models import AnswerStyleConfig
@@ -22,83 +19,34 @@ from onyx.chat.models import OnyxAnswerPiece
 from onyx.chat.models import PromptConfig
 from onyx.chat.models import StreamStopInfo
 from onyx.chat.models import StreamStopReason
-from onyx.chat.prompt_builder.answer_prompt_builder import AnswerPromptBuilder
-from onyx.chat.prompt_builder.answer_prompt_builder import default_build_system_message
-from onyx.chat.prompt_builder.answer_prompt_builder import default_build_user_message
-from onyx.context.search.models import RerankingDetails
 from onyx.llm.interfaces import LLM
 from onyx.tools.force import ForceUseTool
 from onyx.tools.models import ToolCallFinalResult
 from onyx.tools.models import ToolCallKickoff
 from onyx.tools.models import ToolResponse
-from onyx.tools.tool_implementations.search_like_tool_utils import (
-    FINAL_CONTEXT_DOCUMENTS_ID,
-)
-from shared_configs.enums import RerankerProvider
 from tests.unit.onyx.chat.conftest import DEFAULT_SEARCH_ARGS
 from tests.unit.onyx.chat.conftest import QUERY
 
 
 @pytest.fixture
 def answer_instance(
-    mock_llm: LLM,
-    answer_style_config: AnswerStyleConfig,
-    prompt_config: PromptConfig,
-    mocker: MockerFixture,
+    mock_llm: LLM, answer_style_config: AnswerStyleConfig, prompt_config: PromptConfig
 ) -> Answer:
-    mocker.patch(
-        "onyx.chat.answer.fast_gpu_status_request",
-        return_value=True,
-    )
-    return _answer_fixture_impl(mock_llm, answer_style_config, prompt_config, mocker)
-
-
-def _answer_fixture_impl(
-    mock_llm: LLM,
-    answer_style_config: AnswerStyleConfig,
-    prompt_config: PromptConfig,
-    mocker: MockerFixture,
-    rerank_settings: RerankingDetails | None = None,
-) -> Answer:
-    mock_db_session = Mock(spec=Session)
-    mock_query = Mock()
-    mock_query.all.return_value = []
-    mock_db_session.query.return_value = mock_query
-
     return Answer(
-        prompt_builder=AnswerPromptBuilder(
-            user_message=default_build_user_message(
-                user_query=QUERY,
-                prompt_config=prompt_config,
-                files=[],
-                single_message_history=None,
-            ),
-            system_message=default_build_system_message(prompt_config, mock_llm.config),
-            message_history=[],
-            llm_config=mock_llm.config,
-            raw_user_query=QUERY,
-            raw_user_uploaded_files=[],
-        ),
-        db_session=mock_db_session,
+        question=QUERY,
         answer_style_config=answer_style_config,
         llm=mock_llm,
-        fast_llm=mock_llm,
+        prompt_config=prompt_config,
         force_use_tool=ForceUseTool(force_use=False, tool_name="", args=None),
-        persona=None,
-        rerank_settings=rerank_settings,
-        chat_session_id=UUID("123e4567-e89b-12d3-a456-426614174000"),
-        current_agent_message_id=0,
     )
 
 
-def test_basic_answer(answer_instance: Answer, mocker: MockerFixture) -> None:
-    mock_llm = cast(Mock, answer_instance.graph_config.tooling.primary_llm)
+def test_basic_answer(answer_instance: Answer) -> None:
+    mock_llm = cast(Mock, answer_instance.llm)
     mock_llm.stream.return_value = [
         AIMessageChunk(content="This is a "),
         AIMessageChunk(content="mock answer."),
     ]
-    answer_instance.graph_config.tooling.fast_llm = mock_llm
-    answer_instance.graph_config.tooling.primary_llm = mock_llm
 
     output = list(answer_instance.processed_streamed_output)
     assert len(output) == 2
@@ -149,11 +97,11 @@ def test_answer_with_search_call(
     force_use_tool: ForceUseTool,
     expected_tool_args: dict,
 ) -> None:
-    answer_instance.graph_config.tooling.tools = [mock_search_tool]
-    answer_instance.graph_config.tooling.force_use_tool = force_use_tool
+    answer_instance.tools = [mock_search_tool]
+    answer_instance.force_use_tool = force_use_tool
 
     # Set up the LLM mock to return search results and then an answer
-    mock_llm = cast(Mock, answer_instance.graph_config.tooling.primary_llm)
+    mock_llm = cast(Mock, answer_instance.llm)
 
     stream_side_effect: list[list[BaseMessage]] = []
 
@@ -185,17 +133,12 @@ def test_answer_with_search_call(
     )
     mock_llm.stream.side_effect = stream_side_effect
 
-    print("side effect")
-    for v in stream_side_effect:
-        print(v)
-        print("-" * 300)
-    print(len(stream_side_effect))
-    print("-" * 300)
     # Process the output
     output = list(answer_instance.processed_streamed_output)
+    print(output)
 
     # Updated assertions
-    # assert len(output) == 7
+    assert len(output) == 7
     assert output[0] == ToolCallKickoff(
         tool_name="search", tool_args=expected_tool_args
     )
@@ -269,10 +212,10 @@ def test_answer_with_search_no_tool_calling(
     mock_search_results: list[LlmDoc],
     mock_search_tool: MagicMock,
 ) -> None:
-    answer_instance.graph_config.tooling.tools = [mock_search_tool]
+    answer_instance.tools = [mock_search_tool]
 
     # Set up the LLM mock to return an answer
-    mock_llm = cast(Mock, answer_instance.graph_config.tooling.primary_llm)
+    mock_llm = cast(Mock, answer_instance.llm)
     mock_llm.stream.return_value = [
         AIMessageChunk(content="Based on the search results, "),
         AIMessageChunk(content="the answer is abc[1]. "),
@@ -280,7 +223,7 @@ def test_answer_with_search_no_tool_calling(
     ]
 
     # Force non-tool calling behavior
-    answer_instance.graph_config.tooling.using_tool_calling_llm = False
+    answer_instance.using_tool_calling_llm = False
 
     # Process the output
     output = list(answer_instance.processed_streamed_output)
@@ -291,7 +234,7 @@ def test_answer_with_search_no_tool_calling(
         tool_name="search", tool_args=DEFAULT_SEARCH_ARGS
     )
     assert output[1] == ToolResponse(
-        id=FINAL_CONTEXT_DOCUMENTS_ID,
+        id="final_context_documents",
         response=mock_search_results,
     )
     assert output[2] == ToolCallFinalResult(
@@ -329,10 +272,9 @@ def test_answer_with_search_no_tool_calling(
         == mock_search_tool.build_next_prompt.return_value.build.return_value
     )
 
-    prev_messages = answer_instance.graph_inputs.prompt_builder.get_message_history()
     # Verify that get_args_for_non_tool_calling_llm was called on the mock_search_tool
     mock_search_tool.get_args_for_non_tool_calling_llm.assert_called_once_with(
-        QUERY, prev_messages, answer_instance.graph_config.tooling.primary_llm
+        QUERY, [], answer_instance.llm
     )
 
     # Verify that the search tool's run method was called
@@ -342,8 +284,7 @@ def test_answer_with_search_no_tool_calling(
 def test_is_cancelled(answer_instance: Answer) -> None:
     # Set up the LLM mock to return multiple chunks
     mock_llm = Mock()
-    answer_instance.graph_config.tooling.primary_llm = mock_llm
-    answer_instance.graph_config.tooling.fast_llm = mock_llm
+    answer_instance.llm = mock_llm
     mock_llm.stream.return_value = [
         AIMessageChunk(content="This is the "),
         AIMessageChunk(content="first part."),
@@ -375,50 +316,3 @@ def test_is_cancelled(answer_instance: Answer) -> None:
 
     # Verify LLM calls
     mock_llm.stream.assert_called_once()
-
-
-@pytest.mark.parametrize(
-    "gpu_enabled,is_local_model",
-    [
-        (True, False),
-        (False, True),
-        (True, True),
-        (False, False),
-    ],
-)
-def test_no_slow_reranking(
-    gpu_enabled: bool,
-    is_local_model: bool,
-    mock_llm: LLM,
-    answer_style_config: AnswerStyleConfig,
-    prompt_config: PromptConfig,
-    mocker: MockerFixture,
-) -> None:
-    mocker.patch(
-        "onyx.chat.answer.fast_gpu_status_request",
-        return_value=gpu_enabled,
-    )
-    rerank_settings = (
-        None
-        if is_local_model
-        else RerankingDetails(
-            rerank_model_name="test_model",
-            rerank_api_url="test_url",
-            rerank_api_key="test_key",
-            num_rerank=10,
-            rerank_provider_type=RerankerProvider.COHERE,
-        )
-    )
-    answer_instance = _answer_fixture_impl(
-        mock_llm,
-        answer_style_config,
-        prompt_config,
-        mocker,
-        rerank_settings=rerank_settings,
-    )
-
-    assert answer_instance.graph_config.inputs.rerank_settings == rerank_settings
-    assert (
-        answer_instance.graph_config.behavior.allow_agent_reranking == gpu_enabled
-        or not is_local_model
-    )

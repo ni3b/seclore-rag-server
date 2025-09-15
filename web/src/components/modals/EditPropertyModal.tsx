@@ -1,8 +1,9 @@
 import React from "react";
-import { Formik, Form } from "formik";
+import { Formik, Form, Field, ErrorMessage } from "formik";
+import * as Yup from "yup";
 import { Modal } from "@/components/Modal";
 import { Button } from "@/components/ui/button";
-import { TextFormField } from "@/components/Field";
+import { TextFormField } from "../admin/connectors/Field";
 import { EditIcon } from "../icons/icons";
 
 const EditPropertyModal = ({
@@ -37,7 +38,7 @@ const EditPropertyModal = ({
       >
         {({ isSubmitting, isValid, values }) => (
           <Form className="items-stretch">
-            <h2 className="text-2xl text-text-darker font-bold mb-3 flex items-center">
+            <h2 className="text-2xl text-emphasis font-bold mb-3 flex items-center">
               <EditIcon size={20} className="mr-2" />
               Edit {propertyTitle}
             </h2>

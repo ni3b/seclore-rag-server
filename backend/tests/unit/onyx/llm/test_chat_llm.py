@@ -9,9 +9,7 @@ from litellm.types.utils import ChatCompletionDeltaToolCall
 from litellm.types.utils import Delta
 from litellm.types.utils import Function as LiteLLMFunction
 
-from onyx.configs.app_configs import MOCK_LLM_RESPONSE
 from onyx.llm.chat_llm import DefaultMultiLLM
-from onyx.llm.utils import get_max_input_tokens
 
 
 def _create_delta(
@@ -28,18 +26,11 @@ def _create_delta(
 
 @pytest.fixture
 def default_multi_llm() -> DefaultMultiLLM:
-    model_provider = "openai"
-    model_name = "gpt-3.5-turbo"
-
     return DefaultMultiLLM(
         api_key="test_key",
         timeout=30,
-        model_provider=model_provider,
-        model_name=model_name,
-        max_input_tokens=get_max_input_tokens(
-            model_provider=model_provider,
-            model_name=model_name,
-        ),
+        model_provider="openai",
+        model_name="gpt-3.5-turbo",
     )
 
 
@@ -148,12 +139,10 @@ def test_multiple_tool_calls(default_multi_llm: DefaultMultiLLM) -> None:
             ],
             tools=tools,
             tool_choice=None,
-            max_tokens=None,
             stream=False,
-            temperature=0.0,  # Default value from GEN_AI_TEMPERATURE
+            temperature=0.5,  # Default value from GEN_AI_TEMPERATURE
             timeout=30,
             parallel_tool_calls=False,
-            mock_response=MOCK_LLM_RESPONSE,
         )
 
 
@@ -294,10 +283,8 @@ def test_multiple_tool_calls_streaming(default_multi_llm: DefaultMultiLLM) -> No
             ],
             tools=tools,
             tool_choice=None,
-            max_tokens=None,
             stream=True,
-            temperature=0.0,  # Default value from GEN_AI_TEMPERATURE
+            temperature=0.7,  # Default value from GEN_AI_TEMPERATURE
             timeout=30,
             parallel_tool_calls=False,
-            mock_response=MOCK_LLM_RESPONSE,
         )

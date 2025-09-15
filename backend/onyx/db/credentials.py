@@ -14,7 +14,6 @@ from onyx.configs.constants import DocumentSource
 from onyx.connectors.google_utils.shared_constants import (
     DB_CREDENTIALS_DICT_SERVICE_ACCOUNT_KEY,
 )
-from onyx.db.enums import ConnectorCredentialPairStatus
 from onyx.db.models import ConnectorCredentialPair
 from onyx.db.models import Credential
 from onyx.db.models import Credential__UserGroup
@@ -169,8 +168,8 @@ def fetch_credential_by_id_for_user(
 
 
 def fetch_credential_by_id(
-    credential_id: int,
     db_session: Session,
+    credential_id: int,
 ) -> Credential | None:
     stmt = select(Credential).distinct()
     stmt = stmt.where(Credential.id == credential_id)
@@ -245,10 +244,6 @@ def swap_credentials_connector(
     # Update the existing pair with the new credential
     existing_pair.credential_id = new_credential_id
     existing_pair.credential = new_credential
-
-    # Update ccpair status if it's in INVALID state
-    if existing_pair.status == ConnectorCredentialPairStatus.INVALID:
-        existing_pair.status = ConnectorCredentialPairStatus.ACTIVE
 
     # Commit the changes
     db_session.commit()
@@ -360,13 +355,18 @@ def backend_update_credential_json(
     db_session.commit()
 
 
-def _delete_credential_internal(
-    credential: Credential,
+def delete_credential(
     credential_id: int,
+    user: User | None,
     db_session: Session,
     force: bool = False,
 ) -> None:
-    """Internal utility function to handle the actual deletion of a credential"""
+    credential = fetch_credential_by_id_for_user(credential_id, user, db_session)
+    if credential is None:
+        raise ValueError(
+            f"Credential by provided id {credential_id} does not exist or does not belong to user"
+        )
+
     associated_connectors = (
         db_session.query(ConnectorCredentialPair)
         .filter(ConnectorCredentialPair.credential_id == credential_id)
@@ -411,43 +411,14 @@ def _delete_credential_internal(
     db_session.commit()
 
 
-def delete_credential_for_user(
-    credential_id: int,
-    user: User,
-    db_session: Session,
-    force: bool = False,
-) -> None:
-    """Delete a credential that belongs to a specific user"""
-    credential = fetch_credential_by_id_for_user(credential_id, user, db_session)
-    if credential is None:
-        raise ValueError(
-            f"Credential by provided id {credential_id} does not exist or does not belong to user"
-        )
-
-    _delete_credential_internal(credential, credential_id, db_session, force)
-
-
-def delete_credential(
-    credential_id: int,
-    db_session: Session,
-    force: bool = False,
-) -> None:
-    """Delete a credential regardless of ownership (admin function)"""
-    credential = fetch_credential_by_id(credential_id, db_session)
-    if credential is None:
-        raise ValueError(f"Credential by provided id {credential_id} does not exist")
-
-    _delete_credential_internal(credential, credential_id, db_session, force)
-
-
 def create_initial_public_credential(db_session: Session) -> None:
     error_msg = (
         "DB is not in a valid initial state."
         "There must exist an empty public credential for data connectors that do not require additional Auth."
     )
     first_credential = fetch_credential_by_id(
-        credential_id=PUBLIC_CREDENTIAL_ID,
         db_session=db_session,
+        credential_id=PUBLIC_CREDENTIAL_ID,
     )
 
     if first_credential is not None:

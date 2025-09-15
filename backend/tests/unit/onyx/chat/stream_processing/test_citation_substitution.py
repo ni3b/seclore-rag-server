@@ -11,7 +11,7 @@ from onyx.configs.constants import DocumentSource
 
 
 """
-This module contains tests for the citation extraction functionality in Onyx,
+This module contains tests for the citation extraction functionality in Seclore,
 specifically the substitution of the number of document cited in the UI. (The LLM
 will see the sources post re-ranking and relevance check, the UI before these steps.)
 This module is a derivative of test_citation_processing.py.

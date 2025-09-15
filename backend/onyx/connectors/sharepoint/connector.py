@@ -1,16 +1,15 @@
 import io
 import os
-from collections.abc import Generator
 from datetime import datetime
 from datetime import timezone
 from typing import Any
 from urllib.parse import unquote
+import time
 
 import msal  # type: ignore
 from office365.graph_client import GraphClient  # type: ignore
 from office365.onedrive.driveitems.driveItem import DriveItem  # type: ignore
-from office365.onedrive.sites.site import Site  # type: ignore
-from office365.onedrive.sites.sites_with_root import SitesWithRoot  # type: ignore
+from office365.runtime.client_request_exception import ClientRequestException
 from pydantic import BaseModel
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
@@ -22,7 +21,7 @@ from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.file_processing.extract_file_text import extract_file_text
 from onyx.utils.logger import setup_logger
 
@@ -46,34 +45,65 @@ class SiteDescriptor(BaseModel):
     folder_path: str | None
 
 
-def _convert_driveitem_to_document(
+# Download content from a drive item with simple retry logic
+def _download_driveitem_content(driveitem: DriveItem) -> bytes:
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            return driveitem.get_content().execute_query().value
+        except ClientRequestException as e:
+            logger.info(f"got a client request exception {str(e)}")
+            if "503" in str(e) and attempt < max_attempts - 1:
+                logger.warning(f"Received 503 error while downloading {driveitem.name}, attempt {attempt + 1}/{max_attempts}")
+                time.sleep(2)  # 2 second delay between retries
+                continue
+            raise
+
+
+# Convert a drive item to a document
+def _convert_driveitem_to_document(self,
     driveitem: DriveItem,
     drive_name: str,
 ) -> Document:
-    file_text = extract_file_text(
-        file=io.BytesIO(driveitem.get_content().execute_query().value),
-        file_name=driveitem.name,
-        break_on_unprocessable=False,
-    )
+    try:
+        file_content = _download_driveitem_content(driveitem)
+        file_text = extract_file_text(
+            file=io.BytesIO(file_content),
+            file_name=driveitem.name,
+            break_on_unprocessable=False,
+        )
 
-    doc = Document(
-        id=driveitem.id,
-        sections=[TextSection(link=driveitem.web_url, text=file_text)],
-        source=DocumentSource.SHAREPOINT,
-        semantic_identifier=driveitem.name,
-        doc_updated_at=driveitem.last_modified_datetime.replace(tzinfo=timezone.utc),
-        primary_owners=[
-            BasicExpertInfo(
-                display_name=driveitem.last_modified_by.user.displayName,
-                email=driveitem.last_modified_by.user.email,
-            )
-        ],
-        metadata={"drive": drive_name},
-    )
-    return doc
+        doc = Document(
+            id=driveitem.id,
+            sections=[Section(link=driveitem.web_url, text=file_text)],
+            source=DocumentSource.SHAREPOINT,
+            semantic_identifier=driveitem.name,
+            doc_updated_at=driveitem.last_modified_datetime.replace(tzinfo=timezone.utc),
+            primary_owners=[
+                BasicExpertInfo(
+                    display_name=driveitem.last_modified_by.user.displayName,
+                    email=driveitem.last_modified_by.user.email,
+                )
+            ],
+            metadata={
+                "drive": drive_name,
+                "connector_name": self.name,
+                "url": driveitem.web_url,
+            },
+            
+        )
+        logger.debug(f"found the doc {doc}")
+        return doc
+    except Exception as e:
+        logger.error(f"Error processing document {driveitem.name}: {str(e)}")
+        raise
 
 
 class SharepointConnector(LoadConnector, PollConnector):
+
+    # attribute to store the connector name in instantiate_connector()
+    name: str | None = None
+
     def __init__(
         self,
         batch_size: int = INDEX_BATCH_SIZE,
@@ -84,7 +114,7 @@ class SharepointConnector(LoadConnector, PollConnector):
         self.site_descriptors: list[SiteDescriptor] = self._extract_site_and_drive_info(
             sites
         )
-        self.msal_app: msal.ConfidentialClientApplication | None = None
+        self.name = "sharepoint"
 
     @property
     def graph_client(self) -> GraphClient:
@@ -95,7 +125,9 @@ class SharepointConnector(LoadConnector, PollConnector):
 
     @staticmethod
     def _extract_site_and_drive_info(site_urls: list[str]) -> list[SiteDescriptor]:
+        logger.info("started extraction")
         site_data_list = []
+        logger.info(f"site urls : {site_urls}")
         for url in site_urls:
             parts = url.strip().split("/")
             if "sites" in parts:
@@ -122,6 +154,7 @@ class SharepointConnector(LoadConnector, PollConnector):
                         folder_path=folder_path,
                     )
                 )
+        logger.info(f"site data list : {site_data_list}")        
         return site_data_list
 
     def _fetch_driveitems(
@@ -130,13 +163,21 @@ class SharepointConnector(LoadConnector, PollConnector):
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> list[tuple[DriveItem, str]]:
+        filter_str = ""
+        logger.info("started fetching items")
+        if start is not None and end is not None:
+            filter_str = (
+                f"last_modified_datetime ge {start.isoformat()} and "
+                f"last_modified_datetime le {end.isoformat()}"
+            )
+
         final_driveitems: list[tuple[DriveItem, str]] = []
         try:
             site = self.graph_client.sites.get_by_url(site_descriptor.url)
 
             # Get all drives in the site
             drives = site.drives.get().execute_query()
-            logger.debug(f"Found drives: {[drive.name for drive in drives]}")
+            logger.info(f"Found drives: {[drive.name for drive in drives]}")
 
             # Filter drives based on the requested drive name
             if site_descriptor.drive_name:
@@ -149,8 +190,9 @@ class SharepointConnector(LoadConnector, PollConnector):
                         and site_descriptor.drive_name == "Shared Documents"
                     )
                 ]
+                logger.info(f"drives : {drives}")
                 if not drives:
-                    logger.warning(f"Drive '{site_descriptor.drive_name}' not found")
+                    logger.error(f"Drive '{site_descriptor.drive_name}' not found")
                     return []
 
             # Process each matching drive
@@ -163,12 +205,11 @@ class SharepointConnector(LoadConnector, PollConnector):
                             root_folder = root_folder.get_by_path(folder_part)
 
                     # Get all items recursively
-                    query = root_folder.get_files(
-                        recursive=True,
-                        page_size=1000,
-                    )
+                    query = root_folder.get_files(True, 1000)
+                    if filter_str:
+                        query = query.filter(filter_str)
                     driveitems = query.execute_query()
-                    logger.debug(
+                    logger.info(
                         f"Found {len(driveitems)} items in drive '{drive.name}'"
                     )
 
@@ -177,90 +218,53 @@ class SharepointConnector(LoadConnector, PollConnector):
                         "Shared Documents" if drive.name == "Documents" else drive.name
                     )
 
-                    # Filter items based on folder path if specified
                     if site_descriptor.folder_path:
                         # Filter items to ensure they're in the specified folder or its subfolders
                         # The path will be in format: /drives/{drive_id}/root:/folder/path
-                        driveitems = [
-                            item
+                        filtered_driveitems = [
+                            (item, drive_name)
                             for item in driveitems
                             if any(
                                 path_part == site_descriptor.folder_path
-                                or path_part.startswith(
-                                    site_descriptor.folder_path + "/"
-                                )
+                                or site_descriptor.folder_path.startswith(path_part+ "/")
                                 for path_part in item.parent_reference.path.split(
                                     "root:/"
                                 )[1].split("/")
                             )
                         ]
-                        if len(driveitems) == 0:
+                        if len(filtered_driveitems) == 0:
                             all_paths = [
                                 item.parent_reference.path for item in driveitems
                             ]
-                            logger.warning(
+                            logger.info(
                                 f"Nothing found for folder '{site_descriptor.folder_path}' "
                                 f"in; any of valid paths: {all_paths}"
                             )
-
-                    # Filter items based on time window if specified
-                    if start is not None and end is not None:
-                        driveitems = [
-                            item
-                            for item in driveitems
-                            if start
-                            <= item.last_modified_datetime.replace(tzinfo=timezone.utc)
-                            <= end
-                        ]
-                        logger.debug(
-                            f"Found {len(driveitems)} items within time window in drive '{drive.name}'"
+                        final_driveitems.extend(filtered_driveitems)
+                    else:
+                        final_driveitems.extend(
+                            [(item, drive_name) for item in driveitems]
                         )
-
-                    for item in driveitems:
-                        final_driveitems.append((item, drive_name))
-
                 except Exception as e:
                     # Some drives might not be accessible
-                    logger.warning(f"Failed to process drive: {str(e)}")
+                    logger.error(f"Failed to process drive {drive.name}: {str(e)}")
+                    continue
 
         except Exception as e:
-            err_str = str(e)
-            if (
-                "403 Client Error" in err_str
-                or "404 Client Error" in err_str
-                or "invalid_client" in err_str
-            ):
-                raise e
-
             # Sites include things that do not contain drives so this fails
             # but this is fine, as there are no actual documents in those
-            logger.warning(f"Failed to process site: {err_str}")
+            logger.error(f"Failed to process site: {str(e)}")
 
         return final_driveitems
 
-    def _handle_paginated_sites(
-        self, sites: SitesWithRoot
-    ) -> Generator[Site, None, None]:
-        while sites:
-            if sites.current_page:
-                yield from sites.current_page
-            if not sites.has_next:
-                break
-            sites = sites._get_next().execute_query()
-
     def _fetch_sites(self) -> list[SiteDescriptor]:
-        sites = self.graph_client.sites.get_all_sites().execute_query()
-
-        if not sites:
-            raise RuntimeError("No sites found in the tenant")
-
+        sites = self.graph_client.sites.get_all().execute_query()
         site_descriptors = [
             SiteDescriptor(
-                url=site.web_url,
+                url=sites.resource_url,
                 drive_name=None,
                 folder_path=None,
             )
-            for site in self._handle_paginated_sites(sites)
         ]
         return site_descriptors
 
@@ -268,16 +272,18 @@ class SharepointConnector(LoadConnector, PollConnector):
         self, start: datetime | None = None, end: datetime | None = None
     ) -> GenerateDocumentsOutput:
         site_descriptors = self.site_descriptors or self._fetch_sites()
-
+        logger.info(f"in fetch from document 1")
         # goes over all urls, converts them into Document objects and then yields them in batches
         doc_batch: list[Document] = []
         for site_descriptor in site_descriptors:
+            logger.info(f"in fetch from document site description {site_descriptor}")
             driveitems = self._fetch_driveitems(site_descriptor, start=start, end=end)
             for driveitem, drive_name in driveitems:
-                logger.debug(f"Processing: {driveitem.web_url}")
-                doc_batch.append(_convert_driveitem_to_document(driveitem, drive_name))
-
+                logger.info(f"Processing: {driveitem.web_url}")
+                doc_batch.append(_convert_driveitem_to_document(self, driveitem, drive_name))
+                
                 if len(doc_batch) >= self.batch_size:
+                    logger.debug(f"Processing: {doc_batch}")
                     yield doc_batch
                     doc_batch = []
         yield doc_batch
@@ -287,21 +293,18 @@ class SharepointConnector(LoadConnector, PollConnector):
         sp_client_secret = credentials["sp_client_secret"]
         sp_directory_id = credentials["sp_directory_id"]
 
-        authority_url = f"https://login.microsoftonline.com/{sp_directory_id}"
-        self.msal_app = msal.ConfidentialClientApplication(
-            authority=authority_url,
-            client_id=sp_client_id,
-            client_credential=sp_client_secret,
-        )
-
         def _acquire_token_func() -> dict[str, Any]:
             """
             Acquire token via MSAL
             """
-            if self.msal_app is None:
-                raise RuntimeError("MSAL app is not initialized")
-
-            token = self.msal_app.acquire_token_for_client(
+            authority_url = f"https://login.microsoftonline.com/{sp_directory_id}"
+            app = msal.ConfidentialClientApplication(
+                authority=authority_url,
+                client_id=sp_client_id,
+                client_credential=sp_client_secret,
+            )
+            
+            token = app.acquire_token_for_client(
                 scopes=["https://graph.microsoft.com/.default"]
             )
             return token
@@ -317,6 +320,7 @@ class SharepointConnector(LoadConnector, PollConnector):
     ) -> GenerateDocumentsOutput:
         start_datetime = datetime.fromtimestamp(start, timezone.utc)
         end_datetime = datetime.fromtimestamp(end, timezone.utc)
+        logger.info(f"start time : {start_datetime} and end_datetime : {end_datetime}")
         return self._fetch_from_sharepoint(start=start_datetime, end=end_datetime)
 
 
@@ -329,6 +333,8 @@ if __name__ == "__main__":
             "sp_client_secret": os.environ["SHAREPOINT_CLIENT_SECRET"],
             "sp_directory_id": os.environ["SHAREPOINT_CLIENT_DIRECTORY_ID"],
         }
-    )
+    )  
+    logger.info(f"finding batch")
     document_batches = connector.load_from_state()
+    logger.info(f"found batch {document_batches}")
     print(next(document_batches))

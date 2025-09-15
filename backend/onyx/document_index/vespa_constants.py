@@ -5,6 +5,19 @@ from onyx.configs.app_configs import VESPA_PORT
 from onyx.configs.app_configs import VESPA_TENANT_PORT
 from onyx.configs.constants import SOURCE_TYPE
 
+VESPA_DIM_REPLACEMENT_PAT = "VARIABLE_DIM"
+DANSWER_CHUNK_REPLACEMENT_PAT = "DANSWER_CHUNK_NAME"
+DOCUMENT_REPLACEMENT_PAT = "DOCUMENT_REPLACEMENT"
+SEARCH_THREAD_NUMBER_PAT = "SEARCH_THREAD_NUMBER"
+DATE_REPLACEMENT = "DATE_REPLACEMENT"
+SEARCH_THREAD_NUMBER_PAT = "SEARCH_THREAD_NUMBER"
+TENANT_ID_PAT = "TENANT_ID_REPLACEMENT"
+
+TENANT_ID_REPLACEMENT = """field tenant_id type string {
+            indexing: summary | attribute
+            rank: filter
+            attribute: fast-search
+        }"""
 # config server
 
 
@@ -17,7 +30,7 @@ VESPA_APPLICATION_ENDPOINT = f"{VESPA_CONFIG_SERVER_URL}/application/v2"
 VESPA_APP_CONTAINER_URL = VESPA_CLOUD_URL or f"http://{VESPA_HOST}:{VESPA_PORT}"
 
 
-# danswer_chunk below is defined in vespa/app_configs/schemas/danswer_chunk.sd.jinja
+# danswer_chunk below is defined in vespa/app_configs/schemas/danswer_chunk.sd
 DOCUMENT_ID_ENDPOINT = (
     f"{VESPA_APP_CONTAINER_URL}/document/v1/default/{{index_name}}/docid"
 )
@@ -36,7 +49,7 @@ MAX_OR_CONDITIONS = 10
 # up from 500ms for now, since we've seen quite a few timeouts
 # in the long term, we are looking to improve the performance of Vespa
 # so that we can bring this back to default
-VESPA_TIMEOUT = "10s"
+VESPA_TIMEOUT = "3s"
 BATCH_SIZE = 128  # Specific to Vespa
 
 TENANT_ID = "tenant_id"
@@ -53,23 +66,16 @@ EMBEDDINGS = "embeddings"
 TITLE_EMBEDDING = "title_embedding"
 ACCESS_CONTROL_LIST = "access_control_list"
 DOCUMENT_SETS = "document_sets"
-USER_FILE = "user_file"
-USER_FOLDER = "user_folder"
 LARGE_CHUNK_REFERENCE_IDS = "large_chunk_reference_ids"
 METADATA = "metadata"
 METADATA_LIST = "metadata_list"
 METADATA_SUFFIX = "metadata_suffix"
-DOC_SUMMARY = "doc_summary"
-CHUNK_CONTEXT = "chunk_context"
 BOOST = "boost"
-AGGREGATED_CHUNK_BOOST_FACTOR = "aggregated_chunk_boost_factor"
 DOC_UPDATED_AT = "doc_updated_at"  # Indexed as seconds since epoch
 PRIMARY_OWNERS = "primary_owners"
 SECONDARY_OWNERS = "secondary_owners"
 RECENCY_BIAS = "recency_bias"
 HIDDEN = "hidden"
-# for legacy reasons, called `name` in Vespa despite it really being an ID
-IMAGE_FILE_NAME = "image_file_name"
 
 # Specific to Vespa, needed for highlighting matching keywords / section
 CONTENT_SUMMARY = "content_summary"
@@ -87,9 +93,7 @@ YQL_BASE = (
     f"{SEMANTIC_IDENTIFIER}, "
     f"{TITLE}, "
     f"{SECTION_CONTINUATION}, "
-    f"{IMAGE_FILE_NAME}, "
     f"{BOOST}, "
-    f"{AGGREGATED_CHUNK_BOOST_FACTOR}, "
     f"{HIDDEN}, "
     f"{DOC_UPDATED_AT}, "
     f"{PRIMARY_OWNERS}, "
@@ -97,8 +101,6 @@ YQL_BASE = (
     f"{LARGE_CHUNK_REFERENCE_IDS}, "
     f"{METADATA}, "
     f"{METADATA_SUFFIX}, "
-    f"{DOC_SUMMARY}, "
-    f"{CHUNK_CONTEXT}, "
     f"{CONTENT_SUMMARY} "
     f"from {{index_name}} where "
 )

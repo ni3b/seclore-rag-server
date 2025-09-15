@@ -36,25 +36,6 @@ export const submitGoogleSite = async (
     }
 
     const filePaths = responseJson.file_paths as string[];
-    if (!filePaths || filePaths.length === 0) {
-      setPopup({
-        message:
-          "File upload was successful, but no file path was returned. Cannot create connector.",
-        type: "error",
-      });
-      return false;
-    }
-
-    const filePath = filePaths[0];
-    if (filePath === undefined) {
-      setPopup({
-        message:
-          "File upload was successful, but file path is undefined. Cannot create connector.",
-        type: "error",
-      });
-      return false;
-    }
-
     const [connectorErrorMsg, connector] =
       await createConnector<GoogleSitesConfig>({
         name: name ? name : `GoogleSitesConnector-${base_url}`,
@@ -62,7 +43,7 @@ export const submitGoogleSite = async (
         input_type: "load_state",
         connector_specific_config: {
           base_url: base_url,
-          zip_path: filePath,
+          zip_path: filePaths[0],
         },
         access_type: access_type,
         refresh_freq: refreshFreq,

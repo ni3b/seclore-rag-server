@@ -16,17 +16,11 @@ from onyx.db.models import SearchSettings
 from onyx.indexing.models import BaseChunk
 from onyx.indexing.models import IndexingSetting
 from shared_configs.enums import RerankerProvider
-from shared_configs.model_server_models import Embedding
 
 
 MAX_METRICS_CONTENT = (
     200  # Just need enough characters to identify where in the doc the chunk is
 )
-
-
-class QueryExpansions(BaseModel):
-    keywords_expansions: list[str] | None = None
-    semantic_expansions: list[str] | None = None
 
 
 class RerankingDetails(BaseModel):
@@ -66,7 +60,7 @@ class SearchSettingsCreationRequest(InferenceSettings, IndexingSetting):
         inference_settings = InferenceSettings.from_db_model(search_settings)
         indexing_setting = IndexingSetting.from_db_model(search_settings)
 
-        return cls(**inference_settings.model_dump(), **indexing_setting.model_dump())
+        return cls(**inference_settings.dict(), **indexing_setting.dict())
 
 
 class SavedSearchSettings(InferenceSettings, IndexingSetting):
@@ -82,13 +76,6 @@ class SavedSearchSettings(InferenceSettings, IndexingSetting):
             provider_type=search_settings.provider_type,
             index_name=search_settings.index_name,
             multipass_indexing=search_settings.multipass_indexing,
-            embedding_precision=search_settings.embedding_precision,
-            reduced_dimension=search_settings.reduced_dimension,
-            # Whether switching to this model requires re-indexing
-            background_reindex_enabled=search_settings.background_reindex_enabled,
-            enable_contextual_rag=search_settings.enable_contextual_rag,
-            contextual_rag_llm_name=search_settings.contextual_rag_llm_name,
-            contextual_rag_llm_provider=search_settings.contextual_rag_llm_provider,
             # Reranking Details
             rerank_model_name=search_settings.rerank_model_name,
             rerank_provider_type=search_settings.rerank_provider_type,
@@ -106,26 +93,34 @@ class Tag(BaseModel):
     tag_value: str
 
 
+class TimeRange(BaseModel):
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+
 class BaseFilters(BaseModel):
+    tenant_id: str | None = None
+    access_control_list: list[str] | None = None
     source_type: list[DocumentSource] | None = None
     document_set: list[str] | None = None
-    time_cutoff: datetime | None = None
+    connector_name: str | None = None
+    # Previous implementation used a single cutoff date
+    # time_cutoff: datetime | None = None
+    # New implementation uses a date range
+    time_range: TimeRange | None = None
     tags: list[Tag] | None = None
-    kg_entities: list[str] | None = None
-    kg_relationships: list[str] | None = None
-    kg_terms: list[str] | None = None
-    kg_sources: list[str] | None = None
-    kg_chunk_id_zero_only: bool | None = False
 
 
-class UserFileFilters(BaseModel):
-    user_file_ids: list[int] | None = None
-    user_folder_ids: list[int] | None = None
-
-
-class IndexFilters(BaseFilters, UserFileFilters):
-    access_control_list: list[str] | None
+class IndexFilters(BaseFilters):
     tenant_id: str | None = None
+    access_control_list: list[str] | None = None
+    source_type: list[DocumentSource] | None = None
+    tags: list[Tag] | None = None
+    document_set: list[str] | None = None
+    time_range: TimeRange | None = None
+    connector_name: list[str] | str | None = None  # Allow both list and string for backward compatibility
+    status: str | None = None
+    ticket_id: str | None = None
 
 
 class ChunkMetric(BaseModel):
@@ -153,12 +148,9 @@ class ChunkContext(BaseModel):
 class SearchRequest(ChunkContext):
     query: str
 
-    expanded_queries: QueryExpansions | None = None
-
     search_type: SearchType = SearchType.SEMANTIC
 
     human_selected_filters: BaseFilters | None = None
-    user_file_filters: UserFileFilters | None = None
     enable_auto_detect_filters: bool | None = None
     persona: Persona | None = None
 
@@ -173,14 +165,9 @@ class SearchRequest(ChunkContext):
     evaluation_type: LLMEvaluationType = LLMEvaluationType.UNSPECIFIED
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    precomputed_query_embedding: Embedding | None = None
-    precomputed_is_keyword: bool | None = None
-    precomputed_keywords: list[str] | None = None
-
 
 class SearchQuery(ChunkContext):
     "Processed Request that is directly passed to the SearchPipeline"
-
     query: str
     processed_keywords: list[str]
     search_type: SearchType
@@ -196,23 +183,19 @@ class SearchQuery(ChunkContext):
     recency_bias_multiplier: float
 
     # Only used if LLM evaluation type is not skip, None to use default settings
-    max_llm_filter_sections: int
+    max_llm_filter_sections: int = 10  # Default to 10 sections for LLM filtering
 
     num_hits: int = NUM_RETURNED_HITS
     offset: int = 0
     model_config = ConfigDict(frozen=True)
-
-    precomputed_query_embedding: Embedding | None = None
-
-    expanded_queries: QueryExpansions | None = None
 
 
 class RetrievalDetails(ChunkContext):
     # Use LLM to determine whether to do a retrieval or only rely on existing history
     # If the Persona is configured to not run search (0 chunks), this is bypassed
     # If no Prompt is configured, the only search results are shown, this is bypassed
-    run_search: OptionalSearchSetting = OptionalSearchSetting.ALWAYS
-    # Is this a real-time/streaming call or a question where Onyx can take more time?
+    run_search: OptionalSearchSetting = OptionalSearchSetting.AUTO
+    # Is this a real-time/streaming call or a question where Seclore can take more time?
     # Used to determine reranking flow
     real_time: bool = True
     # The following have defaults in the Persona settings which can be overridden via
@@ -243,8 +226,6 @@ class InferenceChunk(BaseChunk):
     # to specify that a set of words should be highlighted. For example:
     # ["<hi>the</hi> <hi>answer</hi> is 42", "he couldn't find an <hi>answer</hi>"]
     match_highlights: list[str]
-    doc_summary: str
-    chunk_context: str
 
     # when the doc was last updated
     updated_at: datetime | None

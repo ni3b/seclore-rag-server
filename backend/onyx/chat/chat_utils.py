@@ -7,12 +7,6 @@ from fastapi.datastructures import Headers
 from sqlalchemy.orm import Session
 
 from onyx.auth.users import is_user_admin
-from onyx.background.celery.tasks.kg_processing.kg_indexing import (
-    try_creating_kg_processing_task,
-)
-from onyx.background.celery.tasks.kg_processing.kg_indexing import (
-    try_creating_kg_source_reset_task,
-)
 from onyx.chat.models import CitationInfo
 from onyx.chat.models import LlmDoc
 from onyx.chat.models import PersonaOverrideConfig
@@ -24,8 +18,6 @@ from onyx.context.search.models import RerankingDetails
 from onyx.context.search.models import RetrievalDetails
 from onyx.db.chat import create_chat_session
 from onyx.db.chat import get_chat_messages_by_session
-from onyx.db.kg_config import get_kg_config_settings
-from onyx.db.kg_config import is_kg_config_settings_enabled_valid
 from onyx.db.llm import fetch_existing_doc_sets
 from onyx.db.llm import fetch_existing_tools
 from onyx.db.models import ChatMessage
@@ -34,11 +26,6 @@ from onyx.db.models import Prompt
 from onyx.db.models import Tool
 from onyx.db.models import User
 from onyx.db.prompts import get_prompts_by_ids
-from onyx.db.search_settings import get_current_search_settings
-from onyx.kg.models import KGException
-from onyx.kg.setup.kg_default_entity_definitions import (
-    populate_missing_default_entity_types__commit,
-)
 from onyx.llm.models import PreviousMessage
 from onyx.natural_language_processing.utils import BaseTokenizer
 from onyx.server.query_and_chat.models import CreateChatMessageRequest
@@ -61,8 +48,6 @@ def prepare_chat_message_request(
     retrieval_details: RetrievalDetails | None,
     rerank_settings: RerankingDetails | None,
     db_session: Session,
-    use_agentic_search: bool = False,
-    skip_gen_ai_answer_generation: bool = False,
 ) -> CreateChatMessageRequest:
     # Typically used for one shot flows like SlackBot or non-chat API endpoint use cases
     new_chat_session = create_chat_session(
@@ -87,8 +72,6 @@ def prepare_chat_message_request(
         search_doc_ids=None,
         retrieval_options=retrieval_details,
         rerank_settings=rerank_settings,
-        use_agentic_search=use_agentic_search,
-        skip_gen_ai_answer_generation=skip_gen_ai_answer_generation,
     )
 
 
@@ -103,11 +86,9 @@ def llm_doc_from_inference_section(inference_section: InferenceSection) -> LlmDo
         source_type=inference_section.center_chunk.source_type,
         metadata=inference_section.center_chunk.metadata,
         updated_at=inference_section.center_chunk.updated_at,
-        link=(
-            inference_section.center_chunk.source_links[0]
-            if inference_section.center_chunk.source_links
-            else None
-        ),
+        link=inference_section.center_chunk.source_links[0]
+        if inference_section.center_chunk.source_links
+        else None,
         source_links=inference_section.center_chunk.source_links,
         match_highlights=inference_section.center_chunk.match_highlights,
     )
@@ -169,6 +150,7 @@ def create_chat_chain(
         skip_permission_check=True,
         prefetch_tool_calls=prefetch_tool_calls,
     )
+    logger.info("inside create_chat_chain function")
     id_to_msg = {msg.id: msg for msg in all_chat_messages}
 
     if not all_chat_messages:
@@ -176,45 +158,44 @@ def create_chat_chain(
 
     root_message = all_chat_messages[0]
     if root_message.parent_message is not None:
-        raise RuntimeError(
-            "Invalid root message, unable to fetch valid chat message sequence"
-        )
+         raise RuntimeError(
+             "Invalid root message, unable to fetch valid chat message sequence"
+         )
 
+    # If there's only one message (the root), return it as the final message with empty history
+    # This maintains the original behavior of excluding root from history while handling edge case
+    if len(all_chat_messages) == 1:
+        logger.info(f"Single message session detected for session {chat_session_id}")
+        return root_message, []
+    
+    # Build the chain for multi-message sessions (excluding root message as per original design)
     current_message: ChatMessage | None = root_message
-    previous_message: ChatMessage | None = None
     while current_message is not None:
         child_msg = current_message.latest_child_message
 
         # Break if at the end of the chain
         # or have reached the `final_id` of the submitted message
         if not child_msg or (
-            stop_at_message_id and current_message.id == stop_at_message_id
+             stop_at_message_id and current_message.id == stop_at_message_id
         ):
             break
         current_message = id_to_msg.get(child_msg)
-
+        logger.info(f"current message is: {current_message}")
         if current_message is None:
-            raise RuntimeError(
-                "Invalid message chain,"
-                "could not find next message in the same session"
-            )
-
-        if (
-            current_message.message_type == MessageType.ASSISTANT
-            and previous_message is not None
-            and previous_message.message_type == MessageType.ASSISTANT
-            and mainline_messages
-        ):
-            if current_message.refined_answer_improvement:
-                mainline_messages[-1] = current_message
-        else:
-            mainline_messages.append(current_message)
-
-        previous_message = current_message
-
+             raise RuntimeError(
+                 "Invalid message chain,"
+                 "could not find next message in the same session"
+             )
+        mainline_messages.append(current_message)
+    
     if not mainline_messages:
-        raise RuntimeError("Could not trace chat message history")
-
+        logger.error(f"Failed to build chat message history for session {chat_session_id}. Root message: {root_message}, Total messages: {len(all_chat_messages)}")
+        raise RuntimeError("Could not build chat message history")
+    
+    logger.info(f"final message here in chat line {mainline_messages[-1].message}")
+    for message in mainline_messages:
+        logger.debug(f"chat history message here in chat line {message.message}")        
+    
     return mainline_messages[-1], mainline_messages[:-1]
 
 
@@ -394,52 +375,3 @@ def create_temporary_persona(
     persona.document_sets = fetched_docs
 
     return persona
-
-
-def process_kg_commands(
-    message: str, persona_name: str, tenant_id: str, db_session: Session
-) -> None:
-    # Temporarily, until we have a draft UI for the KG Operations/Management
-    # TODO: move to api endpoint once we get frontend
-    if not persona_name.startswith("KG Beta"):
-        return
-
-    kg_config_settings = get_kg_config_settings()
-    if not is_kg_config_settings_enabled_valid(kg_config_settings):
-        return
-
-    # get Vespa index
-    search_settings = get_current_search_settings(db_session)
-    index_str = search_settings.index_name
-
-    if message == "kg_p":
-        success = try_creating_kg_processing_task(tenant_id)
-        if success:
-            raise KGException("KG processing scheduled")
-        else:
-            raise KGException(
-                "Cannot schedule another KG processing if one is already running "
-                "or there are no documents to process"
-            )
-
-    elif message.startswith("kg_rs_source"):
-        msg_split = [x for x in message.split(":")]
-        if len(msg_split) > 2:
-            raise KGException("Invalid format for a source reset command")
-        elif len(msg_split) == 2:
-            source_name = msg_split[1].strip()
-        elif len(msg_split) == 1:
-            source_name = None
-        else:
-            raise KGException("Invalid format for a source reset command")
-
-        success = try_creating_kg_source_reset_task(tenant_id, source_name, index_str)
-        if success:
-            source_name = source_name or "all"
-            raise KGException(f"KG index reset for source '{source_name}' scheduled")
-        else:
-            raise KGException("Cannot reset index while KG processing is running")
-
-    elif message == "kg_setup":
-        populate_missing_default_entity_types__commit(db_session=db_session)
-        raise KGException("KG setup done")

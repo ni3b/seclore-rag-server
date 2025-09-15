@@ -4,14 +4,14 @@ import React, { ReactNode, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function FunctionalWrapper({
-  sidebarInitiallyVisible,
+  initiallyToggled,
   content,
 }: {
   content: (
-    sidebarVisible: boolean,
+    toggledSidebar: boolean,
     toggle: (toggled?: boolean) => void
   ) => ReactNode;
-  sidebarInitiallyVisible: boolean;
+  initiallyToggled: boolean;
 }) {
   const router = useRouter();
 
@@ -46,11 +46,11 @@ export default function FunctionalWrapper({
     };
   }, [router]);
 
-  const [sidebarVisible, setSidebarVisible] = useState(sidebarInitiallyVisible);
+  const [toggledSidebar, setToggledSidebar] = useState(initiallyToggled);
 
   const toggle = (value?: boolean) => {
-    setSidebarVisible((sidebarVisible) =>
-      value !== undefined ? value : !sidebarVisible
+    setToggledSidebar((toggledSidebar) =>
+      value !== undefined ? value : !toggledSidebar
     );
   };
 
@@ -58,7 +58,7 @@ export default function FunctionalWrapper({
     <>
       {" "}
       <div className="overscroll-y-contain overflow-y-scroll overscroll-contain left-0 top-0 w-full h-svh">
-        {content(sidebarVisible, toggle)}
+        {content(toggledSidebar, toggle)}
       </div>
     </>
   );

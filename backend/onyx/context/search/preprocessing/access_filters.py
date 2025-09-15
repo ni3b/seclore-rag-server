@@ -15,7 +15,7 @@ def build_user_only_filters(user: User | None, db_session: Session) -> IndexFilt
     return IndexFilters(
         source_type=None,
         document_set=None,
-        time_cutoff=None,
+        time_range=None,
         tags=None,
         access_control_list=user_acl_filters,
     )

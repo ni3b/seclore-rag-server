@@ -5,7 +5,6 @@ Revises: c7bf5721733e
 Create Date: 2024-03-19
 
 """
-
 from typing import Sequence, Union
 
 from alembic import op
@@ -22,11 +21,12 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # Add passthrough_auth column to tool table with default value of False
     op.add_column(
-        "tool",
-        sa.Column(
-            "passthrough_auth", sa.Boolean(), nullable=False, server_default=sa.false()
-        ),
+         "tool",
+         sa.Column(
+             "passthrough_auth", sa.Boolean(), nullable=False, server_default=sa.false()
+         ),
     )
+    pass
 
 
 def downgrade() -> None:

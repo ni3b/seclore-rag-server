@@ -1,12 +1,9 @@
 import logging
 import multiprocessing
-import os
 import time
 from typing import Any
-from typing import cast
 
 import sentry_sdk
-from celery import bootsteps  # type: ignore
 from celery import Task
 from celery.app import trace
 from celery.exceptions import WorkerShutdown
@@ -23,12 +20,10 @@ from sqlalchemy.orm import Session
 from onyx.background.celery.apps.task_formatters import CeleryTaskColoredFormatter
 from onyx.background.celery.apps.task_formatters import CeleryTaskPlainFormatter
 from onyx.background.celery.celery_utils import celery_is_worker_primary
-from onyx.background.celery.celery_utils import make_probe_path
 from onyx.configs.constants import ONYX_CLOUD_CELERY_TASK_PREFIX
 from onyx.configs.constants import OnyxRedisLocks
-from onyx.db.engine.sql_engine import get_sqlalchemy_engine
+from onyx.db.engine import get_sqlalchemy_engine
 from onyx.document_index.vespa.shared_utils.utils import wait_for_vespa_with_timeout
-from onyx.httpx.httpx_pool import HttpxPool
 from onyx.redis.redis_connector import RedisConnector
 from onyx.redis.redis_connector_credential_pair import RedisConnectorCredentialPair
 from onyx.redis.redis_connector_delete import RedisConnectorDelete
@@ -62,35 +57,13 @@ else:
     logger.debug("Sentry DSN not provided, skipping Sentry initialization")
 
 
-class TenantAwareTask(Task):
-    """A custom base Task that sets tenant_id in a contextvar before running."""
-
-    abstract = True  # So Celery knows not to register this as a real task.
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        # Grab tenant_id from the kwargs, or fallback to default if missing.
-        tenant_id = kwargs.get("tenant_id", None) or POSTGRES_DEFAULT_SCHEMA
-
-        # Set the context var
-        CURRENT_TENANT_ID_CONTEXTVAR.set(tenant_id)
-
-        # Actually run the task now
-        try:
-            return super().__call__(*args, **kwargs)
-        finally:
-            # Clear or reset after the task runs
-            # so it does not leak into any subsequent tasks on the same worker process
-            CURRENT_TENANT_ID_CONTEXTVAR.set(None)
-
-
-@task_prerun.connect
 def on_task_prerun(
     sender: Any | None = None,
     task_id: str | None = None,
     task: Task | None = None,
     args: tuple[Any, ...] | None = None,
     kwargs: dict[str, Any] | None = None,
-    **other_kwargs: Any,
+    **kwds: Any,
 ) -> None:
     pass
 
@@ -134,9 +107,9 @@ def on_task_postrun(
     # Get tenant_id directly from kwargs- each celery task has a tenant_id kwarg
     if not kwargs:
         logger.error(f"Task {task.name} (ID: {task_id}) is missing kwargs")
-        tenant_id = POSTGRES_DEFAULT_SCHEMA
+        tenant_id = None
     else:
-        tenant_id = cast(str, kwargs.get("tenant_id", POSTGRES_DEFAULT_SCHEMA))
+        tenant_id = kwargs.get("tenant_id")
 
     task_logger.debug(
         f"Task {task.name} (ID: {task_id}) completed with state: {state} "
@@ -224,10 +197,9 @@ def on_celeryd_init(sender: str, conf: Any = None, **kwargs: Any) -> None:
 
 def wait_for_redis(sender: Any, **kwargs: Any) -> None:
     """Waits for redis to become ready subject to a hardcoded timeout.
-    Will raise WorkerShutdown to kill the celery worker if the timeout
-    is reached."""
+    Will raise WorkerShutdown to kill the celery worker if the timeout is reached."""
 
-    r = get_redis_client(tenant_id=POSTGRES_DEFAULT_SCHEMA)
+    r = get_redis_client(tenant_id=None)
 
     WAIT_INTERVAL = 5
     WAIT_LIMIT = 60
@@ -308,12 +280,12 @@ def wait_for_db(sender: Any, **kwargs: Any) -> None:
 
 
 def on_secondary_worker_init(sender: Any, **kwargs: Any) -> None:
-    logger.info(f"Running as a secondary celery worker: pid={os.getpid()}")
+    logger.info("Running as a secondary celery worker.")
 
     # Set up variables for waiting on primary worker
     WAIT_INTERVAL = 5
     WAIT_LIMIT = 60
-    r = get_redis_client(tenant_id=POSTGRES_DEFAULT_SCHEMA)
+    r = get_redis_client(tenant_id=None)
     time_start = time.monotonic()
 
     logger.info("Waiting for primary worker to be ready...")
@@ -342,23 +314,8 @@ def on_secondary_worker_init(sender: Any, **kwargs: Any) -> None:
 def on_worker_ready(sender: Any, **kwargs: Any) -> None:
     task_logger.info("worker_ready signal received.")
 
-    # file based way to do readiness/liveness probes
-    # https://medium.com/ambient-innovation/health-checks-for-celery-in-kubernetes-cf3274a3e106
-    # https://github.com/celery/celery/issues/4079#issuecomment-1270085680
-
-    hostname: str = cast(str, sender.hostname)
-    path = make_probe_path("readiness", hostname)
-    path.touch()
-    logger.info(f"Readiness signal touched at {path}.")
-
 
 def on_worker_shutdown(sender: Any, **kwargs: Any) -> None:
-    HttpxPool.close_all()
-
-    hostname: str = cast(str, sender.hostname)
-    path = make_probe_path("readiness", hostname)
-    path.unlink(missing_ok=True)
-
     if not celery_is_worker_primary(sender):
         return
 
@@ -461,6 +418,7 @@ def set_task_finished_log_level(logLevel: int) -> None:
 
 
 class TenantContextFilter(logging.Filter):
+
     """Logging filter to inject tenant ID into the logger's name."""
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -475,6 +433,24 @@ class TenantContextFilter(logging.Filter):
         else:
             record.name = ""
         return True
+
+
+@task_prerun.connect
+def set_tenant_id(
+    sender: Any | None = None,
+    task_id: str | None = None,
+    task: Task | None = None,
+    args: tuple[Any, ...] | None = None,
+    kwargs: dict[str, Any] | None = None,
+    **other_kwargs: Any,
+) -> None:
+    """Signal handler to set tenant ID in context var before task starts."""
+    tenant_id = (
+        kwargs.get("tenant_id", POSTGRES_DEFAULT_SCHEMA)
+        if kwargs
+        else POSTGRES_DEFAULT_SCHEMA
+    )
+    CURRENT_TENANT_ID_CONTEXTVAR.set(tenant_id)
 
 
 @task_postrun.connect
@@ -498,34 +474,3 @@ def wait_for_vespa_or_shutdown(sender: Any, **kwargs: Any) -> None:
         msg = "Vespa: Readiness probe did not succeed within the timeout. Exiting..."
         logger.error(msg)
         raise WorkerShutdown(msg)
-
-
-# File for validating worker liveness
-class LivenessProbe(bootsteps.StartStopStep):
-    requires = {"celery.worker.components:Timer"}
-
-    def __init__(self, worker: Any, **kwargs: Any) -> None:
-        super().__init__(worker, **kwargs)
-        self.requests: list[Any] = []
-        self.task_tref = None
-        self.path = make_probe_path("liveness", worker.hostname)
-
-    def start(self, worker: Any) -> None:
-        self.task_tref = worker.timer.call_repeatedly(
-            15.0,
-            self.update_liveness_file,
-            (worker,),
-            priority=10,
-        )
-
-    def stop(self, worker: Any) -> None:
-        self.path.unlink(missing_ok=True)
-        if self.task_tref:
-            self.task_tref.cancel()
-
-    def update_liveness_file(self, worker: Any) -> None:
-        self.path.touch()
-
-
-def get_bootsteps() -> list[type]:
-    return [LivenessProbe]

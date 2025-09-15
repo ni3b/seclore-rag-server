@@ -1,24 +1,15 @@
 import React from "react";
 import { MdDragIndicator } from "react-icons/md";
 
-interface DragHandleProps extends React.HTMLAttributes<HTMLDivElement> {
-  isDragging?: boolean;
-  size?: number;
-}
-
-export const DragHandle: React.FC<DragHandleProps> = ({
-  isDragging,
-  size = 16,
-  ...props
-}) => {
+export const DragHandle = (props: any) => {
   return (
     <div
-      className={`flex items-center justify-center ${
-        isDragging ? "cursor-grabbing" : "cursor-grab"
-      }`}
+      className={
+        props.isDragging ? "hover:cursor-grabbing" : "hover:cursor-grab"
+      }
       {...props}
     >
-      <MdDragIndicator size={size} />
+      <MdDragIndicator />
     </div>
   );
 };

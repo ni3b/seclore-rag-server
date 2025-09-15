@@ -4,9 +4,6 @@ This file tests the permissions for creating and editing personas for different 
 - Curators can edit personas that belong exclusively to groups they curate
 - Admins can edit all personas
 """
-
-import os
-
 import pytest
 from requests.exceptions import HTTPError
 
@@ -16,10 +13,6 @@ from tests.integration.common_utils.managers.user import UserManager
 from tests.integration.common_utils.managers.user_group import UserGroupManager
 
 
-@pytest.mark.skipif(
-    os.environ.get("ENABLE_PAID_ENTERPRISE_EDITION_FEATURES", "").lower() != "true",
-    reason="Curator and user group tests are enterprise only",
-)
 def test_persona_permissions(reset: None) -> None:
     # Creating an admin user (first user created is automatically an admin)
     admin_user: DATestUser = UserManager.create(name="admin_user")
@@ -65,7 +58,6 @@ def test_persona_permissions(reset: None) -> None:
         description="A persona created by basic user",
         is_public=False,
         groups=[],
-        users=[admin_user.id],
         user_performing_action=basic_user,
     )
     PersonaManager.verify(basic_user_persona, user_performing_action=basic_user)
@@ -147,14 +139,9 @@ def test_persona_permissions(reset: None) -> None:
 
     """Test admin permissions"""
     # Admin can edit any persona
-
-    # the persona was shared with the admin user on creation
-    # this edit call will simulate having the same user in the list twice.
-    # The server side should dedupe and handle this correctly (prior bug)
     PersonaManager.edit(
         persona=basic_user_persona,
-        description="Updated by admin 2",
-        users=[admin_user.id, admin_user.id],
+        description="Updated by admin",
         user_performing_action=admin_user,
     )
     PersonaManager.verify(basic_user_persona, user_performing_action=admin_user)

@@ -32,10 +32,10 @@ Slack channel the user is referring to.
 {ANSWERABLE_PAT.upper()} False
 ```
 
-{QUESTION_PAT.upper()} Onyx is unreachable.
+{QUESTION_PAT.upper()} Seclore is unreachable.
 ```
-{THOUGHT_PAT.upper()} The system searches documents related to Onyx being unreachable. \
-Assuming the documents from search contains situations where Onyx is not reachable and \
+{THOUGHT_PAT.upper()} The system searches documents related to Seclore being unreachable. \
+Assuming the documents from search contains situations where Seclore is not reachable and \
 contains a fix, the query may be answerable.
 {ANSWERABLE_PAT.upper()} True
 ```

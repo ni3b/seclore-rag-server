@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { User } from "./types";
-import { buildUrl, UrlBuilder } from "./utilsSS";
+import { buildUrl } from "./utilsSS";
 import { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import { AuthType, NEXT_PUBLIC_CLOUD_ENABLED } from "./constants";
 
@@ -25,7 +25,7 @@ export const getAuthTypeMetadataSS = async (): Promise<AuthTypeMetadata> => {
 
   let authType: AuthType;
 
-  // Override fastapi users auth so we can use both
+  // Override fasapi users auth so we can use both
   if (NEXT_PUBLIC_CLOUD_ENABLED) {
     authType = "cloud";
   } else {
@@ -33,7 +33,7 @@ export const getAuthTypeMetadataSS = async (): Promise<AuthTypeMetadata> => {
   }
 
   // for SAML / OIDC, we auto-redirect the user to the IdP when the user visits
-  // Onyx in an un-authenticated state
+  // Seclore in an un-authenticated state
   if (authType === "oidc" || authType === "saml") {
     return {
       authType,
@@ -55,12 +55,14 @@ export const getAuthDisabledSS = async (): Promise<boolean> => {
 };
 
 const getOIDCAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
-  const url = UrlBuilder.fromInternalUrl("/auth/oidc/authorize");
-  if (nextUrl) {
-    url.addParam("next", nextUrl);
-  }
-
-  const res = await fetch(url.toString());
+  const url = buildUrl(
+    `/auth/oidc/authorize${
+      nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ""
+    }`
+  );
+  
+  const res = await fetch(url);
+  
   if (!res.ok) {
     throw new Error("Failed to fetch data");
   }
@@ -70,16 +72,18 @@ const getOIDCAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
 };
 
 const getGoogleOAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
-  const url = UrlBuilder.fromInternalUrl("/auth/oauth/authorize");
-  if (nextUrl) {
-    url.addParam("next", nextUrl);
-  }
-
-  const res = await fetch(url.toString(), {
-    headers: {
-      cookie: processCookies(await cookies()),
-    },
-  });
+  const res = await fetch(
+    buildUrl(
+      `/auth/oauth/authorize${
+        nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ""
+      }`
+    ),
+    {
+      headers: {
+        cookie: processCookies(await cookies()),
+      },
+    }
+  );
   if (!res.ok) {
     throw new Error("Failed to fetch data");
   }
@@ -89,12 +93,13 @@ const getGoogleOAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
 };
 
 const getSAMLAuthUrlSS = async (nextUrl: string | null): Promise<string> => {
-  const url = UrlBuilder.fromInternalUrl("/auth/saml/authorize");
-  if (nextUrl) {
-    url.addParam("next", nextUrl);
-  }
-
-  const res = await fetch(url.toString());
+  const res = await fetch(
+    buildUrl(
+      `/auth/saml/authorize${
+        nextUrl ? `?next=${encodeURIComponent(nextUrl)}` : ""
+      }`
+    )
+  );
   if (!res.ok) {
     throw new Error("Failed to fetch data");
   }
@@ -171,7 +176,6 @@ export const getCurrentUserSS = async (): Promise<User | null> => {
           .join("; "),
       },
     });
-
     if (!response.ok) {
       return null;
     }

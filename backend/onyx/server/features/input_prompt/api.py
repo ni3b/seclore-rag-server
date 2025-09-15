@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
 from onyx.auth.users import current_user
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.input_prompt import disable_input_prompt_for_user
 from onyx.db.input_prompt import fetch_input_prompt_by_id
 from onyx.db.input_prompt import fetch_input_prompts_by_user
@@ -13,6 +13,8 @@ from onyx.db.input_prompt import insert_input_prompt
 from onyx.db.input_prompt import remove_input_prompt
 from onyx.db.input_prompt import remove_public_input_prompt
 from onyx.db.input_prompt import update_input_prompt
+from onyx.db.input_prompt import fetch_input_prompts_for_user_with_shared_assistants
+
 from onyx.db.models import InputPrompt__User
 from onyx.db.models import User
 from onyx.server.features.input_prompt.models import CreateInputPromptRequest
@@ -32,12 +34,25 @@ def list_input_prompts(
     include_public: bool = True,
     db_session: Session = Depends(get_session),
 ) -> list[InputPromptSnapshot]:
-    user_prompts = fetch_input_prompts_by_user(
-        user_id=user.id if user is not None else None,
-        db_session=db_session,
-        include_public=include_public,
-    )
-    return [InputPromptSnapshot.from_model(prompt) for prompt in user_prompts]
+    """Fetch user's own input prompts plus input prompts from assistants shared with the user"""
+    if user is None:
+        # If no user, return empty list
+        return []
+    
+    # Use the database function to get prompts
+    input_prompts = fetch_input_prompts_for_user_with_shared_assistants(user, db_session)
+    
+    # Filter out duplicates based on prompt ID
+    seen_prompt_ids = set()
+    unique_prompts = []
+    
+    for prompt in input_prompts:
+        if prompt.id not in seen_prompt_ids:
+            seen_prompt_ids.add(prompt.id)
+            unique_prompts.append(prompt)
+    
+    # Convert to snapshots
+    return [InputPromptSnapshot.from_model(input_prompt=prompt) for prompt in unique_prompts]
 
 
 @basic_router.get("/{input_prompt_id}")
@@ -61,20 +76,23 @@ def create_input_prompt(
     user: User | None = Depends(current_user),
     db_session: Session = Depends(get_session),
 ) -> InputPromptSnapshot:
+    logger.info(f"create_input_prompt_request: {create_input_prompt_request}")  
     input_prompt = insert_input_prompt(
         prompt=create_input_prompt_request.prompt,
         content=create_input_prompt_request.content,
         is_public=False,
+        assistant_id=create_input_prompt_request.assistant_id,
         user=user,
         db_session=db_session,
     )
-
+    logger.info(f"before commit input_prompt: {input_prompt}")
     if user is not None:
         input_prompt_user = InputPrompt__User(
             input_prompt_id=input_prompt.id, user_id=user.id
         )
         db_session.add(input_prompt_user)
         db_session.commit()
+    logger.info(f"after commit input_prompt_user: {input_prompt_user}")
 
     return InputPromptSnapshot.from_model(input_prompt)
 
@@ -93,6 +111,7 @@ def patch_input_prompt(
             prompt=update_input_prompt_request.prompt,
             content=update_input_prompt_request.content,
             active=update_input_prompt_request.active,
+            assistant_id=update_input_prompt_request.assistant_id,
             db_session=db_session,
         )
     except ValueError as e:

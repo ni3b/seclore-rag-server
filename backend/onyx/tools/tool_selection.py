@@ -68,6 +68,7 @@ def select_single_tool_for_non_tool_calling_llm(
         # If that fails, try to match the tool name
         for tool, args in tools_and_args:
             if tool.name.lower() in output.lower():
+                logger.debug(f"tool and args {tool} {args}")
                 return tool, args
 
         # If that fails, return the first tool

@@ -45,9 +45,7 @@ def is_text_character(codepoint: int) -> bool:
 
 
 def replace_invalid_doc_id_characters(text: str) -> str:
-    """Replaces invalid document ID characters in text.
-    NOTE: this must be called at the start of every vespa-related operation or else we
-    risk discrepancies -> silent failures on deletion/update/insertion."""
+    """Replaces invalid document ID characters in text."""
     # There may be a more complete set of replacements that need to be made but Vespa docs are unclear
     # and users only seem to be running into this error with single quotes
     return text.replace("'", "_")
@@ -57,7 +55,7 @@ def remove_invalid_unicode_chars(text: str) -> str:
     """Vespa does not take in unicode chars that aren't valid for XML.
     This removes them."""
     _illegal_xml_chars_RE: re.Pattern = re.compile(
-        "[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufdd0-\ufdef\ufffe\uffff]"
+        "[\x00-\x08\x0b\x0c\x0e-\x1F\uD800-\uDFFF\uFFFE\uFFFF]"
     )
     return _illegal_xml_chars_RE.sub("", text)
 
@@ -69,11 +67,9 @@ def get_vespa_http_client(no_timeout: bool = False, http2: bool = True) -> httpx
     """
 
     return httpx.Client(
-        cert=(
-            cast(tuple[str, str], (VESPA_CLOUD_CERT_PATH, VESPA_CLOUD_KEY_PATH))
-            if MANAGED_VESPA
-            else None
-        ),
+        cert=cast(tuple[str, str], (VESPA_CLOUD_CERT_PATH, VESPA_CLOUD_KEY_PATH))
+        if MANAGED_VESPA
+        else None,
         verify=False if not MANAGED_VESPA else True,
         timeout=None if no_timeout else VESPA_REQUEST_TIMEOUT,
         http2=http2,

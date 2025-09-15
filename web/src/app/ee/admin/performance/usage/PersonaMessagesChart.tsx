@@ -6,7 +6,7 @@ import {
   usePersonaUniqueUsers,
 } from "../lib";
 import { useAssistants } from "@/components/context/AssistantsContext";
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
 import Text from "@/components/ui/text";
 import Title from "@/components/ui/title";
 import CardSection from "@/components/admin/CardSection";
@@ -73,12 +73,9 @@ export function PersonaMessagesChart({
           highlightedIndex >= 0 &&
           highlightedIndex < filteredPersonaList.length
         ) {
-          const filteredPersona = filteredPersonaList[highlightedIndex];
-          if (filteredPersona !== undefined) {
-            setSelectedPersonaId(filteredPersona.id);
-            setSearchQuery("");
-            setHighlightedIndex(-1);
-          }
+          setSelectedPersonaId(filteredPersonaList[highlightedIndex].id);
+          setSearchQuery("");
+          setHighlightedIndex(-1);
         }
         break;
       case "Escape":
@@ -150,13 +147,13 @@ export function PersonaMessagesChart({
     );
   } else if (selectedPersonaId === undefined) {
     content = (
-      <div className="h-80 text-text-500 flex flex-col">
+      <div className="h-80 text-gray-500 flex flex-col">
         <p className="m-auto">Select an assistant to view analytics</p>
       </div>
     );
   } else if (!personaMessagesData?.length) {
     content = (
-      <div className="h-80 text-text-500 flex flex-col">
+      <div className="h-80 text-gray-500 flex flex-col">
         <p className="m-auto">
           No data found for selected assistant in the specified time range
         </p>

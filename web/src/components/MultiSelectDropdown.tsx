@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Label, ManualErrorMessage } from "@/components/Field";
+import { Label, ManualErrorMessage } from "./admin/connectors/Field";
 import CreatableSelect from "react-select/creatable";
 import Select from "react-select";
 import { ErrorMessage } from "formik";
@@ -69,7 +69,7 @@ const MultiSelectDropdown = ({
   };
 
   return (
-    <div className="flex flex-col text-white space-y-4 mb-4">
+    <div className="flex flex-col space-y-4 mb-4">
       <Label>{label}</Label>
       {creatable ? (
         <CreatableSelect

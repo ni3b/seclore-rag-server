@@ -13,7 +13,6 @@ from ee.onyx.server.enterprise_settings.models import EnterpriseSettings
 from onyx.configs.constants import FileOrigin
 from onyx.configs.constants import KV_CUSTOM_ANALYTICS_SCRIPT_KEY
 from onyx.configs.constants import KV_ENTERPRISE_SETTINGS_KEY
-from onyx.configs.constants import ONYX_DEFAULT_APPLICATION_NAME
 from onyx.file_store.file_store import get_default_file_store
 from onyx.key_value_store.factory import get_kv_store
 from onyx.key_value_store.interface import KvKeyNotFoundError
@@ -22,18 +21,8 @@ from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
 
-_LOGO_FILENAME = "__logo__"
-_LOGOTYPE_FILENAME = "__logotype__"
-
 
 def load_settings() -> EnterpriseSettings:
-    """Loads settings data directly from DB. This should be used primarily
-    for checking what is actually in the DB, aka for editing and saving back settings.
-
-    Runtime settings actually used by the application should be checked with
-    load_runtime_settings as defaults may be applied at runtime.
-    """
-
     dynamic_config_store = get_kv_store()
     try:
         settings = EnterpriseSettings(
@@ -47,22 +36,7 @@ def load_settings() -> EnterpriseSettings:
 
 
 def store_settings(settings: EnterpriseSettings) -> None:
-    """Stores settings directly to the kv store / db."""
-
     get_kv_store().store(KV_ENTERPRISE_SETTINGS_KEY, settings.model_dump())
-
-
-def load_runtime_settings() -> EnterpriseSettings:
-    """Loads settings from DB and applies any defaults or transformations for use
-    at runtime.
-
-    Should not be stored back to the DB.
-    """
-    enterprise_settings = load_settings()
-    if not enterprise_settings.application_name:
-        enterprise_settings.application_name = ONYX_DEFAULT_APPLICATION_NAME
-
-    return enterprise_settings
 
 
 _CUSTOM_ANALYTICS_SECRET_KEY = os.environ.get("CUSTOM_ANALYTICS_SECRET_KEY")
@@ -86,9 +60,13 @@ def store_analytics_script(analytics_script_upload: AnalyticsScriptUpload) -> No
     get_kv_store().store(KV_CUSTOM_ANALYTICS_SCRIPT_KEY, analytics_script_upload.script)
 
 
+_LOGO_FILENAME = "__logo__"
+_LOGOTYPE_FILENAME = "__logotype__"
+
+
 def is_valid_file_type(filename: str) -> bool:
-    valid_extensions = (".png", ".jpg", ".jpeg")
-    return filename.endswith(valid_extensions)
+    valid_extensions = (".png", ".jpg", ".jpeg", ".webp")
+    return filename.lower().endswith(valid_extensions)
 
 
 def guess_file_type(filename: str) -> str:
@@ -96,6 +74,8 @@ def guess_file_type(filename: str) -> str:
         return "image/png"
     elif filename.lower().endswith(".jpg") or filename.lower().endswith(".jpeg"):
         return "image/jpeg"
+    elif filename.lower().endswith(".webp"):
+        return "image/webp"
     return "application/octet-stream"
 
 
@@ -108,7 +88,7 @@ def upload_logo(
         logger.notice(f"Uploading logo from local path {file}")
         if not os.path.isfile(file) or not is_valid_file_type(file):
             logger.error(
-                "Invalid file type- only .png, .jpg, and .jpeg files are allowed"
+                "Invalid file type- only .png, .jpg, .jpeg and .webp files are allowed"
             )
             return False
 
@@ -123,7 +103,7 @@ def upload_logo(
         if not file.filename or not is_valid_file_type(file.filename):
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file type- only .png, .jpg, and .jpeg files are allowed",
+                detail="Invalid file type- only .png, .jpg, .jpeg and .webp files are allowed",
             )
         content = file.file
         display_name = file.filename
@@ -131,18 +111,10 @@ def upload_logo(
 
     file_store = get_default_file_store(db_session)
     file_store.save_file(
+        file_name=_LOGOTYPE_FILENAME if is_logotype else _LOGO_FILENAME,
         content=content,
         display_name=display_name,
         file_origin=FileOrigin.OTHER,
         file_type=file_type,
-        file_id=_LOGOTYPE_FILENAME if is_logotype else _LOGO_FILENAME,
     )
     return True
-
-
-def get_logo_filename() -> str:
-    return _LOGO_FILENAME
-
-
-def get_logotype_filename() -> str:
-    return _LOGOTYPE_FILENAME

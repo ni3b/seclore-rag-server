@@ -24,7 +24,7 @@ import { humanReadableFormat, humanReadableFormatWithTime } from "@/lib/time";
 import { ErrorCallout } from "@/components/ErrorCallout";
 import { PageSelector } from "@/components/PageSelector";
 import { Separator } from "@/components/ui/separator";
-import { DateRangePickerValue } from "../../../../../components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "../DateRangeSelector";
 import {
   Popover,
   PopoverContent,

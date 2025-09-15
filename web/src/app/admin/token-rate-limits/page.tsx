@@ -1,6 +1,7 @@
 "use client";
 
 import { AdminPageTitle } from "@/components/admin/Title";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import Text from "@/components/ui/text";
 import { useState } from "react";
@@ -17,7 +18,6 @@ import { usePopup } from "@/components/admin/connectors/Popup";
 import { CreateRateLimitModal } from "./CreateRateLimitModal";
 import { usePaidEnterpriseFeaturesEnabled } from "@/components/settings/usePaidEnterpriseFeaturesEnabled";
 import { ShieldIcon } from "@/components/icons/icons";
-import CreateButton from "@/components/ui/createButton";
 
 const BASE_URL = "/api/admin/token-rate-limits";
 const GLOBAL_TOKEN_FETCH_URL = `${BASE_URL}/global`;
@@ -113,8 +113,8 @@ function Main() {
       <ul className="list-disc mt-2 ml-4 mb-2">
         <li>
           <Text>
-            Set a global rate limit to control your team&apos;s overall token
-            spend.
+            Set a global rate limit to control your organization&apos;s overall
+            token spend.
           </Text>
         </li>
         {isPaidEnterpriseFeaturesEnabled && (
@@ -138,13 +138,17 @@ function Main() {
         </li>
       </ul>
 
-      <CreateButton
+      <Button
+        variant="navigate"
+        size="sm"
+        className="my-4"
         onClick={() => setModalIsOpen(true)}
-        text="Create a Token Rate Limit"
-      />
+      >
+        Create a Token Rate Limit
+      </Button>
+
       {isPaidEnterpriseFeaturesEnabled && (
         <Tabs
-          className="mt-2"
           value={tabIndex.toString()}
           onValueChange={(val) => setTabIndex(parseInt(val))}
         >

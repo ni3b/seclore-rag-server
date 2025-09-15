@@ -3,7 +3,8 @@ from mistune import Renderer  # type: ignore
 
 
 def format_slack_message(message: str | None) -> str:
-    return Markdown(renderer=SlackRenderer()).render(message)
+    renderer = Markdown(renderer=SlackRenderer())
+    return renderer.render(message)
 
 
 class SlackRenderer(Renderer):

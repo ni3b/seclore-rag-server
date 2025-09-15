@@ -1,2 +1,6 @@
 .env*
 secrets.yaml
+
+
+/docker_compose/seclore/dev/logs*/api_server/log/
+/docker_compose/seclore/dev/logs*/background/log/

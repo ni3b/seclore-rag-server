@@ -11,6 +11,16 @@ export default function ExceptionTraceModal({
 }) {
   const [copyClicked, setCopyClicked] = useState(false);
 
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(exceptionTrace);
+      setCopyClicked(true);
+      setTimeout(() => setCopyClicked(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy: ", err);
+    }
+  };
+
   return (
     <Modal
       width="w-4/6"
@@ -22,18 +32,14 @@ export default function ExceptionTraceModal({
         <div className="mb-6">
           {!copyClicked ? (
             <div
-              onClick={() => {
-                navigator.clipboard.writeText(exceptionTrace!);
-                setCopyClicked(true);
-                setTimeout(() => setCopyClicked(false), 2000);
-              }}
-              className="flex w-fit cursor-pointer hover:bg-accent-background p-2 border-border border rounded"
+              onClick={copyToClipboard}
+              className="flex w-fit cursor-pointer hover:bg-hover-light p-2 border-border border rounded"
             >
               Copy full trace
               <CopyIcon className="ml-2 my-auto" />
             </div>
           ) : (
-            <div className="flex w-fit hover:bg-accent-background p-2 border-border border rounded cursor-default">
+            <div className="flex w-fit hover:bg-hover-light p-2 border-border border rounded cursor-default">
               Copied to clipboard
               <CheckmarkIcon
                 className="my-auto ml-2 flex flex-shrink-0 text-success"

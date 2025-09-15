@@ -1,11 +1,14 @@
-import { FullPersona } from "@/app/admin/assistants/interfaces";
+import { Persona } from "@/app/admin/assistants/interfaces";
 import { CCPairBasicInfo, DocumentSet, User } from "../types";
 import { getCurrentUserSS } from "../userSS";
 import { fetchSS } from "../utilsSS";
-import { LLMProviderView } from "@/app/admin/configuration/llm/interfaces";
+import {
+  FullLLMProvider,
+  getProviderIcon,
+} from "@/app/admin/configuration/llm/interfaces";
 import { ToolSnapshot } from "../tools/interfaces";
 import { fetchToolsSS } from "../tools/fetchTools";
-import { getProviderIcon } from "@/app/admin/configuration/llm/utils";
+
 export async function fetchAssistantEditorInfoSS(
   personaId?: number | string
 ): Promise<
@@ -13,9 +16,9 @@ export async function fetchAssistantEditorInfoSS(
       {
         ccPairs: CCPairBasicInfo[];
         documentSets: DocumentSet[];
-        llmProviders: LLMProviderView[];
+        llmProviders: FullLLMProvider[];
         user: User | null;
-        existingPersona: FullPersona | null;
+        existingPersona: Persona | null;
         tools: ToolSnapshot[];
       },
       null,
@@ -80,7 +83,7 @@ export async function fetchAssistantEditorInfoSS(
     ];
   }
 
-  const llmProviders = (await llmProvidersResponse.json()) as LLMProviderView[];
+  const llmProviders = (await llmProvidersResponse.json()) as FullLLMProvider[];
 
   if (personaId && personaResponse && !personaResponse.ok) {
     return [null, `Failed to fetch Persona - ${await personaResponse.text()}`];
@@ -91,7 +94,7 @@ export async function fetchAssistantEditorInfoSS(
   }
 
   const existingPersona = personaResponse
-    ? ((await personaResponse.json()) as FullPersona)
+    ? ((await personaResponse.json()) as Persona)
     : null;
 
   let error: string | null = null;

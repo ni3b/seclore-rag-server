@@ -9,7 +9,7 @@ import Text from "@/components/ui/text";
 import Title from "@/components/ui/title";
 import { Button } from "@/components/ui/button";
 import { ThreeDotsLoader } from "@/components/Loading";
-import { LLMProviderView, WellKnownLLMProviderDescriptor } from "./interfaces";
+import { FullLLMProvider, WellKnownLLMProviderDescriptor } from "./interfaces";
 import { PopupSpec, usePopup } from "@/components/admin/connectors/Popup";
 import { LLMProviderUpdateForm } from "./LLMProviderUpdateForm";
 import { LLM_PROVIDERS_ADMIN_URL } from "./constants";
@@ -25,7 +25,7 @@ function LLMProviderUpdateModal({
 }: {
   llmProviderDescriptor: WellKnownLLMProviderDescriptor | null;
   onClose: () => void;
-  existingLlmProvider?: LLMProviderView;
+  existingLlmProvider?: FullLLMProvider;
   shouldMarkAsDefault?: boolean;
   setPopup?: (popup: PopupSpec) => void;
 }) {
@@ -34,13 +34,8 @@ function LLMProviderUpdateModal({
     llmProviderDescriptor?.name ||
     existingLlmProvider?.name ||
     "Custom LLM Provider";
-
   return (
-    <Modal
-      title={`Setup ${providerName}`}
-      onOutsideClick={() => onClose()}
-      hideOverflow={true}
-    >
+    <Modal title={`Setup ${providerName}`} onOutsideClick={() => onClose()}>
       <div className="max-h-[70vh] overflow-y-auto px-4">
         {llmProviderDescriptor ? (
           <LLMProviderUpdateForm
@@ -78,10 +73,11 @@ function DefaultLLMProviderDisplay({
   return (
     <div>
       {popup}
-      <div className="border border-border p-3 dark:bg-neutral-800 dark:border-neutral-700 rounded w-96 flex shadow-md">
+      <div className="border border-border p-3 rounded w-96 flex shadow-md">
         <div className="my-auto">
-          <div className="font-bold">{providerName}</div>
+          <div className="font-bold">{providerName} </div>
         </div>
+
         <div className="ml-auto">
           <Button variant="navigate" onClick={() => setFormIsVisible(true)}>
             Set up
@@ -103,7 +99,7 @@ function DefaultLLMProviderDisplay({
 function AddCustomLLMProvider({
   existingLlmProviders,
 }: {
-  existingLlmProviders: LLMProviderView[];
+  existingLlmProviders: FullLLMProvider[];
 }) {
   const [formIsVisible, setFormIsVisible] = useState(false);
 
@@ -134,7 +130,7 @@ export function LLMConfiguration() {
   const { data: llmProviderDescriptors } = useSWR<
     WellKnownLLMProviderDescriptor[]
   >("/api/admin/llm/built-in/options", errorHandlingFetcher);
-  const { data: existingLlmProviders } = useSWR<LLMProviderView[]>(
+  const { data: existingLlmProviders } = useSWR<FullLLMProvider[]>(
     LLM_PROVIDERS_ADMIN_URL,
     errorHandlingFetcher
   );
@@ -162,7 +158,7 @@ export function LLMConfiguration() {
         </>
       ) : (
         <Callout type="warning" title="No LLM providers configured yet">
-          Please set one up below in order to start using Onyx!
+          Please set one up below in order to start using Seclore!
         </Callout>
       )}
 
@@ -173,13 +169,15 @@ export function LLMConfiguration() {
       </Text>
 
       <div className="gap-y-4 flex flex-col">
-        {llmProviderDescriptors.map((llmProviderDescriptor) => (
-          <DefaultLLMProviderDisplay
-            key={llmProviderDescriptor.name}
-            llmProviderDescriptor={llmProviderDescriptor}
-            shouldMarkAsDefault={existingLlmProviders.length === 0}
-          />
-        ))}
+        {llmProviderDescriptors.map((llmProviderDescriptor) => {
+          return (
+            <DefaultLLMProviderDisplay
+              key={llmProviderDescriptor.name}
+              llmProviderDescriptor={llmProviderDescriptor}
+              shouldMarkAsDefault={existingLlmProviders.length === 0}
+            />
+          );
+        })}
       </div>
 
       <div className="mt-4">

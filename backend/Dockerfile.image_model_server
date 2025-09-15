@@ -1,0 +1,71 @@
+FROM python:3.11.7-slim-bookworm
+
+LABEL com.danswer.maintainer="founders@onyx.app"
+LABEL com.danswer.description="This image is for the Seclore Image Model Server which runs all of the \
+image processing models for Seclore including OCR, vision descriptions, and image embeddings. \
+This container and all the code is MIT Licensed and free for all to use."
+
+# Default ONYX_VERSION, typically overriden during builds by GitHub Actions.
+ARG ONYX_VERSION=1.6.0.0
+ENV ONYX_VERSION=${ONYX_VERSION} \
+    DANSWER_RUNNING_IN_DOCKER="true"
+
+RUN echo "ONYX_VERSION: ${ONYX_VERSION}"
+
+# Install system dependencies for image processing
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libtesseract-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libgcc-s1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY ./requirements/image_model_server.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade \
+        --retries 5 \
+        --timeout 30 \
+        -r /tmp/requirements.txt
+
+# Clean up to reduce image size
+RUN apt-get remove -y --allow-remove-essential perl-base && \ 
+    apt-get autoremove -y
+
+# Pre-download image processing models
+RUN python -c "\
+# Download CLIP models\n\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('clip-ViT-B-32'); \
+from transformers import CLIPModel, CLIPProcessor; \
+CLIPModel.from_pretrained('openai/clip-vit-base-patch32'); \
+CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32'); \
+print('Image models pre-downloaded successfully')\
+"
+
+# In case the user has volumes mounted to /root/.cache/huggingface that they've downloaded while
+# running Seclore, don't overwrite it with the built in cache folder
+RUN mv /root/.cache/huggingface /root/.cache/temp_huggingface
+
+WORKDIR /app
+
+# Utils used by image model server
+COPY ./onyx/utils/logger.py /app/onyx/utils/logger.py
+
+# Place to fetch version information
+COPY ./onyx/__init__.py /app/onyx/__init__.py
+
+# Shared between Seclore Backend and Image Model Server
+COPY ./shared_configs /app/shared_configs
+
+# Image Model Server main code
+COPY ./image_model_server /app/image_model_server
+
+ENV PYTHONPATH=/app
+
+CMD ["uvicorn", "image_model_server.main:app", "--host", "0.0.0.0", "--port", "9001"] 

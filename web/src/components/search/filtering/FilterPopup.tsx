@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Popover,
   PopoverTrigger,
@@ -21,6 +21,17 @@ import { Button } from "@/components/ui/button";
 import { SourceIcon } from "@/components/SourceIcon";
 import { SelectableDropdown, TagFilter } from "./TagFilter";
 import { Input } from "@/components/ui/input";
+import { Persona } from "@/app/admin/assistants/interfaces";
+import { getSourcesForPersona, getDocumentSetsForPersona } from "@/lib/sources";
+import { ToolSnapshot } from "@/lib/tools/interfaces";
+import { FiSettings } from "react-icons/fi";
+import { FiInfo } from "react-icons/fi";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface FilterPopupProps {
   filterManager: FilterManager;
@@ -28,9 +39,15 @@ interface FilterPopupProps {
   availableSources: SourceMetadata[];
   availableDocumentSets: DocumentSet[];
   availableTags: Tag[];
+  currentAssistant: Persona;
+  // Tool selection props
+  assistantTools?: ToolSnapshot[];
+  selectedToolIds: number[];
+  onCustomToolSelectionChange: (ids: number[]) => void;
 }
 
 export enum FilterCategories {
+  tools = "tools",
   date = "date",
   sources = "sources",
   documentSets = "documentSets",
@@ -43,23 +60,58 @@ export function FilterPopup({
   availableTags,
   filterManager,
   trigger,
+  currentAssistant,
+  assistantTools,
+  selectedToolIds,
+  onCustomToolSelectionChange,
 }: FilterPopupProps) {
   const [selectedFilter, setSelectedFilter] = useState<FilterCategories>(
-    FilterCategories.date
+    FilterCategories.tools
   );
   const [currentDate, setCurrentDate] = useState(new Date());
   const [documentSetSearch, setDocumentSetSearch] = useState("");
   const [filteredDocumentSets, setFilteredDocumentSets] = useState<
     DocumentSet[]
-  >(availableDocumentSets);
+  >([]);
+
+  // Filter sources based on the current assistant's document sets
+  const assistantSources = getSourcesForPersona(currentAssistant);
+  const filteredAvailableSources = availableSources.filter((source) =>
+    assistantSources.includes(source.internalName)
+  );
+
+  // Filter document sets based on the current assistant's document sets
+  const assistantDocumentSets = useMemo(() => 
+    getDocumentSetsForPersona(currentAssistant), 
+    [currentAssistant]
+  );
+  const filteredAvailableDocumentSets = useMemo(() => 
+    availableDocumentSets.filter((docSet) =>
+      assistantDocumentSets.some(assistantDocSet => assistantDocSet.id === docSet.id)
+    ), 
+    [availableDocumentSets, assistantDocumentSets]
+  );
+    
+  // Get available custom tools
+  const availableTools = assistantTools || [];
+  const customTools = availableTools.filter(tool => tool && tool.definition); // Custom tools have definition
+
+  // Handle tool selection
+  const handleToolToggle = (toolId: number) => {
+    const currentSelectedToolIds = selectedToolIds || [];
+    const newSelectedToolIds = currentSelectedToolIds.includes(toolId)
+      ? currentSelectedToolIds.filter(id => id !== toolId)
+      : [...currentSelectedToolIds, toolId];
+    onCustomToolSelectionChange(newSelectedToolIds);
+  };
 
   useEffect(() => {
     const lowercasedFilter = documentSetSearch.toLowerCase();
-    const filtered = availableDocumentSets.filter((docSet) =>
+    const filtered = filteredAvailableDocumentSets.filter((docSet) =>
       docSet.name.toLowerCase().includes(lowercasedFilter)
     );
     setFilteredDocumentSets(filtered);
-  }, [documentSetSearch, availableDocumentSets]);
+  }, [documentSetSearch, filteredAvailableDocumentSets]);
 
   const FilterOption = ({
     category,
@@ -73,8 +125,8 @@ export function FilterPopup({
     <li
       className={`px-3 py-2 flex items-center gap-x-2 cursor-pointer transition-colors duration-200 ${
         selectedFilter === category
-          ? "bg-background-100 text-text-900"
-          : "text-text-600 hover:bg-background-50"
+          ? "bg-gray-100 text-gray-900"
+          : "text-gray-600 hover:bg-gray-50"
       }`}
       onMouseDown={() => {
         setSelectedFilter(category);
@@ -124,7 +176,7 @@ export function FilterPopup({
                 )
               )
             }
-            className="text-text-600 hover:text-text-800"
+            className="text-gray-600 hover:text-gray-800"
           >
             <FiChevronLeft size={20} />
           </button>
@@ -144,14 +196,14 @@ export function FilterPopup({
                 )
               )
             }
-            className="text-text-600 hover:text-text-800"
+            className="text-gray-600 hover:text-gray-800"
           >
             <FiChevronRight size={20} />
           </button>
         </div>
         <div className="grid grid-cols-7 gap-1 text-center mb-2">
           {days.map((day) => (
-            <div key={day} className="text-xs font-medium text-text-400">
+            <div key={day} className="text-xs font-medium text-gray-400">
               {day}
             </div>
           ))}
@@ -173,12 +225,12 @@ export function FilterPopup({
               <button
                 key={index + 1}
                 className={`w-8 h-8 text-sm rounded-full flex items-center justify-center
-                  ${isInRange ? "bg-blue-100" : "hover:bg-background-100"}
+                  ${isInRange ? "bg-blue-100" : "hover:bg-gray-100"}
                   ${isStart || isEnd ? "bg-blue-500 text-white" : ""}
                   ${
                     isInRange && !isStart && !isEnd
                       ? "text-blue-600"
-                      : "text-text-700"
+                      : "text-gray-700"
                   }
                 `}
                 onClick={() => {
@@ -211,10 +263,10 @@ export function FilterPopup({
   };
 
   const toggleAllSources = () => {
-    if (filterManager.selectedSources.length === availableSources.length) {
+    if (filterManager.selectedSources.length === filteredAvailableSources.length) {
       filterManager.setSelectedSources([]);
     } else {
-      filterManager.setSelectedSources([...availableSources]);
+      filterManager.setSelectedSources([...filteredAvailableSources]);
     }
   };
 
@@ -239,13 +291,13 @@ export function FilterPopup({
   };
 
   const isDocumentSetSelected = (docSet: DocumentSet) =>
-    filterManager.selectedDocumentSets.includes(docSet.name);
+    filterManager.selectedDocumentSets.includes(docSet.id.toString());
 
   const toggleDocumentSet = (docSet: DocumentSet) => {
     filterManager.setSelectedDocumentSets((prev) =>
-      prev.includes(docSet.name)
-        ? prev.filter((id) => id !== docSet.name)
-        : [...prev, docSet.name]
+      prev.includes(docSet.id.toString())
+        ? prev.filter((id) => id !== docSet.id.toString())
+        : [...prev, docSet.id.toString()]
     );
   };
 
@@ -259,48 +311,104 @@ export function FilterPopup({
         align="start"
       >
         <div className="flex h-[325px]">
-          <div className="w-1/3 border-r border-background-200 p-2">
+          <div className="w-1/3 border-r border-gray-200 p-2">
             <ul className="space-y-1">
+              <FilterOption
+                category={FilterCategories.tools}
+                icon={<FiSettings className="w-4 h-4" />}
+                label="Tools"
+              />
               <FilterOption
                 category={FilterCategories.date}
                 icon={<FiCalendar className="w-4 h-4" />}
                 label="Date"
               />
-              {availableSources.length > 0 && (
-                <FilterOption
-                  category={FilterCategories.sources}
-                  icon={<FiDatabase className="w-4 h-4" />}
-                  label="Sources"
-                />
-              )}
-              {availableDocumentSets.length > 0 && (
-                <FilterOption
-                  category={FilterCategories.documentSets}
-                  icon={<FiBook className="w-4 h-4" />}
-                  label="Sets"
-                />
-              )}
-              {availableTags.length > 0 && (
+              <FilterOption
+                category={FilterCategories.sources}
+                icon={<FiDatabase className="w-4 h-4" />}
+                label="Sources"
+              />
+              <FilterOption
+                category={FilterCategories.documentSets}
+                icon={<FiBook className="w-4 h-4" />}
+                label="Sets"
+              />
+              
+              {/* ticket/ATM-1062: removing tag filter section in current system it is not used */}
+              {/* {availableTags.length > 0 && (
                 <FilterOption
                   category={FilterCategories.tags}
                   icon={<FiTag className="w-4 h-4" />}
                   label="Tags"
                 />
-              )}
+              )} */}
             </ul>
           </div>
           <div className="w-2/3 overflow-y-auto">
+            {selectedFilter === FilterCategories.tools && (
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold">Custom Tools</h3>
+                  <div className="text-xs text-text-dark">
+                    {selectedToolIds && selectedToolIds.length > 0 
+                      ? `${selectedToolIds.length} selected` 
+                      : "None selected"}
+                  </div>
+                </div>
+                <ul className="space-y-1">
+                  {customTools.map((tool) => (
+                    <div key={tool.id}>
+                      <SelectableDropdown
+                        icon={<FiSettings className="w-4 h-4" />}
+                        value={tool.display_name}
+                        selected={selectedToolIds && selectedToolIds.includes(tool.id)}
+                        toggle={() => handleToolToggle(tool.id)}
+                        trailing={
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                tabIndex={0}
+                                aria-label="Tool info"
+                                className="p-1 text-gray-500 hover:text-gray-700"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                              >
+                                <FiInfo className="w-4 h-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-70 p-3 max-h-[60vh] overflow-y-auto" align="end" side="top" sideOffset={6}>
+                              <div className="max-w-xs">
+                                <p className="font-semibold text-sm mb-1">{tool.display_name}</p>
+                                <p className="text-xs text-gray-600">{tool.description}</p>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        }
+                      />
+                    </div>
+                  ))}
+                </ul>
+                {customTools.length === 0 && (
+                  <div className="text-center py-4 text-gray-500 text-sm">
+                    No custom tools available
+                  </div>
+                )}
+              </div>
+            )}
             {selectedFilter === FilterCategories.date && (
               <div className="p-4">
                 {renderCalendar()}
                 {filterManager.timeRange ? (
-                  <div className="mt-2 text-xs text-text-600">
+                  <div className="mt-2 text-xs text-gray-600">
                     Selected:{" "}
                     {filterManager.timeRange.from.toLocaleDateString()} -{" "}
                     {filterManager.timeRange.to.toLocaleDateString()}
                   </div>
                 ) : (
-                  <div className="mt-2 text-xs text-text-600">
+                  <div className="mt-2 text-xs text-gray-600">
                     No time restriction selected
                   </div>
                 )}
@@ -315,63 +423,82 @@ export function FilterPopup({
                     Reset Date Filter
                   </button>
                 )}
+                <div className="mt-2 text-xs text-gray-500 font-medium">
+                  Selection applies to the Updated date of the document
+                </div>
               </div>
             )}
             {selectedFilter === FilterCategories.sources && (
               <div className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold">Sources</h3>
-                  <div className="flex gap-x-2 items-center ">
-                    <p className="text-xs text-text-dark">Select all</p>
-                    <Checkbox
-                      size="sm"
-                      id="select-all-sources"
-                      checked={
-                        filterManager.selectedSources.length ===
-                        availableSources.length
-                      }
-                      onCheckedChange={toggleAllSources}
-                    />
+                {filteredAvailableSources.length === 0 ? (
+                  <div className="text-center py-4 text-gray-500 text-sm">
+                    No document sources available for this assistant
                   </div>
-                </div>
-                <ul className="space-y-1 default-scrollbar overflow-y-auto max-h-64">
-                  {availableSources.map((source) => (
-                    <SelectableDropdown
-                      icon={
-                        <SourceIcon
-                          sourceType={source.internalName}
-                          iconSize={14}
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-sm font-semibold">Sources</h3>
+                      <div className="flex gap-x-2 items-center ">
+                        <p className="text-xs text-text-dark">Select all</p>
+                        <Checkbox
+                          size="sm"
+                          id="select-all-sources"
+                          checked={
+                            filterManager.selectedSources.length ===
+                            filteredAvailableSources.length
+                          }
+                          onCheckedChange={toggleAllSources}
                         />
-                      }
-                      key={source.internalName}
-                      value={source.displayName}
-                      selected={isSourceSelected(source)}
-                      toggle={() => toggleSource(source)}
-                    />
-                  ))}
-                </ul>
+                      </div>
+                    </div>
+                    <ul className="space-y-1">
+                      {filteredAvailableSources.map((source) => (
+                        <SelectableDropdown
+                          icon={
+                            <SourceIcon
+                              sourceType={source.internalName}
+                              iconSize={14}
+                            />
+                          }
+                          key={source.internalName}
+                          value={source.displayName}
+                          selected={isSourceSelected(source)}
+                          toggle={() => toggleSource(source)}
+                        />
+                      ))}
+                    </ul>
+                  </>
+                )}
               </div>
             )}
             {selectedFilter === FilterCategories.documentSets && (
               <div className="pt-4 h-full flex flex-col w-full">
-                <div className="flex pb-2 px-4">
-                  <Input
-                    placeholder="Search document sets..."
-                    value={documentSetSearch}
-                    onChange={(e) => setDocumentSetSearch(e.target.value)}
-                    className="border border-text-subtle w-full"
-                  />
-                </div>
-                <div className="space-y-1 border-t pt-2 border-t-text-subtle px-4 default-scrollbar w-full max-h-64 overflow-y-auto">
-                  {filteredDocumentSets.map((docSet) => (
-                    <SelectableDropdown
-                      key={docSet.id}
-                      value={docSet.name}
-                      selected={isDocumentSetSelected(docSet)}
-                      toggle={() => toggleDocumentSet(docSet)}
-                    />
-                  ))}
-                </div>
+                {filteredAvailableDocumentSets.length === 0 ? (
+                  <div className="text-center py-4 text-gray-500 text-sm">
+                    No document sets available for this assistant
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex pb-2 px-4">
+                      <Input
+                        placeholder="Search document sets..."
+                        value={documentSetSearch}
+                        onChange={(e) => setDocumentSetSearch(e.target.value)}
+                        className="border border-text-subtle w-full"
+                      />
+                    </div>
+                    <div className="space-y-1 border-t pt-2 border-t-text-subtle px-4 default-scrollbar w-full max-h-64 overflow-y-auto">
+                      {filteredDocumentSets.map((docSet) => (
+                        <SelectableDropdown
+                          key={docSet.id}
+                          value={docSet.name}
+                          selected={isDocumentSetSelected(docSet)}
+                          toggle={() => toggleDocumentSet(docSet)}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
             {selectedFilter === FilterCategories.tags && (
@@ -393,29 +520,35 @@ export function FilterPopup({
               filterManager.setSelectedSources([]);
               filterManager.setSelectedDocumentSets([]);
               filterManager.setSelectedTags([]);
+              onCustomToolSelectionChange([]);
             }}
             className="text-xs"
           >
             Clear Filters
           </Button>
-          <div className="text-xs text-text-500 flex items-center space-x-1">
+          <div className="text-xs text-gray-500 flex items-center space-x-1">
+            {selectedToolIds && selectedToolIds.length > 0 && (
+              <span className="bg-gray-100 px-1.5 py-0.5 rounded-full">
+                {selectedToolIds.length} tools
+              </span>
+            )}
             {filterManager.selectedSources.length > 0 && (
-              <span className="bg-background-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded-full">
+              <span className="bg-gray-100 px-1.5 py-0.5 rounded-full">
                 {filterManager.selectedSources.length} sources
               </span>
             )}
             {filterManager.selectedDocumentSets.length > 0 && (
-              <span className="bg-background-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded-full">
+              <span className="bg-gray-100 px-1.5 py-0.5 rounded-full">
                 {filterManager.selectedDocumentSets.length} sets
               </span>
             )}
             {filterManager.selectedTags.length > 0 && (
-              <span className="bg-background-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded-full">
+              <span className="bg-gray-100 px-1.5 py-0.5 rounded-full">
                 {filterManager.selectedTags.length} tags
               </span>
             )}
             {filterManager.timeRange && (
-              <span className="bg-background-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded-full">
+              <span className="bg-gray-100 px-1.5 py-0.5 rounded-full">
                 Date range
               </span>
             )}

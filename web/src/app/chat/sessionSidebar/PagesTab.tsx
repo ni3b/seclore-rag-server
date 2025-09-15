@@ -9,20 +9,14 @@ import {
 import { Folder } from "../folders/interfaces";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { useRouter } from "next/navigation";
-import { FiPlus, FiCheck, FiX } from "react-icons/fi";
+import { FiPlus, FiTrash2, FiCheck, FiX } from "react-icons/fi";
+import { NEXT_PUBLIC_DELETE_ALL_CHATS_ENABLED } from "@/lib/constants";
 import { FolderDropdown } from "../folders/FolderDropdown";
 import { ChatSessionDisplay } from "./ChatSessionDisplay";
 import { useState, useCallback, useRef, useContext, useEffect } from "react";
 import { Caret } from "@/components/icons/icons";
 import { groupSessionsByDateRange } from "../lib";
 import React from "react";
-import {
-  Tooltip,
-  TooltipProvider,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
-import { Search } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -92,8 +86,9 @@ const SortableFolder: React.FC<SortableFolderProps> = (props) => {
       className="pr-3 ml-4 overflow-visible flex items-start"
       style={style}
       {...attributes}
+      {...listeners}
     >
-      <FolderDropdown {...listeners} ref={ref} {...props} />
+      <FolderDropdown ref={ref} {...props} />
     </div>
   );
 };
@@ -105,15 +100,17 @@ export function PagesTab({
   closeSidebar,
   showShareModal,
   showDeleteModal,
-  toggleChatSessionSearchModal,
+  showDeleteAllModal,
+  currentAssistantId,
 }: {
   existingChats?: ChatSession[];
   currentChatId?: string;
   folders?: Folder[];
-  toggleChatSessionSearchModal?: () => void;
   closeSidebar?: () => void;
   showShareModal?: (chatSession: ChatSession) => void;
   showDeleteModal?: (chatSession: ChatSession) => void;
+  showDeleteAllModal?: () => void;
+  currentAssistantId?: number | null;
 }) {
   const { setPopup, popup } = usePopup();
   const router = useRouter();
@@ -182,7 +179,7 @@ export function PagesTab({
       const newFolderName = newFolderInputRef.current?.value;
       if (newFolderName) {
         try {
-          await createFolder(newFolderName);
+          await createFolder(newFolderName, currentAssistantId ?? undefined);
           await refreshFolders();
           router.refresh();
           setPopup({
@@ -192,17 +189,16 @@ export function PagesTab({
         } catch (error) {
           console.error("Failed to create folder:", error);
           setPopup({
-            message:
-              error instanceof Error
-                ? error.message
-                : "Failed to create folder",
+            message: `Failed to create folder: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`,
             type: "error",
           });
         }
       }
       setIsCreatingFolder(false);
     },
-    [router, setPopup, refreshFolders]
+    [router, setPopup, refreshFolders, currentAssistantId]
   );
 
   const existingChatsNotinFolders = existingChats?.filter(
@@ -264,6 +260,7 @@ export function PagesTab({
         >
           <ChatSessionDisplay
             chatSession={chat}
+            foldersExisting={foldersExisting}
             isSelected={currentChatId === chat.id}
             showShareModal={showShareModal}
             showDeleteModal={showDeleteModal}
@@ -322,32 +319,12 @@ export function PagesTab({
   return (
     <div className="flex flex-col gap-y-2 flex-grow">
       {popup}
-      <div className="px-4 mt-2 group mr-2 bg-background-sidebar dark:bg-transparent z-20">
-        <div className="flex  group justify-between text-sm gap-x-2 text-text-300/80 items-center font-normal leading-normal">
+      <div className="px-4 mt-2 group mr-2 bg-background-sidebar z-20">
+        <div className="flex justify-between text-sm gap-x-2 text-[#6c6c6c]/80 items-center font-normal leading-normal">
           <p>Chats</p>
-
-          <TooltipProvider delayDuration={1000}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  className="my-auto mr-auto  group-hover:opacity-100 opacity-0 transition duration-200 cursor-pointer gap-x-1 items-center text-black text-xs font-medium leading-normal mobile:hidden"
-                  onClick={() => {
-                    toggleChatSessionSearchModal?.();
-                  }}
-                >
-                  <Search
-                    className="flex-none text-text-mobile-sidebar"
-                    size={12}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>Search Chats</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
           <button
             onClick={handleCreateFolder}
-            className="flex group-hover:opacity-100 opacity-0 transition duration-200 cursor-pointer gap-x-1 items-center text-black text-xs font-medium leading-normal"
+            className="flex group-hover:opacity-100 opacity-0 transition duration-200 cursor-pointer gap-x-1 items-center text-black text-xs font-medium font-['KH Teka TRIAL'] leading-normal"
           >
             <FiPlus size={12} className="flex-none" />
             Create Group
@@ -357,7 +334,7 @@ export function PagesTab({
 
       {isCreatingFolder ? (
         <div className="px-4">
-          <div className="flex  overflow-visible items-center w-full text-text-500 rounded-md p-1 relative">
+          <div className="flex  overflow-visible items-center w-full text-[#6c6c6c] rounded-md p-1 relative">
             <Caret size={16} className="flex-none mr-1" />
             <input
               onKeyDown={(e) => {
@@ -368,7 +345,7 @@ export function PagesTab({
               ref={newFolderInputRef}
               type="text"
               placeholder="Enter group name"
-              className="text-sm font-medium bg-transparent outline-none w-full pb-1 border-b border-background-500 transition-colors duration-200"
+              className="text-sm font-medium bg-transparent outline-none w-full pb-1 border-b border-[#6c6c6c] transition-colors duration-200"
             />
             <div className="flex -my-1">
               <div
@@ -434,7 +411,11 @@ export function PagesTab({
         </DndContext>
       )}
 
-      <div className="pl-4 pr-3">
+      <div
+        className={`pl-4 pr-3 ${
+          NEXT_PUBLIC_DELETE_ALL_CHATS_ENABLED && "pb-20"
+        }`}
+      >
         {!isHistoryEmpty && (
           <>
             {Object.entries(groupedChatSesssions)
@@ -446,6 +427,7 @@ export function PagesTab({
                     folder_name: groupName,
                     chat_sessions: chats,
                     display_priority: 0,
+                    creator_assistant_id: currentAssistantId ?? null,
                   }}
                   currentChatId={currentChatId}
                   showShareModal={showShareModal}
@@ -471,6 +453,17 @@ export function PagesTab({
           </p>
         )}
       </div>
+      {showDeleteAllModal && NEXT_PUBLIC_DELETE_ALL_CHATS_ENABLED && (
+        <div className="absolute w-full border-t border-t-border bg-background-100 bottom-0 left-0 p-4">
+          <button
+            className="px-4 w-full py-2 px-4 text-text-600 hover:text-text-800 bg-background-125 border border-border-strong/50 shadow-sm rounded-md transition-colors duration-200 flex items-center justify-center text-sm"
+            onClick={showDeleteAllModal}
+          >
+            <FiTrash2 className="mr-2" size={14} />
+            Clear All History
+          </button>
+        </div>
+      )}
     </div>
   );
 }

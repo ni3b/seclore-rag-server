@@ -3,12 +3,12 @@ import { ThreeDotsLoader } from "@/components/Loading";
 import { getDatesList } from "@/app/ee/admin/performance/lib";
 import { useEffect, useState, useMemo } from "react";
 import {
-  AdminDateRangeSelector,
+  DateRangeSelector,
   DateRange,
-} from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+} from "@/app/ee/admin/performance/DateRangeSelector";
 import { useAssistants } from "@/components/context/AssistantsContext";
 import { AssistantIcon } from "@/components/assistants/AssistantIcon";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AreaChartDisplay } from "@/components/ui/areaChart";
 
 type AssistantDailyUsageEntry = {
@@ -123,7 +123,7 @@ export function AssistantStats({ assistantId }: { assistantId: number }) {
     );
   } else if (!assistantStats?.daily_stats?.length) {
     content = (
-      <div className="h-80 text-text-500 flex flex-col">
+      <div className="h-80 text-gray-500 flex flex-col">
         <p className="m-auto">
           No data found for this assistant in the selected date range
         </p>
@@ -146,10 +146,7 @@ export function AssistantStats({ assistantId }: { assistantId: number }) {
     <Card className="w-full">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <p className="text-base font-normal text-2xl">Assistant Analytics</p>
-        <AdminDateRangeSelector
-          value={dateRange}
-          onValueChange={setDateRange}
-        />
+        <DateRangeSelector value={dateRange} onValueChange={setDateRange} />
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -165,7 +162,7 @@ export function AssistantStats({ assistantId }: { assistantId: number }) {
                 )}
                 <div>
                   <h3 className="text-lg font-normal">{assistant?.name}</h3>
-                  <p className="text-sm text-text-500">
+                  <p className="text-sm text-gray-500">
                     {assistant?.description}
                   </p>
                 </div>
@@ -176,13 +173,13 @@ export function AssistantStats({ assistantId }: { assistantId: number }) {
             <CardContent className="pt-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm font-medium text-text-500">
+                  <p className="text-sm font-medium text-gray-500">
                     Total Messages
                   </p>
                   <p className="text-2xl font-normal">{totalMessages}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-text-500">
+                  <p className="text-sm font-medium text-gray-500">
                     Total Unique Users
                   </p>
                   <p className="text-2xl font-normal">{totalUniqueUsers}</p>

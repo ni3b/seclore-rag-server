@@ -1,45 +1,39 @@
+import time
 from collections.abc import Generator
+from dataclasses import dataclass
+from dataclasses import fields
 from datetime import datetime
 from datetime import timezone
 from typing import Any
-from typing import cast
 from typing import Optional
 
-import requests
-from pydantic import BaseModel
 from retry import retry
 
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
-from onyx.configs.app_configs import NOTION_CONNECTOR_DISABLE_RECURSIVE_PAGE_LOOKUP
+from onyx.configs.app_configs import NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.cross_connector_utils.rate_limit_wrapper import (
     rl_requests,
 )
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.exceptions import CredentialExpiredError
-from onyx.connectors.exceptions import InsufficientPermissionsError
-from onyx.connectors.exceptions import UnexpectedValidationError
 from onyx.connectors.interfaces import GenerateDocumentsOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
-from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.utils.batching import batch_generator
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
 
-_NOTION_PAGE_SIZE = 100
 _NOTION_CALL_TIMEOUT = 30  # 30 seconds
 
 
 # TODO: Tables need to be ingested, Pages need to have their metadata ingested
 
 
-class NotionPage(BaseModel):
+@dataclass
+class NotionPage:
     """Represents a Notion Page object"""
 
     id: str
@@ -49,10 +43,17 @@ class NotionPage(BaseModel):
     properties: dict[str, Any]
     url: str
 
-    database_name: str | None = None  # Only applicable to the database type page (wiki)
+    database_name: str | None  # Only applicable to the database type page (wiki)
+
+    def __init__(self, **kwargs: dict[str, Any]) -> None:
+        names = set([f.name for f in fields(self)])
+        for k, v in kwargs.items():
+            if k in names:
+                setattr(self, k, v)
 
 
-class NotionBlock(BaseModel):
+@dataclass
+class NotionBlock:
     """Represents a Notion Block object"""
 
     id: str  # Used for the URL
@@ -62,12 +63,19 @@ class NotionBlock(BaseModel):
     prefix: str
 
 
-class NotionSearchResponse(BaseModel):
+@dataclass
+class NotionSearchResponse:
     """Represents the response from the Notion Search API"""
 
     results: list[dict[str, Any]]
     next_cursor: Optional[str]
     has_more: bool = False
+
+    def __init__(self, **kwargs: dict[str, Any]) -> None:
+        names = set([f.name for f in fields(self)])
+        for k, v in kwargs.items():
+            if k in names:
+                setattr(self, k, v)
 
 
 class NotionConnector(LoadConnector, PollConnector):
@@ -81,7 +89,7 @@ class NotionConnector(LoadConnector, PollConnector):
     def __init__(
         self,
         batch_size: int = INDEX_BATCH_SIZE,
-        recursive_index_enabled: bool = not NOTION_CONNECTOR_DISABLE_RECURSIVE_PAGE_LOOKUP,
+        recursive_index_enabled: bool = NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP,
         root_page_id: str | None = None,
     ) -> None:
         """Initialize with parameters."""
@@ -124,7 +132,7 @@ class NotionConnector(LoadConnector, PollConnector):
                 logger.error(
                     f"Unable to access block with ID '{block_id}'. "
                     f"This is likely due to the block not being shared "
-                    f"with the Onyx integration. Exact exception:\n\n{e}"
+                    f"with the Seclore integration. Exact exception:\n\n{e}"
                 )
             else:
                 logger.exception(
@@ -202,7 +210,7 @@ class NotionConnector(LoadConnector, PollConnector):
                 logger.error(
                     f"Unable to access database with ID '{database_id}'. "
                     f"This is likely due to the database not being shared "
-                    f"with the Onyx integration. Exact exception:\n{e}"
+                    f"with the Seclore integration. Exact exception:\n{e}"
                 )
                 return {"results": [], "next_cursor": None}
             logger.exception(f"Error fetching database - {res.json()}")
@@ -450,53 +458,23 @@ class NotionConnector(LoadConnector, PollConnector):
             page_blocks, child_page_ids = self._read_blocks(page.id)
             all_child_page_ids.extend(child_page_ids)
 
-            # okay to mark here since there's no way for this to not succeed
-            # without a critical failure
-            self.indexed_pages.add(page.id)
-
-            raw_page_title = self._read_page_title(page)
-            page_title = raw_page_title or f"Untitled Page with ID {page.id}"
-
             if not page_blocks:
-                if not raw_page_title:
-                    logger.warning(
-                        f"No blocks OR title found for page with ID '{page.id}'. Skipping."
-                    )
-                    continue
+                continue
 
-                logger.debug(f"No blocks found for page with ID '{page.id}'")
-                """
-                Something like:
-
-                TITLE
-
-                PROP1: PROP1_VALUE
-                PROP2: PROP2_VALUE
-                """
-                text = page_title
-                if page.properties:
-                    text += "\n\n" + "\n".join(
-                        [f"{key}: {value}" for key, value in page.properties.items()]
-                    )
-                sections = [
-                    TextSection(
-                        link=f"{page.url}",
-                        text=text,
-                    )
-                ]
-            else:
-                sections = [
-                    TextSection(
-                        link=f"{page.url}#{block.id.replace('-', '')}",
-                        text=block.prefix + block.text,
-                    )
-                    for block in page_blocks
-                ]
+            page_title = (
+                self._read_page_title(page) or f"Untitled Page with ID {page.id}"
+            )
 
             yield (
                 Document(
                     id=page.id,
-                    sections=cast(list[TextSection | ImageSection], sections),
+                    sections=[
+                        Section(
+                            link=f"{page.url}#{block.id.replace('-', '')}",
+                            text=block.prefix + block.text,
+                        )
+                        for block in page_blocks
+                    ],
                     source=DocumentSource.NOTION,
                     semantic_identifier=page_title,
                     doc_updated_at=datetime.fromisoformat(
@@ -553,9 +531,9 @@ class NotionConnector(LoadConnector, PollConnector):
         """
         filtered_pages: list[NotionPage] = []
         for page in pages:
-            # Parse ISO 8601 timestamp and convert to UTC epoch time
-            timestamp = page[filter_field].replace(".000Z", "+00:00")
-            compare_time = datetime.fromisoformat(timestamp).timestamp()
+            compare_time = time.mktime(
+                time.strptime(page[filter_field], "%Y-%m-%dT%H:%M:%S.000Z")
+            )
             if compare_time > start and compare_time <= end:
                 filtered_pages += [NotionPage(**page)]
         return filtered_pages
@@ -576,9 +554,9 @@ class NotionConnector(LoadConnector, PollConnector):
 
     def load_credentials(self, credentials: dict[str, Any]) -> dict[str, Any] | None:
         """Applies integration token to headers"""
-        self.headers["Authorization"] = (
-            f'Bearer {credentials["notion_integration_token"]}'
-        )
+        self.headers[
+            "Authorization"
+        ] = f'Bearer {credentials["notion_integration_token"]}'
         return None
 
     def load_from_state(self) -> GenerateDocumentsOutput:
@@ -594,7 +572,7 @@ class NotionConnector(LoadConnector, PollConnector):
 
         query_dict = {
             "filter": {"property": "object", "value": "page"},
-            "page_size": _NOTION_PAGE_SIZE,
+            "page_size": self.batch_size,
         }
         while True:
             db_res = self._search_notion(query_dict)
@@ -620,7 +598,7 @@ class NotionConnector(LoadConnector, PollConnector):
             return
 
         query_dict = {
-            "page_size": _NOTION_PAGE_SIZE,
+            "page_size": self.batch_size,
             "sort": {"timestamp": "last_edited_time", "direction": "descending"},
             "filter": {"property": "object", "value": "page"},
         }
@@ -637,64 +615,6 @@ class NotionConnector(LoadConnector, PollConnector):
                     break
             else:
                 break
-
-    def validate_connector_settings(self) -> None:
-        if not self.headers.get("Authorization"):
-            raise ConnectorMissingCredentialError("Notion credentials not loaded.")
-
-        try:
-            # We'll do a minimal search call (page_size=1) to confirm accessibility
-            if self.root_page_id:
-                # If root_page_id is set, fetch the specific page
-                res = rl_requests.get(
-                    f"https://api.notion.com/v1/pages/{self.root_page_id}",
-                    headers=self.headers,
-                    timeout=_NOTION_CALL_TIMEOUT,
-                )
-            else:
-                # If root_page_id is not set, perform a minimal search
-                test_query = {
-                    "filter": {"property": "object", "value": "page"},
-                    "page_size": 1,
-                }
-                res = rl_requests.post(
-                    "https://api.notion.com/v1/search",
-                    headers=self.headers,
-                    json=test_query,
-                    timeout=_NOTION_CALL_TIMEOUT,
-                )
-            res.raise_for_status()
-
-        except requests.exceptions.HTTPError as http_err:
-            status_code = http_err.response.status_code if http_err.response else None
-
-            if status_code == 401:
-                raise CredentialExpiredError(
-                    "Notion credential appears to be invalid or expired (HTTP 401)."
-                )
-            elif status_code == 403:
-                raise InsufficientPermissionsError(
-                    "Your Notion token does not have sufficient permissions (HTTP 403)."
-                )
-            elif status_code == 404:
-                # Typically means resource not found or not shared. Could be root_page_id is invalid.
-                raise ConnectorValidationError(
-                    "Notion resource not found or not shared with the integration (HTTP 404)."
-                )
-            elif status_code == 429:
-                raise ConnectorValidationError(
-                    "Validation failed due to Notion rate-limits being exceeded (HTTP 429). "
-                    "Please try again later."
-                )
-            else:
-                raise UnexpectedValidationError(
-                    f"Unexpected Notion HTTP error (status={status_code}): {http_err}"
-                ) from http_err
-
-        except Exception as exc:
-            raise UnexpectedValidationError(
-                f"Unexpected error during Notion settings validation: {exc}"
-            )
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.file_processing.html_utils import parse_html_page_basic
 from onyx.utils.logger import setup_logger
 
@@ -88,7 +88,7 @@ class GuruConnector(LoadConnector, PollConnector):
                     else None
                 )
 
-                # For Onyx, we decay document score overtime, either last_updated or
+                # For Seclore, we decay document score overtime, either last_updated or
                 # last_verified is a good enough signal for the document's recency
                 latest_time = (
                     max(last_verified, last_updated) if last_verified else last_updated
@@ -120,7 +120,7 @@ class GuruConnector(LoadConnector, PollConnector):
                 doc_batch.append(
                     Document(
                         id=card["id"],
-                        sections=[TextSection(link=link, text=content_text)],
+                        sections=[Section(link=link, text=content_text)],
                         source=DocumentSource.GURU,
                         semantic_identifier=title,
                         doc_updated_at=latest_time,

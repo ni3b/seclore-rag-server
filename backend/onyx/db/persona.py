@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import delete
 from sqlalchemy import exists
 from sqlalchemy import func
 from sqlalchemy import not_
@@ -11,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy import update
 from sqlalchemy.orm import aliased
 from sqlalchemy.orm import joinedload
-from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from onyx.auth.schemas import UserRole
@@ -19,7 +19,6 @@ from onyx.configs.app_configs import DISABLE_AUTH
 from onyx.configs.chat_configs import BING_API_KEY
 from onyx.configs.chat_configs import CONTEXT_CHUNKS_ABOVE
 from onyx.configs.chat_configs import CONTEXT_CHUNKS_BELOW
-from onyx.configs.constants import NotificationType
 from onyx.context.search.enums import RecencyBiasSetting
 from onyx.db.constants import SLACK_BOT_PERSONA_PREFIX
 from onyx.db.models import DocumentSet
@@ -32,15 +31,16 @@ from onyx.db.models import StarterMessage
 from onyx.db.models import Tool
 from onyx.db.models import User
 from onyx.db.models import User__UserGroup
-from onyx.db.models import UserFile
-from onyx.db.models import UserFolder
 from onyx.db.models import UserGroup
-from onyx.db.notification import create_notification
-from onyx.server.features.persona.models import FullPersonaSnapshot
-from onyx.server.features.persona.models import PersonaSharedNotificationData
+from onyx.server.features.persona.models import PersonaSnapshot
 from onyx.server.features.persona.models import PersonaUpsertRequest
 from onyx.utils.logger import setup_logger
 from onyx.utils.variable_functionality import fetch_versioned_implementation
+
+# Import the function to get valid access token and user's Microsoft groups
+from onyx.auth.microsoft_oidc import get_valid_user_token, get_user_microsoft_groups
+import asyncio
+from sqlalchemy import cast, ARRAY, Text
 
 logger = setup_logger()
 
@@ -48,6 +48,7 @@ logger = setup_logger()
 def _add_user_filters(
     stmt: Select, user: User | None, get_editable: bool = True
 ) -> Select:
+    logger.info(f"starting add user filters..........")
     # If user is None and auth is disabled, assume the user is an admin
     if (user is None and DISABLE_AUTH) or (user and user.role == UserRole.ADMIN):
         return stmt
@@ -89,10 +90,13 @@ def _add_user_filters(
 
     where_clause = User__UserGroup.user_id == user.id
     if user.role == UserRole.CURATOR and get_editable:
+        logger.debug(f"Adding curator filter in where_clause")
         where_clause &= User__UserGroup.is_curator == True  # noqa: E712
     if get_editable:
+        logger.debug(f"Adding user group filter in where_clause")
         user_groups = select(User__UG.user_group_id).where(User__UG.user_id == user.id)
         if user.role == UserRole.CURATOR:
+            logger.debug(f"Adding curator filter in user_groups")
             user_groups = user_groups.where(User__UG.is_curator == True)  # noqa: E712
         where_clause &= (
             ~exists()
@@ -101,14 +105,43 @@ def _add_user_filters(
             .correlate(Persona)
         )
     else:
-        # Group the public persona conditions
-        public_condition = (Persona.is_public == True) & (  # noqa: E712
-            Persona.is_visible == True  # noqa: E712
-        )
-
-        where_clause |= public_condition
+        logger.debug(f"Adding public, is_visible, and user_id filter in where_clause")
+        where_clause |= Persona.is_public == True  # noqa: E712
+        where_clause &= Persona.is_visible == True  # noqa: E712
         where_clause |= Persona__User.user_id == user.id
-
+        
+        # Add Microsoft AD group-based access control
+        # Check if user has Microsoft OAuth account and get their groups
+        microsoft_account = None
+        for account in user.oauth_accounts:
+            if account.oauth_name == 'microsoft':
+                microsoft_account = account
+                break
+        
+        logger.debug(f"Checking for microsoft account in add_user_filters")
+        if microsoft_account:
+            logger.debug(f"Microsoft account found for user {user.email} in add_user_filters")
+            try:
+                # Get a valid access token (this will refresh if needed)
+                valid_access_token = get_valid_user_token(user)
+                
+                if valid_access_token:
+                    # Get user's Microsoft AD groups using the valid token
+                    user_groups = get_user_microsoft_groups(valid_access_token, user.email)
+                    logger.debug(f"found user_groups inside add_user_filters: {user_groups}")
+                    
+                    if user_groups:
+                        # Convert user_groups to the same type as stored in database (text[])
+                        user_groups_text = [str(group_id) for group_id in user_groups]
+                                                
+                        # Add condition for Microsoft AD group overlap
+                        where_clause |= Persona.microsoft_ad_groups.overlap(
+                            cast(user_groups_text, ARRAY(Text))
+                        )
+                        
+            except Exception as e:
+                logger.warning(f"Error getting Microsoft AD groups for user {user.email}: {str(e)}")
+    
     where_clause |= Persona.user_id == user.id
 
     return stmt.where(where_clause)
@@ -167,7 +200,6 @@ def _get_persona_by_name(
 
 def make_persona_private(
     persona_id: int,
-    creator_user_id: UUID | None,
     user_ids: list[UUID] | None,
     group_ids: list[int] | None,
     db_session: Session,
@@ -179,21 +211,12 @@ def make_persona_private(
 
         for user_uuid in user_ids:
             db_session.add(Persona__User(persona_id=persona_id, user_id=user_uuid))
-            if user_uuid != creator_user_id:
-                create_notification(
-                    user_id=user_uuid,
-                    notif_type=NotificationType.PERSONA_SHARED,
-                    db_session=db_session,
-                    additional_data=PersonaSharedNotificationData(
-                        persona_id=persona_id,
-                    ).model_dump(),
-                )
 
         db_session.commit()
 
     # May cause error if someone switches down to MIT from EE
     if group_ids:
-        raise NotImplementedError("Onyx MIT does not support private Personas")
+        raise NotImplementedError("Seclore MIT does not support private Personas")
 
 
 def create_update_persona(
@@ -201,30 +224,17 @@ def create_update_persona(
     create_persona_request: PersonaUpsertRequest,
     user: User | None,
     db_session: Session,
-) -> FullPersonaSnapshot:
+) -> PersonaSnapshot:
     """Higher level function than upsert_persona, although either is valid to use."""
     # Permission to actually use these is checked later
+
+
 
     try:
         all_prompt_ids = create_persona_request.prompt_ids
 
         if not all_prompt_ids:
             raise ValueError("No prompt IDs provided")
-
-        # Default persona validation
-        if create_persona_request.is_default_persona:
-            if not create_persona_request.is_public:
-                raise ValueError("Cannot make a default persona non public")
-
-            if user:
-                # Curators can edit default personas, but not make them
-                if (
-                    user.role == UserRole.CURATOR
-                    or user.role == UserRole.GLOBAL_CURATOR
-                ):
-                    pass
-                elif user.role != UserRole.ADMIN:
-                    raise ValueError("Only admins can make a default persona")
 
         persona = upsert_persona(
             persona_id=persona_id,
@@ -250,9 +260,7 @@ def create_update_persona(
             num_chunks=create_persona_request.num_chunks,
             llm_relevance_filter=create_persona_request.llm_relevance_filter,
             llm_filter_extraction=create_persona_request.llm_filter_extraction,
-            is_default_persona=create_persona_request.is_default_persona,
-            user_file_ids=create_persona_request.user_file_ids,
-            user_folder_ids=create_persona_request.user_folder_ids,
+            microsoft_ad_groups=create_persona_request.microsoft_ad_groups,
         )
 
         versioned_make_persona_private = fetch_versioned_implementation(
@@ -262,7 +270,6 @@ def create_update_persona(
         # Privatize Persona
         versioned_make_persona_private(
             persona_id=persona.id,
-            creator_user_id=user.id if user else None,
             user_ids=create_persona_request.users,
             group_ids=create_persona_request.groups,
             db_session=db_session,
@@ -272,7 +279,7 @@ def create_update_persona(
         logger.exception("Failed to create persona")
         raise HTTPException(status_code=400, detail=str(e))
 
-    return FullPersonaSnapshot.from_model(persona)
+    return PersonaSnapshot.from_model(persona)
 
 
 def update_persona_shared_users(
@@ -298,7 +305,6 @@ def update_persona_shared_users(
     # Privatize Persona
     versioned_make_persona_private(
         persona_id=persona_id,
-        creator_user_id=user.id if user else None,
         user_ids=user_ids,
         group_ids=None,
         db_session=db_session,
@@ -330,12 +336,10 @@ def get_personas_for_user(
     include_slack_bot_personas: bool = False,
     include_deleted: bool = False,
     joinedload_all: bool = False,
-    # a bit jank
-    include_prompt: bool = True,
 ) -> Sequence[Persona]:
-    stmt = select(Persona)
-    stmt = _add_user_filters(stmt, user, get_editable)
-
+    logger.debug(f"starting get_personas_for_user..........")
+    stmt = select(Persona).distinct()
+    stmt = _add_user_filters(stmt=stmt, user=user, get_editable=get_editable)
     if not include_default:
         stmt = stmt.where(Persona.builtin_persona.is_(False))
     if not include_slack_bot_personas:
@@ -345,19 +349,14 @@ def get_personas_for_user(
 
     if joinedload_all:
         stmt = stmt.options(
-            selectinload(Persona.tools),
-            selectinload(Persona.document_sets),
-            selectinload(Persona.groups),
-            selectinload(Persona.users),
-            selectinload(Persona.labels),
-            selectinload(Persona.user_files),
-            selectinload(Persona.user_folders),
+            joinedload(Persona.prompts),
+            joinedload(Persona.tools),
+            joinedload(Persona.document_sets),
+            joinedload(Persona.groups),
+            joinedload(Persona.users),
         )
-        if include_prompt:
-            stmt = stmt.options(selectinload(Persona.prompts))
 
-    results = db_session.execute(stmt).scalars().all()
-    return results
+    return db_session.execute(stmt).unique().scalars().all()
 
 
 def get_personas(db_session: Session) -> Sequence[Persona]:
@@ -446,12 +445,11 @@ def upsert_persona(
     remove_image: bool | None = None,
     search_start_date: datetime | None = None,
     builtin_persona: bool = False,
-    is_default_persona: bool | None = None,
+    is_default_persona: bool = False,
     label_ids: list[int] | None = None,
-    user_file_ids: list[int] | None = None,
-    user_folder_ids: list[int] | None = None,
     chunks_above: int = CONTEXT_CHUNKS_ABOVE,
     chunks_below: int = CONTEXT_CHUNKS_BELOW,
+    microsoft_ad_groups: list[str] | None = None,
 ) -> Persona:
     """
     NOTE: This operation cannot update persona configuration options that
@@ -475,7 +473,6 @@ def upsert_persona(
             user=user,
             get_editable=True,
         )
-
     # Fetch and attach tools by IDs
     tools = None
     if tool_ids is not None:
@@ -493,26 +490,6 @@ def upsert_persona(
         )
         if not document_sets and document_set_ids:
             raise ValueError("document_sets not found")
-
-    # Fetch and attach user_files by IDs
-    user_files = None
-    if user_file_ids is not None:
-        user_files = (
-            db_session.query(UserFile).filter(UserFile.id.in_(user_file_ids)).all()
-        )
-        if not user_files and user_file_ids:
-            raise ValueError("user_files not found")
-
-    # Fetch and attach user_folders by IDs
-    user_folders = None
-    if user_folder_ids is not None:
-        user_folders = (
-            db_session.query(UserFolder)
-            .filter(UserFolder.id.in_(user_folder_ids))
-            .all()
-        )
-        if not user_folders and user_folder_ids:
-            raise ValueError("user_folders not found")
 
     # Fetch and attach prompts by IDs
     prompts = None
@@ -564,12 +541,11 @@ def upsert_persona(
         existing_persona.is_visible = is_visible
         existing_persona.search_start_date = search_start_date
         existing_persona.labels = labels or []
-        existing_persona.is_default_persona = (
-            is_default_persona
-            if is_default_persona is not None
-            else existing_persona.is_default_persona
-        )
-
+        if microsoft_ad_groups is not None:
+            existing_persona.microsoft_ad_groups = microsoft_ad_groups
+            logger.info(f"Updated Microsoft AD groups for persona {existing_persona.id}: {microsoft_ad_groups}")
+        else:
+            logger.info(f"No Microsoft AD groups provided for persona {existing_persona.id}")
         # Do not delete any associations manually added unless
         # a new updated list is provided
         if document_sets is not None:
@@ -582,14 +558,6 @@ def upsert_persona(
 
         if tools is not None:
             existing_persona.tools = tools or []
-
-        if user_file_ids is not None:
-            existing_persona.user_files.clear()
-            existing_persona.user_files = user_files or []
-
-        if user_folder_ids is not None:
-            existing_persona.user_folders.clear()
-            existing_persona.user_folders = user_folders or []
 
         # We should only update display priority if it is not already set
         if existing_persona.display_priority is None:
@@ -629,13 +597,11 @@ def upsert_persona(
             display_priority=display_priority,
             is_visible=is_visible,
             search_start_date=search_start_date,
-            is_default_persona=(
-                is_default_persona if is_default_persona is not None else False
-            ),
-            user_folders=user_folders or [],
-            user_files=user_files or [],
+            is_default_persona=is_default_persona,
             labels=labels or [],
+            microsoft_ad_groups=microsoft_ad_groups or [],
         )
+        logger.info(f"Created new persona with Microsoft AD groups: {microsoft_ad_groups or []}")
         db_session.add(new_persona)
         persona = new_persona
     if commit:
@@ -662,23 +628,6 @@ def delete_old_default_personas(
     db_session.commit()
 
 
-def update_persona_is_default(
-    persona_id: int,
-    is_default: bool,
-    db_session: Session,
-    user: User | None = None,
-) -> None:
-    persona = fetch_persona_by_id_for_user(
-        db_session=db_session, persona_id=persona_id, user=user, get_editable=True
-    )
-
-    if not persona.is_public:
-        persona.is_public = True
-
-    persona.is_default_persona = is_default
-    db_session.commit()
-
-
 def update_persona_visibility(
     persona_id: int,
     is_visible: bool,
@@ -693,11 +642,40 @@ def update_persona_visibility(
     db_session.commit()
 
 
+def update_persona_default_status(
+    persona_id: int,
+    is_default: bool,
+    db_session: Session,
+    user: User | None = None,
+) -> None:
+    """Set a persona as default and remove other personas from default status"""
+    persona = fetch_persona_by_id_for_user(
+        db_session=db_session, persona_id=persona_id, user=user, get_editable=True
+    )
+
+    if is_default:
+        # Remove default status from all other personas
+        stmt = (
+            update(Persona)
+            .where(Persona.id != persona_id)
+            .values(is_default_persona=False)
+        )
+        db_session.execute(stmt)
+        
+        # Set this persona as default
+        persona.is_default_persona = True
+    else:
+        # Remove default status from this persona
+        persona.is_default_persona = False
+    
+    db_session.commit()
+
+
 def validate_persona_tools(tools: list[Tool]) -> None:
     for tool in tools:
         if tool.name == "InternetSearchTool" and not BING_API_KEY:
             raise ValueError(
-                "Bing API key not found, please contact your Onyx admin to get it added!"
+                "Bing API key not found, please contact your Seclore admin to get it added!"
             )
 
 
@@ -740,6 +718,37 @@ def get_persona_by_id(
         # if the user is in the .users of the persona
         or_conditions |= User.id == user.id
         or_conditions |= Persona.is_public == True  # noqa: E712
+        
+        # Add Microsoft AD group-based access control
+        # Check if user has Microsoft OAuth account and get their groups
+        microsoft_account = None
+        for account in user.oauth_accounts:
+            if account.oauth_name == 'microsoft':
+                microsoft_account = account
+                break
+        
+        if microsoft_account:
+            logger.info(f"Microsoft account found for user {user.email} in get_persona_by_id")
+            try:
+                # Get a valid access token (this will refresh if needed)
+                valid_access_token = get_valid_user_token(user)
+                
+                if valid_access_token:
+                    # Get user's Microsoft AD groups using the valid token
+                    user_groups = get_user_microsoft_groups(valid_access_token, user.email)
+                    logger.info(f"user_groups in get_persona_by_id: {user_groups}")
+
+                    if user_groups:
+                        # Convert user_groups to the same type as stored in database (text[])
+                        user_groups_text = [str(group_id) for group_id in user_groups]
+                                                
+                        # Add condition for Microsoft AD group overlap
+                        or_conditions |= Persona.microsoft_ad_groups.overlap(
+                            cast(user_groups_text, ARRAY(Text))
+                        )
+                        
+            except Exception as e:
+                logger.warning(f"Error getting Microsoft AD groups for user {user.email} in get_persona_by_id: {str(e)}")
     elif user.role == UserRole.GLOBAL_CURATOR:
         # global curators can edit personas for the groups they are in
         or_conditions |= User__UserGroup.user_id == user.id
@@ -775,10 +784,8 @@ def get_personas_by_ids(
 def delete_persona_by_name(
     persona_name: str, db_session: Session, is_default: bool = True
 ) -> None:
-    stmt = (
-        update(Persona)
-        .where(Persona.name == persona_name, Persona.builtin_persona == is_default)
-        .values(deleted=True)
+    stmt = delete(Persona).where(
+        Persona.name == persona_name, Persona.builtin_persona == is_default
     )
 
     db_session.execute(stmt)
@@ -813,15 +820,3 @@ def update_persona_label(
 def delete_persona_label(label_id: int, db_session: Session) -> None:
     db_session.query(PersonaLabel).filter(PersonaLabel.id == label_id).delete()
     db_session.commit()
-
-
-def persona_has_search_tool(persona_id: int, db_session: Session) -> bool:
-    persona = (
-        db_session.query(Persona)
-        .options(joinedload(Persona.tools))
-        .filter(Persona.id == persona_id)
-        .one_or_none()
-    )
-    if persona is None:
-        raise ValueError(f"Persona with ID {persona_id} does not exist")
-    return any(tool.in_code_tool_id == "run_search" for tool in persona.tools)

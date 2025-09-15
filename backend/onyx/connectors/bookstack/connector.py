@@ -7,18 +7,14 @@ from typing import Any
 from onyx.configs.app_configs import INDEX_BATCH_SIZE
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.bookstack.client import BookStackApiClient
-from onyx.connectors.bookstack.client import BookStackClientRequestFailedError
 from onyx.connectors.cross_connector_utils.miscellaneous_utils import time_str_to_utc
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.exceptions import CredentialExpiredError
-from onyx.connectors.exceptions import InsufficientPermissionsError
 from onyx.connectors.interfaces import GenerateDocumentsOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.file_processing.html_utils import parse_html_page_basic
 
 
@@ -81,13 +77,13 @@ class BookstackConnector(LoadConnector, PollConnector):
         )
         return Document(
             id="book__" + str(book.get("id")),
-            sections=[TextSection(link=url, text=text)],
+            sections=[Section(link=url, text=text)],
             source=DocumentSource.BOOKSTACK,
             semantic_identifier="Book: " + title,
             title=title,
-            doc_updated_at=(
-                time_str_to_utc(updated_at_str) if updated_at_str is not None else None
-            ),
+            doc_updated_at=time_str_to_utc(updated_at_str)
+            if updated_at_str is not None
+            else None,
             metadata={"type": "book"},
         )
 
@@ -110,13 +106,13 @@ class BookstackConnector(LoadConnector, PollConnector):
         )
         return Document(
             id="chapter__" + str(chapter.get("id")),
-            sections=[TextSection(link=url, text=text)],
+            sections=[Section(link=url, text=text)],
             source=DocumentSource.BOOKSTACK,
             semantic_identifier="Chapter: " + title,
             title=title,
-            doc_updated_at=(
-                time_str_to_utc(updated_at_str) if updated_at_str is not None else None
-            ),
+            doc_updated_at=time_str_to_utc(updated_at_str)
+            if updated_at_str is not None
+            else None,
             metadata={"type": "chapter"},
         )
 
@@ -134,13 +130,13 @@ class BookstackConnector(LoadConnector, PollConnector):
         )
         return Document(
             id="shelf:" + str(shelf.get("id")),
-            sections=[TextSection(link=url, text=text)],
+            sections=[Section(link=url, text=text)],
             source=DocumentSource.BOOKSTACK,
             semantic_identifier="Shelf: " + title,
             title=title,
-            doc_updated_at=(
-                time_str_to_utc(updated_at_str) if updated_at_str is not None else None
-            ),
+            doc_updated_at=time_str_to_utc(updated_at_str)
+            if updated_at_str is not None
+            else None,
             metadata={"type": "shelf"},
         )
 
@@ -167,13 +163,13 @@ class BookstackConnector(LoadConnector, PollConnector):
         time.sleep(0.1)
         return Document(
             id="page:" + page_id,
-            sections=[TextSection(link=url, text=text)],
+            sections=[Section(link=url, text=text)],
             source=DocumentSource.BOOKSTACK,
             semantic_identifier="Page: " + str(title),
             title=str(title),
-            doc_updated_at=(
-                time_str_to_utc(updated_at_str) if updated_at_str is not None else None
-            ),
+            doc_updated_at=time_str_to_utc(updated_at_str)
+            if updated_at_str is not None
+            else None,
             metadata={"type": "page"},
         )
 
@@ -218,39 +214,3 @@ class BookstackConnector(LoadConnector, PollConnector):
                     break
                 else:
                     time.sleep(0.2)
-
-    def validate_connector_settings(self) -> None:
-        """
-        Validate that the BookStack credentials and connector settings are correct.
-        Specifically checks that we can make an authenticated request to BookStack.
-        """
-        if not self.bookstack_client:
-            raise ConnectorMissingCredentialError(
-                "BookStack credentials have not been loaded."
-            )
-
-        try:
-            # Attempt to fetch a small batch of books (arbitrary endpoint) to verify credentials
-            _ = self.bookstack_client.get(
-                "/books", params={"count": "1", "offset": "0"}
-            )
-
-        except BookStackClientRequestFailedError as e:
-            # Check for HTTP status codes
-            if e.status_code == 401:
-                raise CredentialExpiredError(
-                    "Your BookStack credentials appear to be invalid or expired (HTTP 401)."
-                ) from e
-            elif e.status_code == 403:
-                raise InsufficientPermissionsError(
-                    "The configured BookStack token does not have sufficient permissions (HTTP 403)."
-                ) from e
-            else:
-                raise ConnectorValidationError(
-                    f"Unexpected BookStack error (status={e.status_code}): {e}"
-                ) from e
-
-        except Exception as exc:
-            raise ConnectorValidationError(
-                f"Unexpected error while validating BookStack connector settings: {exc}"
-            ) from exc

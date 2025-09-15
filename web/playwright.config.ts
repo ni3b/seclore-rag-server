@@ -1,32 +1,41 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  globalSetup: require.resolve("./tests/e2e/global-setup"),
-  timeout: 100000, // 100 seconds timeout
-  expect: {
-    timeout: 15000, // 15 seconds timeout for all assertions to reduce flakiness
-  },
-  reporter: [
-    ["list"],
-    // Warning: uncommenting the html reporter may cause the chromatic-archives
-    // directory to be deleted after the test run, which will break CI.
-    // [
-    //   'html',
-    //   {
-    //     outputFolder: 'test-results', // or whatever directory you want
-    //     open: 'never', // can be 'always' | 'on-failure' | 'never'
-    //   },
-    // ],
-  ],
+  workers: 1, // temporary change to see if single threaded testing stabilizes the tests
+  testDir: "./tests/e2e", // Folder for test files
+  reporter: "list",
+  // Configure paths for screenshots
+  // expect: {
+  //   toMatchSnapshot: {
+  //     threshold: 0.2, // Adjust the threshold for visual diffs
+  //   },
+  // },
+  // reporter: [["html", { outputFolder: "test-results/output/report" }]], // HTML report location
+  // outputDir: "test-results/output/screenshots", // Set output folder for test artifacts
   projects: [
     {
-      name: "admin",
+      // dependency for admin workflows
+      name: "admin_setup",
+      testMatch: /.*\admin_auth\.setup\.ts/,
+    },
+    {
+      // tests admin workflows
+      name: "chromium-admin",
+      grep: /@admin/,
       use: {
         ...devices["Desktop Chrome"],
-        viewport: { width: 1280, height: 720 },
+        // Use prepared auth state.
         storageState: "admin_auth.json",
       },
-      testIgnore: ["**/codeUtils.test.ts"],
+      dependencies: ["admin_setup"],
+    },
+    {
+      // tests logged out / guest workflows
+      name: "chromium-guest",
+      grep: /@guest/,
+      use: {
+        ...devices["Desktop Chrome"],
+      },
     },
   ],
 });

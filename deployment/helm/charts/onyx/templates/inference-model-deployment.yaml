@@ -3,14 +3,14 @@ kind: Deployment
 metadata:
   name: {{ include "onyx-stack.fullname" . }}-inference-model
   labels:
-    {{- range .Values.inferenceCapability.labels }}
+    {{- range .Values.inferenceCapability.deployment.labels }}
     {{ .key }}: {{ .value }}
     {{- end }}
 spec:
-  replicas: {{ .Values.inferenceCapability.replicaCount }}
+  replicas: {{ .Values.inferenceCapability.deployment.replicas }}
   selector:
     matchLabels:
-      {{- range .Values.inferenceCapability.labels }}
+      {{- range .Values.inferenceCapability.deployment.labels }}
       {{ .key }}: {{ .value }}
       {{- end }}
   template:
@@ -21,17 +21,25 @@ spec:
         {{- end }}
     spec:
       containers:
-      - name: model-server-inference
-        image: "{{ .Values.inferenceCapability.image.repository }}:{{ .Values.inferenceCapability.image.tag | default .Values.global.version }}"
-        imagePullPolicy: {{ .Values.global.pullPolicy }}
-        command: [ "uvicorn", "model_server.main:app", "--host", "0.0.0.0", "--port", "{{ .Values.inferenceCapability.containerPorts.server }}" ]
+      - name: {{ .Values.inferenceCapability.service.name }}
+        image: {{ .Values.inferenceCapability.deployment.image.repository }}:{{ .Values.inferenceCapability.deployment.image.tag }}
+        imagePullPolicy: {{ .Values.inferenceCapability.deployment.image.pullPolicy }}
+        command: {{ toYaml .Values.inferenceCapability.deployment.command | nindent 14 }}
         ports:
-        - name: model-server
-          containerPort: {{ .Values.inferenceCapability.containerPorts.server }}
-          protocol: TCP
+        - containerPort: {{ .Values.inferenceCapability.service.port }}
         envFrom:
         - configMapRef:
             name: {{ .Values.config.envConfigMapName }}
         env:
           {{- include "onyx-stack.envSecrets" . | nindent 12}}
-
+        volumeMounts:
+        {{- range .Values.inferenceCapability.deployment.volumeMounts }}
+        - name: {{ .name }}
+          mountPath: {{ .mountPath }}
+        {{- end }}
+      volumes:
+      {{- range .Values.inferenceCapability.deployment.volumes }}
+      - name: {{ .name }}
+        persistentVolumeClaim:
+          claimName: {{ .persistentVolumeClaim.claimName }}
+      {{- end }}

@@ -1,4 +1,7 @@
-import { BooleanFormField, TextFormField } from "@/components/Field";
+import {
+  BooleanFormField,
+  TextFormField,
+} from "@/components/admin/connectors/Field";
 import { Button } from "@/components/ui/button";
 import { Form, Formik } from "formik";
 import * as Yup from "yup";

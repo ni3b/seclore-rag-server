@@ -6,14 +6,14 @@ services:
       dockerfile: Dockerfile
     command: >
       /bin/sh -c "alembic upgrade head &&
-      echo \"Starting Onyx Api Server\" &&
+      echo \"Starting Seclore Api Server\" &&
       uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
     depends_on:
       - relational_db
       - index
       - cache
       - inference_model_server
-    restart: unless-stopped
+    restart: always
     ports:
       - "8080:8080"
     environment:
@@ -58,11 +58,6 @@ services:
       - VESPA_HOST=index
       - REDIS_HOST=cache
       - WEB_DOMAIN=${WEB_DOMAIN:-} # For frontend redirect auth purpose
-      # MinIO configuration
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
-      - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
-      - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
-      - S3_FILE_STORE_BUCKET_NAME=${S3_FILE_STORE_BUCKET_NAME:-}
       # Don't change the NLP model configs unless you know what you're doing
       - EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-}
       - DOCUMENT_ENCODER_MODEL=${DOCUMENT_ENCODER_MODEL:-}
@@ -80,7 +75,7 @@ services:
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-}
       - LOG_LEVEL=${LOG_LEVEL:-info} # Set to debug to get more fine-grained logs
       - LOG_ALL_MODEL_INTERACTIONS=${LOG_ALL_MODEL_INTERACTIONS:-} # LiteLLM Verbose Logging
-      # Log all of Onyx prompts and interactions with the LLM
+      # Log all of Seclore prompts and interactions with the LLM
       - LOG_DANSWER_MODEL_INTERACTIONS=${LOG_DANSWER_MODEL_INTERACTIONS:-}
       # If set to `true` will enable additional logs about Vespa query performance
       # (time spent on finding the right docs + time spent fetching summaries from disk)
@@ -97,14 +92,9 @@ services:
       # Chat Configs
       - HARD_DELETE_CHATS=${HARD_DELETE_CHATS:-}
 
-      # Vespa Language Forcing
-      # See: https://docs.vespa.ai/en/linguistics.html 
-      - VESPA_LANGUAGE_OVERRIDE=${VESPA_LANGUAGE_OVERRIDE:-}
-
       # Enterprise Edition only
       - API_KEY_HASH_ROUNDS=${API_KEY_HASH_ROUNDS:-}
       - ENABLE_PAID_ENTERPRISE_EDITION_FEATURES=${ENABLE_PAID_ENTERPRISE_EDITION_FEATURES:-false}
-      - ONYX_QUERY_HISTORY_TYPE=${ONYX_QUERY_HISTORY_TYPE:-}
     # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
     # volumes:
     #   - ./bundle.pem:/app/bundle.pem:ro
@@ -115,9 +105,6 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
-    volumes:
-      # optional, only for debugging purposes
-      - api_server_logs:/var/log
 
   background:
     image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
@@ -131,7 +118,7 @@ services:
       - cache
       - inference_model_server
       - indexing_model_server
-    restart: unless-stopped
+    restart: always
     environment:
       - ENCRYPTION_KEY_SECRET=${ENCRYPTION_KEY_SECRET:-}
       # Gen AI Settings (Needed by OnyxBot)
@@ -157,17 +144,10 @@ services:
       - POSTGRES_HOST=relational_db
       - POSTGRES_USER=${POSTGRES_USER:-}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
-      - DB_READONLY_USER=${DB_READONLY_USER:-}
-      - DB_READONLY_PASSWORD=${DB_READONLY_PASSWORD:-}
       - POSTGRES_DB=${POSTGRES_DB:-}
       - VESPA_HOST=index
       - REDIS_HOST=cache
       - WEB_DOMAIN=${WEB_DOMAIN:-} # For frontend redirect auth purpose for OAuth2 connectors
-      # MinIO configuration
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
-      - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
-      - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
-      - S3_FILE_STORE_BUCKET_NAME=${S3_FILE_STORE_BUCKET_NAME:-}
       # Don't change the NLP model configs unless you know what you're doing
       - DOCUMENT_ENCODER_MODEL=${DOCUMENT_ENCODER_MODEL:-}
       - DOC_EMBEDDING_DIM=${DOC_EMBEDDING_DIM:-}
@@ -179,6 +159,7 @@ services:
       - INDEXING_MODEL_SERVER_HOST=${INDEXING_MODEL_SERVER_HOST:-indexing_model_server}
       # Indexing Configs
       - VESPA_SEARCHER_THREADS=${VESPA_SEARCHER_THREADS:-}
+      - NUM_INDEXING_WORKERS=${NUM_INDEXING_WORKERS:-}
       - ENABLED_CONNECTOR_TYPES=${ENABLED_CONNECTOR_TYPES:-}
       - DISABLE_INDEX_UPDATE_ON_SWAP=${DISABLE_INDEX_UPDATE_ON_SWAP:-}
       - DASK_JOB_CLIENT_ENABLED=${DASK_JOB_CLIENT_ENABLED:-}
@@ -191,7 +172,7 @@ services:
       - GONG_CONNECTOR_START_TIME=${GONG_CONNECTOR_START_TIME:-}
       - NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP=${NOTION_CONNECTOR_ENABLE_RECURSIVE_PAGE_LOOKUP:-}
       - GITHUB_CONNECTOR_BASE_URL=${GITHUB_CONNECTOR_BASE_URL:-}
-      # Onyx SlackBot Configs
+      # Seclore SlackBot Configs
       - DANSWER_BOT_DISABLE_DOCS_ONLY_ANSWER=${DANSWER_BOT_DISABLE_DOCS_ONLY_ANSWER:-}
       - DANSWER_BOT_FEEDBACK_VISIBILITY=${DANSWER_BOT_FEEDBACK_VISIBILITY:-}
       - DANSWER_BOT_DISPLAY_ERROR_MSGS=${DANSWER_BOT_DISPLAY_ERROR_MSGS:-}
@@ -206,7 +187,7 @@ services:
       - DISABLE_TELEMETRY=${DISABLE_TELEMETRY:-}
       - LOG_LEVEL=${LOG_LEVEL:-info} # Set to debug to get more fine-grained logs
       - LOG_ALL_MODEL_INTERACTIONS=${LOG_ALL_MODEL_INTERACTIONS:-} # LiteLLM Verbose Logging
-      # Log all of Onyx prompts and interactions with the LLM
+      # Log all of Seclore prompts and interactions with the LLM
       - LOG_DANSWER_MODEL_INTERACTIONS=${LOG_DANSWER_MODEL_INTERACTIONS:-}
       - LOG_VESPA_TIMING_INFORMATION=${LOG_VESPA_TIMING_INFORMATION:-}
       # Celery Configs (defaults are set in the supervisord.conf file.
@@ -227,9 +208,6 @@ services:
     #   - ./bundle.pem:/app/bundle.pem:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # optional, only for debugging purposes
-    volumes:
-      - background_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -251,7 +229,7 @@ services:
         - NEXT_PUBLIC_THEME=${NEXT_PUBLIC_THEME:-}
     depends_on:
       - api_server
-    restart: unless-stopped
+    restart: always
     environment:
       - INTERNAL_URL=http://api_server:8080
       - WEB_DOMAIN=${WEB_DOMAIN:-}
@@ -291,8 +269,6 @@ services:
     volumes:
       # Not necessary, this is just to reduce download time during startup
       - model_cache_huggingface:/root/.cache/huggingface/
-      # optional, only for debugging purposes
-      - inference_model_server_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -330,8 +306,6 @@ services:
     volumes:
       # Not necessary, this is just to reduce download time during startup
       - indexing_huggingface_model_cache:/root/.cache/huggingface/
-      # optional, only for debugging purposes
-      - indexing_model_server_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -340,14 +314,11 @@ services:
 
   relational_db:
     image: postgres:15.2-alpine
-    shm_size: 1g
     command: -c 'max_connections=250'
-    restart: unless-stopped
+    restart: always
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-      - DB_READONLY_USER=${DB_READONLY_USER:-}
-      - DB_READONLY_PASSWORD=${DB_READONLY_PASSWORD:-}
     ports:
       - "5432:5432"
     volumes:
@@ -355,10 +326,8 @@ services:
 
   # This container name cannot have an underscore in it due to Vespa expectations of the URL
   index:
-    image: vespaengine/vespa:8.526.15
-    restart: unless-stopped
-    environment:
-      - VESPA_SKIP_UPGRADE_CHECK=true
+    image: vespaengine/vespa:8.277.17
+    restart: always
     ports:
       - "19071:19071"
       - "8081:8081"
@@ -372,7 +341,7 @@ services:
 
   nginx:
     image: nginx:1.23.4-alpine
-    restart: unless-stopped
+    restart: always
     # nginx will immediately crash with `nginx: [emerg] host not found in upstream`
     # if api_server / web_server are not up
     depends_on:
@@ -399,28 +368,9 @@ services:
       /bin/sh -c "dos2unix /etc/nginx/conf.d/run-nginx.sh 
       && /etc/nginx/conf.d/run-nginx.sh app.conf.template.dev"
 
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    ports:
-      - "9004:9000"
-      - "9005:9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_DEFAULT_BUCKETS: ${S3_FILE_STORE_BUCKET_NAME:-onyx-file-store-bucket}
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-
   cache:
     image: redis:7.4-alpine
-    restart: unless-stopped
+    restart: always
     ports:
       - "6379:6379"
     # docker silently mounts /data even without an explicit volume mount, which enables
@@ -430,12 +380,6 @@ services:
 volumes:
   db_volume:
   vespa_volume:
-  minio_data:
   # Created by the container itself
   model_cache_huggingface:
   indexing_huggingface_model_cache:
-  # for logs that we don't want to lose on container restarts
-  api_server_logs:
-  background_logs:
-  inference_model_server_logs:
-  indexing_model_server_logs:

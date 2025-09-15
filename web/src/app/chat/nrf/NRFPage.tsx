@@ -96,7 +96,7 @@ export default function NRFPage({
     setSettingsOpen((prev) => !prev);
   };
 
-  // If user toggles the "Use Onyx" switch to off, prompt a modal
+  // If user toggles the "Use Seclore" switch to off, prompt a modal
   const handleUseOnyxToggle = (checked: boolean) => {
     if (!checked) {
       setShowTurnOffModal(true);
@@ -225,7 +225,7 @@ export default function NRFPage({
           onClick={toggleSettings}
           className="bg-white bg-opacity-70 rounded-full p-2.5 cursor-pointer hover:bg-opacity-80 transition-colors duration-200"
         >
-          <Menu size={12} className="text-text-900" />
+          <Menu size={12} className="text-neutral-900" />
         </button>
       </div>
 
@@ -238,12 +238,12 @@ export default function NRFPage({
             <div className="pointer-events-auto absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center w-[90%] lg:max-w-3xl">
               <h1
                 className={`pl-2 text-xl text-left w-full mb-4 ${
-                  theme === "light" ? "text-text-800" : "text-white"
+                  theme === "light" ? "text-neutral-800" : "text-white"
                 }`}
               >
                 {isNight
-                  ? "End your day with Onyx"
-                  : "Start your day with Onyx"}
+                  ? "End your day with Seclore"
+                  : "Start your day with Seclore"}
               </h1>
 
               <SimplifiedChatInputBar
@@ -321,11 +321,11 @@ export default function NRFPage({
       <Dialog open={showTurnOffModal} onOpenChange={setShowTurnOffModal}>
         <DialogContent className="w-fit max-w-[95%]">
           <DialogHeader>
-            <DialogTitle>Turn off Onyx new tab page?</DialogTitle>
+            <DialogTitle>Turn off Seclore new tab page?</DialogTitle>
             <DialogDescription>
               You&apos;ll see your browser&apos;s default new tab page instead.
               <br />
-              You can turn it back on anytime in your Onyx settings.
+              You can turn it back on anytime in your Seclore settings.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex gap-2 justify-center">
@@ -347,6 +347,7 @@ export default function NRFPage({
             <p className="p-4">Loading login info…</p>
           ) : authType == "basic" ? (
             <LoginPage
+              showPageRedirect
               authUrl={null}
               authTypeMetadata={{
                 authType: authType as AuthType,
@@ -360,10 +361,10 @@ export default function NRFPage({
           ) : (
             <div className="flex flex-col items-center">
               <h2 className="text-center text-xl text-strong font-bold mb-4">
-                Welcome to Onyx
+                Welcome to Seclore
               </h2>
               <Button
-                className="bg-agent w-full hover:bg-accent-hover text-white"
+                className="bg-accent w-full hover:bg-accent-hover text-white"
                 onClick={() => {
                   if (window.top) {
                     window.top.location.href = "/auth/login";

@@ -1,3 +1,4 @@
+import { Header } from "next/dist/lib/load-custom-routes";
 import { MethodSpec, ToolSnapshot } from "./interfaces";
 
 interface ApiResponse<T> {

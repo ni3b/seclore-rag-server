@@ -1,15 +1,4 @@
 import { Persona } from "@/app/admin/assistants/interfaces";
-import {
-  FileOptionIcon,
-  PDFIcon,
-  TXTIcon,
-  DOCIcon,
-  HTMLIcon,
-  JSONIcon,
-  ImagesIcon,
-  XMLIcon,
-} from "@/components/icons/icons";
-import { SearchResultIcon } from "@/components/SearchResultIcon";
 
 export interface GridShape {
   encodedGrid: number;
@@ -21,7 +10,7 @@ export function generateRandomIconShape(): GridShape {
     .fill(null)
     .map(() => Array(4).fill(false));
 
-  const centerSquares: number[][] = [
+  const centerSquares = [
     [1, 1],
     [1, 2],
     [2, 1],
@@ -31,33 +20,14 @@ export function generateRandomIconShape(): GridShape {
   shuffleArray(centerSquares);
   const centerFillCount = Math.floor(Math.random() * 2) + 3; // 3 or 4
   for (let i = 0; i < centerFillCount; i++) {
-    const centerSquare: number[] | undefined = centerSquares[i];
-    if (centerSquare === undefined) {
-      continue;
-    }
-
-    const [row, col] = centerSquare;
-    if (row === undefined || col === undefined) {
-      continue;
-    }
-
-    const grid_row = grid[row];
-    if (grid_row === undefined) {
-      continue;
-    }
-
-    grid_row[col] = true;
+    const [row, col] = centerSquares[i];
+    grid[row][col] = true;
   }
   // Randomly fill remaining squares up to 10 total
   const remainingSquares = [];
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
-      const grid_row = grid[row];
-      if (grid_row === undefined) {
-        continue;
-      }
-
-      if (!grid_row[col]) {
+      if (!grid[row][col]) {
         remainingSquares.push([row, col]);
       }
     }
@@ -66,29 +36,15 @@ export function generateRandomIconShape(): GridShape {
 
   let filledSquares = centerFillCount;
   for (const [row, col] of remainingSquares) {
-    if (row === undefined || col == undefined) {
-      continue;
-    }
-
     if (filledSquares >= 10) break;
-
-    const grid_row = grid[row];
-    if (grid_row === undefined) {
-      continue;
-    }
-    grid_row[col] = true;
+    grid[row][col] = true;
     filledSquares++;
   }
 
   let path = "";
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
-      const grid_row = grid[row];
-      if (grid_row === undefined) {
-        continue;
-      }
-
-      if (grid_row[col]) {
+      if (grid[row][col]) {
         const x = col * 12;
         const y = row * 12;
         path += `M ${x} ${y} L ${x + 12} ${y} L ${x + 12} ${y + 12} L ${x} ${
@@ -105,12 +61,7 @@ function encodeGrid(grid: boolean[][]): number {
   let encoded = 0;
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
-      const grid_row = grid[row];
-      if (grid_row === undefined) {
-        continue;
-      }
-
-      if (grid_row[col]) {
+      if (grid[row][col]) {
         encoded |= 1 << (row * 4 + col);
       }
     }
@@ -124,13 +75,8 @@ function decodeGrid(encoded: number): boolean[][] {
     .map(() => Array(4).fill(false));
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
-      const grid_row = grid[row];
-      if (grid_row === undefined) {
-        continue;
-      }
-
       if (encoded & (1 << (row * 4 + col))) {
-        grid_row[col] = true;
+        grid[row][col] = true;
       }
     }
   }
@@ -149,12 +95,7 @@ export function createSVG(
   let path = "";
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 4; col++) {
-      const grid_row = grid[row];
-      if (grid_row === undefined) {
-        continue;
-      }
-
-      if (grid_row[col]) {
+      if (grid[row][col]) {
         const x = col * 12;
         const y = row * 12;
         path += `M ${x} ${y} L ${x + 12} ${y} L ${x + 12} ${y + 12} L ${x} ${
@@ -203,68 +144,29 @@ export const constructMiniFiedPersona = (
   assistant_icon_color: string | null,
   assistant_icon_shape: number | null,
   name: string,
-  id: number
+  id: number,
+  uploaded_image_id: string | null = null
 ): Persona => {
   return {
     id,
     name,
     icon_color: assistant_icon_color ?? undefined,
     icon_shape: assistant_icon_shape ?? undefined,
+    uploaded_image_id: uploaded_image_id ?? undefined,
     is_visible: true,
     is_public: true,
     display_priority: 0,
     description: "",
     document_sets: [],
+    prompts: [],
     tools: [],
+    search_start_date: null,
     owner: null,
     starter_messages: null,
+    prompt_shortcuts: [],
     builtin_persona: false,
     is_default_persona: false,
     users: [],
     groups: [],
-    user_file_ids: [],
-    user_folder_ids: [],
   };
-};
-
-export const getFileIconFromFileNameAndLink = (
-  fileName: string,
-  linkUrl?: string | null
-) => {
-  if (linkUrl) {
-    return <SearchResultIcon url={linkUrl} />;
-  }
-  const extension = fileName.split(".").pop()?.toLowerCase();
-  if (extension === "pdf") {
-    return <PDFIcon className="h-4 w-4 shrink-0" />;
-  } else if (extension === "txt") {
-    return <TXTIcon className="h-4 w-4 shrink-0" />;
-  } else if (extension === "doc" || extension === "docx") {
-    return <DOCIcon className="h-4 w-4 shrink-0" />;
-  } else if (extension === "html" || extension === "htm") {
-    return <HTMLIcon className="h-4 w-4 shrink-0" />;
-  } else if (extension === "json") {
-    return <JSONIcon className="h-4 w-4 shrink-0" />;
-  } else if (
-    ["jpg", "jpeg", "png", "gif", "svg", "webp"].includes(extension || "")
-  ) {
-    return <ImagesIcon className="h-4 w-4 shrink-0" />;
-  } else if (extension === "xml") {
-    return <XMLIcon className="h-4 w-4 shrink-0" />;
-  } else {
-    if (fileName.includes(".")) {
-      try {
-        // Check if fileName could be a valid domain when prefixed with https://
-        const url = new URL(`https://${fileName}`);
-        if (url.hostname === fileName) {
-          return <SearchResultIcon url={`https://${fileName}`} />;
-        }
-      } catch (e) {
-        // If URL construction fails, it's not a valid domain
-      }
-      return <FileOptionIcon className="h-4 w-4 shrink-0" />;
-    } else {
-      return <FileOptionIcon className="h-4 w-4 shrink-0" />;
-    }
-  }
 };

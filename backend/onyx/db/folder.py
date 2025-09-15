@@ -51,11 +51,12 @@ def get_folder_by_id(
 
 
 def create_folder(
-    user_id: UUID | None, folder_name: str | None, db_session: Session
+    user_id: UUID | None, folder_name: str | None, db_session: Session, creator_assistant_id: int | None,
 ) -> int:
     new_folder = ChatFolder(
         user_id=user_id,
         name=folder_name,
+        creator_assistant_id=creator_assistant_id,
     )
     db_session.add(new_folder)
     db_session.commit()

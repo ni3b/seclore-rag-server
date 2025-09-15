@@ -1,6 +1,10 @@
 import { Form, Formik } from "formik";
 import { PopupSpec } from "@/components/admin/connectors/Popup";
-import { SelectorFormField, TextFormField } from "@/components/Field";
+import {
+  BooleanFormField,
+  SelectorFormField,
+  TextFormField,
+} from "@/components/admin/connectors/Field";
 import { createApiKey, updateApiKey } from "./lib";
 import { Modal } from "@/components/Modal";
 import { Button } from "@/components/ui/button";

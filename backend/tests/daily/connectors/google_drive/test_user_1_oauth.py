@@ -1,54 +1,22 @@
+import time
 from collections.abc import Callable
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from onyx.connectors.google_drive.connector import GoogleDriveConnector
-from onyx.connectors.models import ConnectorFailure
 from onyx.connectors.models import Document
 from tests.daily.connectors.google_drive.consts_and_utils import ADMIN_FOLDER_3_FILE_IDS
 from tests.daily.connectors.google_drive.consts_and_utils import (
-    assert_expected_docs_in_retrieved_docs,
-)
-from tests.daily.connectors.google_drive.consts_and_utils import (
-    DONWLOAD_REVOKED_FILE_ID,
+    assert_retrieved_docs_match_expected,
 )
 from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_1_1_FILE_IDS
 from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_1_2_FILE_IDS
 from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_1_FILE_IDS
 from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_1_URL
 from tests.daily.connectors.google_drive.consts_and_utils import FOLDER_3_URL
-from tests.daily.connectors.google_drive.consts_and_utils import load_all_docs
-from tests.daily.connectors.google_drive.consts_and_utils import (
-    load_all_docs_with_failures,
-)
 from tests.daily.connectors.google_drive.consts_and_utils import SHARED_DRIVE_1_FILE_IDS
 from tests.daily.connectors.google_drive.consts_and_utils import TEST_USER_1_EMAIL
 from tests.daily.connectors.google_drive.consts_and_utils import TEST_USER_1_FILE_IDS
-
-
-def _check_for_error(
-    retrieved_docs_failures: list[Document | ConnectorFailure],
-    expected_file_ids: list[int],
-) -> list[Document]:
-    retrieved_docs = [
-        doc for doc in retrieved_docs_failures if isinstance(doc, Document)
-    ]
-    retrieved_failures = [
-        failure
-        for failure in retrieved_docs_failures
-        if isinstance(failure, ConnectorFailure)
-    ]
-    assert len(retrieved_failures) <= 1
-
-    # current behavior is to fail silently for 403s; leaving this here for when we revert
-    # if all 403s get fixed
-    if len(retrieved_failures) == 1:
-        fail_msg = retrieved_failures[0].failure_message
-        assert "HttpError 403" in fail_msg
-        assert f"file_{DONWLOAD_REVOKED_FILE_ID}.txt" in fail_msg
-
-    expected_file_ids.remove(DONWLOAD_REVOKED_FILE_ID)
-    return retrieved_docs
 
 
 @patch(
@@ -69,7 +37,9 @@ def test_all(
         shared_drive_urls=None,
         my_drive_emails=None,
     )
-    retrieved_docs_failures = load_all_docs_with_failures(connector)
+    retrieved_docs: list[Document] = []
+    for doc_batch in connector.poll_source(0, time.time()):
+        retrieved_docs.extend(doc_batch)
 
     expected_file_ids = (
         # These are the files from my drive
@@ -83,10 +53,7 @@ def test_all(
         + ADMIN_FOLDER_3_FILE_IDS
         + list(range(0, 2))
     )
-
-    retrieved_docs = _check_for_error(retrieved_docs_failures, expected_file_ids)
-
-    assert_expected_docs_in_retrieved_docs(
+    assert_retrieved_docs_match_expected(
         retrieved_docs=retrieved_docs,
         expected_file_ids=expected_file_ids,
     )
@@ -110,7 +77,9 @@ def test_shared_drives_only(
         shared_drive_urls=None,
         my_drive_emails=None,
     )
-    retrieved_docs_failures = load_all_docs_with_failures(connector)
+    retrieved_docs: list[Document] = []
+    for doc_batch in connector.poll_source(0, time.time()):
+        retrieved_docs.extend(doc_batch)
 
     expected_file_ids = (
         # These are the files from shared drives
@@ -119,9 +88,7 @@ def test_shared_drives_only(
         + FOLDER_1_1_FILE_IDS
         + FOLDER_1_2_FILE_IDS
     )
-
-    retrieved_docs = _check_for_error(retrieved_docs_failures, expected_file_ids)
-    assert_expected_docs_in_retrieved_docs(
+    assert_retrieved_docs_match_expected(
         retrieved_docs=retrieved_docs,
         expected_file_ids=expected_file_ids,
     )
@@ -145,14 +112,16 @@ def test_shared_with_me_only(
         shared_drive_urls=None,
         my_drive_emails=None,
     )
-    retrieved_docs = load_all_docs(connector)
+    retrieved_docs: list[Document] = []
+    for doc_batch in connector.poll_source(0, time.time()):
+        retrieved_docs.extend(doc_batch)
 
     expected_file_ids = (
         # These are the files shared with me from admin
         ADMIN_FOLDER_3_FILE_IDS
         + list(range(0, 2))
     )
-    assert_expected_docs_in_retrieved_docs(
+    assert_retrieved_docs_match_expected(
         retrieved_docs=retrieved_docs,
         expected_file_ids=expected_file_ids,
     )
@@ -176,11 +145,13 @@ def test_my_drive_only(
         shared_drive_urls=None,
         my_drive_emails=None,
     )
-    retrieved_docs = load_all_docs(connector)
+    retrieved_docs: list[Document] = []
+    for doc_batch in connector.poll_source(0, time.time()):
+        retrieved_docs.extend(doc_batch)
 
     # These are the files from my drive
     expected_file_ids = TEST_USER_1_FILE_IDS
-    assert_expected_docs_in_retrieved_docs(
+    assert_retrieved_docs_match_expected(
         retrieved_docs=retrieved_docs,
         expected_file_ids=expected_file_ids,
     )
@@ -204,13 +175,15 @@ def test_shared_my_drive_folder(
         shared_drive_urls=None,
         my_drive_emails=None,
     )
-    retrieved_docs = load_all_docs(connector)
+    retrieved_docs: list[Document] = []
+    for doc_batch in connector.poll_source(0, time.time()):
+        retrieved_docs.extend(doc_batch)
 
     expected_file_ids = (
         # this is a folder from admin's drive that is shared with me
         ADMIN_FOLDER_3_FILE_IDS
     )
-    assert_expected_docs_in_retrieved_docs(
+    assert_retrieved_docs_match_expected(
         retrieved_docs=retrieved_docs,
         expected_file_ids=expected_file_ids,
     )
@@ -234,10 +207,12 @@ def test_shared_drive_folder(
         shared_drive_urls=None,
         my_drive_emails=None,
     )
-    retrieved_docs = load_all_docs(connector)
+    retrieved_docs: list[Document] = []
+    for doc_batch in connector.poll_source(0, time.time()):
+        retrieved_docs.extend(doc_batch)
 
     expected_file_ids = FOLDER_1_FILE_IDS + FOLDER_1_1_FILE_IDS + FOLDER_1_2_FILE_IDS
-    assert_expected_docs_in_retrieved_docs(
+    assert_retrieved_docs_match_expected(
         retrieved_docs=retrieved_docs,
         expected_file_ids=expected_file_ids,
     )

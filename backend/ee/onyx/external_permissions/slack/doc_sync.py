@@ -1,23 +1,37 @@
-from collections.abc import Generator
-
 from slack_sdk import WebClient
 
-from ee.onyx.external_permissions.perm_sync_types import FetchAllDocumentsFunction
 from ee.onyx.external_permissions.slack.utils import fetch_user_id_to_email_map
 from onyx.access.models import DocExternalAccess
 from onyx.access.models import ExternalAccess
-from onyx.connectors.credentials_provider import OnyxDBCredentialsProvider
 from onyx.connectors.slack.connector import get_channels
-from onyx.connectors.slack.connector import make_paginated_slack_api_call
-from onyx.connectors.slack.connector import SlackConnector
+from onyx.connectors.slack.connector import make_paginated_slack_api_call_w_retries
+from onyx.connectors.slack.connector import SlackPollConnector
 from onyx.db.models import ConnectorCredentialPair
-from onyx.indexing.indexing_heartbeat import IndexingHeartbeatInterface
-from onyx.redis.redis_pool import get_redis_client
 from onyx.utils.logger import setup_logger
-from shared_configs.contextvars import get_current_tenant_id
 
 
 logger = setup_logger()
+
+
+def _get_slack_document_ids_and_channels(
+    cc_pair: ConnectorCredentialPair,
+) -> dict[str, list[str]]:
+    slack_connector = SlackPollConnector(**cc_pair.connector.connector_specific_config)
+    slack_connector.load_credentials(cc_pair.credential.credential_json)
+
+    slim_doc_generator = slack_connector.retrieve_all_slim_documents()
+
+    channel_doc_map: dict[str, list[str]] = {}
+    for doc_metadata_batch in slim_doc_generator:
+        for doc_metadata in doc_metadata_batch:
+            if doc_metadata.perm_sync_data is None:
+                continue
+            channel_id = doc_metadata.perm_sync_data["channel_id"]
+            if channel_id not in channel_doc_map:
+                channel_doc_map[channel_id] = []
+            channel_doc_map[channel_id].append(doc_metadata.id)
+
+    return channel_doc_map
 
 
 def _fetch_workspace_permissions(
@@ -30,7 +44,7 @@ def _fetch_workspace_permissions(
         external_user_emails=user_emails,
         # No group<->document mapping for slack
         external_user_group_ids=set(),
-        # No way to determine if slack is invite only without enterprise license
+        # No way to determine if slack is invite only without enterprise liscense
         is_public=False,
     )
 
@@ -64,7 +78,7 @@ def _fetch_channel_permissions(
     for channel_id in private_channel_ids:
         # Collect all member ids for the channel pagination calls
         member_ids = []
-        for result in make_paginated_slack_api_call(
+        for result in make_paginated_slack_api_call_w_retries(
             slack_client.conversations_members,
             channel=channel_id,
         ):
@@ -92,71 +106,29 @@ def _fetch_channel_permissions(
             external_user_emails=member_emails,
             # No group<->document mapping for slack
             external_user_group_ids=set(),
-            # No way to determine if slack is invite only without enterprise license
+            # No way to determine if slack is invite only without enterprise liscense
             is_public=False,
         )
 
     return channel_permissions
 
 
-def _get_slack_document_access(
-    slack_connector: SlackConnector,
-    channel_permissions: dict[str, ExternalAccess],
-    callback: IndexingHeartbeatInterface | None,
-) -> Generator[DocExternalAccess, None, None]:
-    slim_doc_generator = slack_connector.retrieve_all_slim_documents(callback=callback)
-
-    for doc_metadata_batch in slim_doc_generator:
-        for doc_metadata in doc_metadata_batch:
-            if doc_metadata.external_access is None:
-                raise ValueError(
-                    f"No external access for document {doc_metadata.id}. "
-                    "Please check to make sure that your Slack bot token has the "
-                    "`channels:read` scope"
-                )
-
-            yield DocExternalAccess(
-                external_access=doc_metadata.external_access,
-                doc_id=doc_metadata.id,
-            )
-
-        if callback:
-            if callback.should_stop():
-                raise RuntimeError("_get_slack_document_access: Stop signal detected")
-
-            callback.progress("_get_slack_document_access", 1)
-
-
 def slack_doc_sync(
     cc_pair: ConnectorCredentialPair,
-    fetch_all_existing_docs_fn: FetchAllDocumentsFunction,
-    callback: IndexingHeartbeatInterface | None,
-) -> Generator[DocExternalAccess, None, None]:
+) -> list[DocExternalAccess]:
     """
     Adds the external permissions to the documents in postgres
     if the document doesn't already exists in postgres, we create
     it in postgres so that when it gets created later, the permissions are
     already populated
     """
-    # Use credentials provider instead of directly loading credentials
-
-    tenant_id = get_current_tenant_id()
-    provider = OnyxDBCredentialsProvider(tenant_id, "slack", cc_pair.credential.id)
-    r = get_redis_client(tenant_id=tenant_id)
-    slack_client = SlackConnector.make_slack_web_client(
-        provider.get_provider_key(),
-        cc_pair.credential.credential_json["slack_bot_token"],
-        SlackConnector.MAX_RETRIES,
-        r,
+    slack_client = WebClient(
+        token=cc_pair.credential.credential_json["slack_bot_token"]
     )
-
     user_id_to_email_map = fetch_user_id_to_email_map(slack_client)
-    if not user_id_to_email_map:
-        raise ValueError(
-            "No user id to email map found. Please check to make sure that "
-            "your Slack bot token has the `users:read.email` scope"
-        )
-
+    channel_doc_map = _get_slack_document_ids_and_channels(
+        cc_pair=cc_pair,
+    )
     workspace_permissions = _fetch_workspace_permissions(
         user_id_to_email_map=user_id_to_email_map,
     )
@@ -166,11 +138,18 @@ def slack_doc_sync(
         user_id_to_email_map=user_id_to_email_map,
     )
 
-    slack_connector = SlackConnector(**cc_pair.connector.connector_specific_config)
-    slack_connector.set_credentials_provider(provider)
+    document_external_accesses = []
+    for channel_id, ext_access in channel_permissions.items():
+        doc_ids = channel_doc_map.get(channel_id)
+        if not doc_ids:
+            # No documents found for channel the channel_id
+            continue
 
-    yield from _get_slack_document_access(
-        slack_connector,
-        channel_permissions=channel_permissions,
-        callback=callback,
-    )
+        for doc_id in doc_ids:
+            document_external_accesses.append(
+                DocExternalAccess(
+                    external_access=ext_access,
+                    doc_id=doc_id,
+                )
+            )
+    return document_external_accesses

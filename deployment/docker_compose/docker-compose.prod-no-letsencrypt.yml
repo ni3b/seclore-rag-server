@@ -6,14 +6,14 @@ services:
       dockerfile: Dockerfile
     command: >
       /bin/sh -c "alembic upgrade head &&
-      echo \"Starting Onyx Api Server\" &&
+      echo \"Starting Seclore Api Server\" &&
       uvicorn onyx.main:app --host 0.0.0.0 --port 8080"
     depends_on:
       - relational_db
       - index
       - cache
       - inference_model_server
-    restart: unless-stopped
+    restart: always
     env_file:
       - .env
     environment:
@@ -26,10 +26,6 @@ services:
       - AWS_REGION_NAME=${AWS_REGION_NAME-}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY-}
-      # MinIO configuration
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
-      - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
-      - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
     # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
     # volumes:
     #   - ./bundle.pem:/app/bundle.pem:ro
@@ -40,10 +36,6 @@ services:
       options:
         max-size: "50m"
         max-file: "6"
-    volumes:
-      # optional, only for debugging purposes
-      - api_server_logs:/var/log
-
 
   background:
     image: onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}
@@ -57,7 +49,7 @@ services:
       - cache
       - inference_model_server
       - indexing_model_server
-    restart: unless-stopped
+    restart: always
     env_file:
       - .env
     environment:
@@ -71,17 +63,11 @@ services:
       - AWS_REGION_NAME=${AWS_REGION_NAME-}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY-}
-      # MinIO configuration
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-http://minio:9000}
-      - S3_AWS_ACCESS_KEY_ID=${S3_AWS_ACCESS_KEY_ID:-minioadmin}
-      - S3_AWS_SECRET_ACCESS_KEY=${S3_AWS_SECRET_ACCESS_KEY:-minioadmin}
     # Uncomment the line below to use if IAM_AUTH is true and you are using iam auth for postgres
     # volumes:
     #   - ./bundle.pem:/app/bundle.pem:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - background_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -103,7 +89,7 @@ services:
         - NEXT_PUBLIC_THEME=${NEXT_PUBLIC_THEME:-}
     depends_on:
       - api_server
-    restart: unless-stopped
+    restart: always
     env_file:
       - .env
     environment:
@@ -134,8 +120,6 @@ services:
     volumes:
       # Not necessary, this is just to reduce download time during startup
       - model_cache_huggingface:/root/.cache/huggingface/
-      # optional, only for debugging purposes
-      - inference_model_server_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -164,8 +148,6 @@ services:
     volumes:
       # Not necessary, this is just to reduce download time during startup
       - indexing_huggingface_model_cache:/root/.cache/huggingface/
-      # optional, only for debugging purposes
-      - indexing_model_server_logs:/var/log
     logging:
       driver: json-file
       options:
@@ -174,9 +156,8 @@ services:
 
   relational_db:
     image: postgres:15.2-alpine
-    shm_size: 1g
     command: -c 'max_connections=250'
-    restart: unless-stopped
+    restart: always
     # POSTGRES_USER and POSTGRES_PASSWORD should be set in .env file
     env_file:
       - .env
@@ -190,10 +171,8 @@ services:
 
   # This container name cannot have an underscore in it due to Vespa expectations of the URL
   index:
-    image: vespaengine/vespa:8.526.15
-    restart: unless-stopped
-    environment:
-      - VESPA_SKIP_UPGRADE_CHECK=true
+    image: vespaengine/vespa:8.277.17
+    restart: always
     ports:
       - "19071:19071"
       - "8081:8081"
@@ -207,7 +186,7 @@ services:
 
   nginx:
     image: nginx:1.23.4-alpine
-    restart: unless-stopped
+    restart: always
     # nginx will immediately crash with `nginx: [emerg] host not found in upstream`
     # if api_server / web_server are not up
     depends_on:
@@ -235,25 +214,9 @@ services:
     env_file:
       - .env.nginx
 
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_DEFAULT_BUCKETS: ${S3_FILE_STORE_BUCKET_NAME:-onyx-file-store-bucket}
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
-
   cache:
     image: redis:7.4-alpine
-    restart: unless-stopped
+    restart: always
     ports:
       - "6379:6379"
     # docker silently mounts /data even without an explicit volume mount, which enables
@@ -263,12 +226,6 @@ services:
 volumes:
   db_volume:
   vespa_volume:
-  minio_data:
   # Created by the container itself
   model_cache_huggingface:
   indexing_huggingface_model_cache:
-  # for logs that we don't want to lose on container restarts
-  api_server_logs:  
-  background_logs:
-  inference_model_server_logs:
-  indexing_model_server_logs:

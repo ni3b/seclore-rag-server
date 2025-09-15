@@ -1,9 +1,6 @@
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import as_completed
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from functools import wraps
 from typing import Any
 
@@ -14,7 +11,6 @@ from requests import RequestException
 from requests import Response
 from retry import retry
 
-from onyx.configs.app_configs import INDEXING_EMBEDDING_MODEL_NUM_THREADS
 from onyx.configs.app_configs import LARGE_CHUNK_RATIO
 from onyx.configs.app_configs import SKIP_WARM_UP
 from onyx.configs.model_configs import BATCH_SIZE_ENCODE_CHUNKS
@@ -30,8 +26,6 @@ from onyx.natural_language_processing.exceptions import (
 from onyx.natural_language_processing.utils import get_tokenizer
 from onyx.natural_language_processing.utils import tokenizer_trim_content
 from onyx.utils.logger import setup_logger
-from shared_configs.configs import INDEXING_MODEL_SERVER_HOST
-from shared_configs.configs import INDEXING_MODEL_SERVER_PORT
 from shared_configs.configs import MODEL_SERVER_HOST
 from shared_configs.configs import MODEL_SERVER_PORT
 from shared_configs.enums import EmbeddingProvider
@@ -39,11 +33,9 @@ from shared_configs.enums import EmbedTextType
 from shared_configs.enums import RerankerProvider
 from shared_configs.model_server_models import ConnectorClassificationRequest
 from shared_configs.model_server_models import ConnectorClassificationResponse
-from shared_configs.model_server_models import ContentClassificationPrediction
 from shared_configs.model_server_models import Embedding
 from shared_configs.model_server_models import EmbedRequest
 from shared_configs.model_server_models import EmbedResponse
-from shared_configs.model_server_models import InformationContentClassificationResponses
 from shared_configs.model_server_models import IntentRequest
 from shared_configs.model_server_models import IntentResponse
 from shared_configs.model_server_models import RerankRequest
@@ -54,7 +46,7 @@ logger = setup_logger()
 
 
 WARM_UP_STRINGS = [
-    "Onyx is amazing!",
+    "Seclore is amazing!",
     "Check out our easy deployment guide at",
     "https://docs.onyx.app/quickstart",
 ]
@@ -94,7 +86,6 @@ class EmbeddingModel:
         callback: IndexingHeartbeatInterface | None = None,
         api_version: str | None = None,
         deployment_name: str | None = None,
-        reduced_dimension: int | None = None,
     ) -> None:
         self.api_key = api_key
         self.provider_type = provider_type
@@ -106,7 +97,6 @@ class EmbeddingModel:
         self.api_url = api_url
         self.api_version = api_version
         self.deployment_name = deployment_name
-        self.reduced_dimension = reduced_dimension
         self.tokenizer = get_tokenizer(
             model_name=model_name, provider_type=provider_type
         )
@@ -115,24 +105,10 @@ class EmbeddingModel:
         model_server_url = build_model_server_url(server_host, server_port)
         self.embed_server_endpoint = f"{model_server_url}/encoder/bi-encoder-embed"
 
-    def _make_model_server_request(
-        self,
-        embed_request: EmbedRequest,
-        tenant_id: str | None = None,
-        request_id: str | None = None,
-    ) -> EmbedResponse:
+    def _make_model_server_request(self, embed_request: EmbedRequest) -> EmbedResponse:
         def _make_request() -> Response:
-            headers = {}
-            if tenant_id:
-                headers["X-Onyx-Tenant-ID"] = tenant_id
-
-            if request_id:
-                headers["X-Onyx-Request-ID"] = request_id
-
             response = requests.post(
-                self.embed_server_endpoint,
-                headers=headers,
-                json=embed_request.model_dump(),
+                self.embed_server_endpoint, json=embed_request.model_dump()
             )
             # signify that this is a rate limit error
             if response.status_code == 429:
@@ -179,27 +155,20 @@ class EmbeddingModel:
         text_type: EmbedTextType,
         batch_size: int,
         max_seq_length: int,
-        num_threads: int = INDEXING_EMBEDDING_MODEL_NUM_THREADS,
-        tenant_id: str | None = None,
-        request_id: str | None = None,
     ) -> list[Embedding]:
         text_batches = batch_list(texts, batch_size)
 
-        logger.debug(f"Encoding {len(texts)} texts in {len(text_batches)} batches")
+        logger.debug(
+            f"Encoding {len(texts)} texts in {len(text_batches)} batches for local model"
+        )
 
         embeddings: list[Embedding] = []
-
-        def process_batch(
-            batch_idx: int,
-            batch_len: int,
-            text_batch: list[str],
-            tenant_id: str | None = None,
-            request_id: str | None = None,
-        ) -> tuple[int, list[Embedding]]:
+        for idx, text_batch in enumerate(text_batches, start=1):
             if self.callback:
                 if self.callback.should_stop():
                     raise RuntimeError("_batch_encode_texts detected stop signal")
 
+            logger.debug(f"Encoding batch {idx} of {len(text_batches)}")
             embed_request = EmbedRequest(
                 model_name=self.model_name,
                 texts=text_batch,
@@ -213,72 +182,13 @@ class EmbeddingModel:
                 manual_query_prefix=self.query_prefix,
                 manual_passage_prefix=self.passage_prefix,
                 api_url=self.api_url,
-                reduced_dimension=self.reduced_dimension,
             )
 
-            start_time = time.time()
-            response = self._make_model_server_request(
-                embed_request, tenant_id=tenant_id, request_id=request_id
-            )
-            end_time = time.time()
+            response = self._make_model_server_request(embed_request)
+            embeddings.extend(response.embeddings)
 
-            processing_time = end_time - start_time
-            logger.debug(
-                f"EmbeddingModel.process_batch: Batch {batch_idx}/{batch_len} processing time: {processing_time:.2f} seconds"
-            )
-
-            return batch_idx, response.embeddings
-
-        # only multi thread if:
-        #   1. num_threads is greater than 1
-        #   2. we are using an API-based embedding model (provider_type is not None)
-        #   3. there are more than 1 batch (no point in threading if only 1)
-        if num_threads >= 1 and self.provider_type and len(text_batches) > 1:
-            with ThreadPoolExecutor(max_workers=num_threads) as executor:
-                future_to_batch = {
-                    executor.submit(
-                        partial(
-                            process_batch,
-                            idx,
-                            len(text_batches),
-                            batch,
-                            tenant_id=tenant_id,
-                            request_id=request_id,
-                        )
-                    ): idx
-                    for idx, batch in enumerate(text_batches, start=1)
-                }
-
-                # Collect results in order
-                batch_results: list[tuple[int, list[Embedding]]] = []
-                for future in as_completed(future_to_batch):
-                    try:
-                        result = future.result()
-                        batch_results.append(result)
-                        if self.callback:
-                            self.callback.progress("_batch_encode_texts", 1)
-                    except Exception as e:
-                        logger.exception("Embedding model failed to process batch")
-                        raise e
-
-                # Sort by batch index and extend embeddings
-                batch_results.sort(key=lambda x: x[0])
-                for _, batch_embeddings in batch_results:
-                    embeddings.extend(batch_embeddings)
-        else:
-            # Original sequential processing
-            for idx, text_batch in enumerate(text_batches, start=1):
-                _, batch_embeddings = process_batch(
-                    idx,
-                    len(text_batches),
-                    text_batch,
-                    tenant_id=tenant_id,
-                    request_id=request_id,
-                )
-                embeddings.extend(batch_embeddings)
-                if self.callback:
-                    self.callback.progress("_batch_encode_texts", 1)
-
+            if self.callback:
+                self.callback.progress("_batch_encode_texts", 1)
         return embeddings
 
     def encode(
@@ -289,8 +199,6 @@ class EmbeddingModel:
         local_embedding_batch_size: int = BATCH_SIZE_ENCODE_CHUNKS,
         api_embedding_batch_size: int = BATCH_SIZE_ENCODE_CHUNKS_FOR_API_EMBEDDING_SERVICES,
         max_seq_length: int = DOC_EMBEDDING_CONTEXT_SIZE,
-        tenant_id: str | None = None,
-        request_id: str | None = None,
     ) -> list[Embedding]:
         if not texts or not all(texts):
             raise ValueError(f"Empty or missing text for embedding: {texts}")
@@ -322,8 +230,6 @@ class EmbeddingModel:
             text_type=text_type,
             batch_size=batch_size,
             max_seq_length=max_seq_length,
-            tenant_id=tenant_id,
-            request_id=request_id,
         )
 
     @classmethod
@@ -347,7 +253,6 @@ class EmbeddingModel:
             retrim_content=retrim_content,
             api_version=search_settings.api_version,
             deployment_name=search_settings.deployment_name,
-            reduced_dimension=search_settings.reduced_dimension,
         )
 
 
@@ -419,31 +324,6 @@ class QueryAnalysisModel:
         response_model = IntentResponse(**response.json())
 
         return response_model.is_keyword, response_model.keywords
-
-
-class InformationContentClassificationModel:
-    def __init__(
-        self,
-        model_server_host: str = INDEXING_MODEL_SERVER_HOST,
-        model_server_port: int = INDEXING_MODEL_SERVER_PORT,
-    ) -> None:
-        model_server_url = build_model_server_url(model_server_host, model_server_port)
-        self.content_server_endpoint = (
-            model_server_url + "/custom/content-classification"
-        )
-
-    def predict(
-        self,
-        queries: list[str],
-    ) -> list[ContentClassificationPrediction]:
-        response = requests.post(self.content_server_endpoint, json=queries)
-        response.raise_for_status()
-
-        model_responses = InformationContentClassificationResponses(
-            information_content_classifications=response.json()
-        )
-
-        return model_responses.information_content_classifications
 
 
 class ConnectorClassificationModel:

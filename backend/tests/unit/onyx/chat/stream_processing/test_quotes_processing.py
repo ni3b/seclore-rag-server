@@ -13,7 +13,7 @@ def test_passed_in_quotes() -> None:
     test_answer = """{
         "answer": "I can assist "James" with that",
         "quotes": [
-            "Onyx can just ingest PDFs as they are. How GOOD it embeds them depends on the formatting of your PDFs.",
+            "Seclore can just ingest PDFs as they are. How GOOD it embeds them depends on the formatting of your PDFs.",
             "the ` onyx. llm ` package aims to provide a comprehensive framework."
         ]
     }"""
@@ -21,7 +21,7 @@ def test_passed_in_quotes() -> None:
     answer, quotes = separate_answer_quotes(test_answer, is_json_prompt=True)
     assert answer == 'I can assist "James" with that'
     assert quotes == [
-        "Onyx can just ingest PDFs as they are. How GOOD it embeds them depends on the formatting of your PDFs.",
+        "Seclore can just ingest PDFs as they are. How GOOD it embeds them depends on the formatting of your PDFs.",
         "the ` onyx. llm ` package aims to provide a comprehensive framework.",
     ]
 
@@ -29,13 +29,13 @@ def test_passed_in_quotes() -> None:
     test_answer = """{
         "answer": "She said the resposne was "1" and I said the reponse was "2".",
         "quotes": [
-            "Onyx can efficiently ingest PDFs, with the quality of embedding depending on the PDF's formatting."
+            "Seclore can efficiently ingest PDFs, with the quality of embedding depending on the PDF's formatting."
         ]
     }"""
     answer, quotes = separate_answer_quotes(test_answer, is_json_prompt=True)
     assert answer == 'She said the resposne was "1" and I said the reponse was "2".'
     assert quotes == [
-        "Onyx can efficiently ingest PDFs, with the quality of embedding depending on the PDF's formatting.",
+        "Seclore can efficiently ingest PDFs, with the quality of embedding depending on the PDF's formatting.",
     ]
 
 
@@ -150,9 +150,6 @@ def test_fuzzy_match_quotes_to_docs() -> None:
         metadata={},
         match_highlights=[],
         updated_at=None,
-        image_file_id=None,
-        doc_summary="",
-        chunk_context="",
     )
     test_chunk_1 = InferenceChunk(
         document_id="test doc 1",
@@ -171,9 +168,6 @@ def test_fuzzy_match_quotes_to_docs() -> None:
         metadata={},
         match_highlights=[],
         updated_at=None,
-        image_file_id=None,
-        doc_summary="",
-        chunk_context="",
     )
 
     test_quotes = [
@@ -192,7 +186,7 @@ def test_fuzzy_match_quotes_to_docs() -> None:
     results = match_quotes_to_docs(
         test_quotes, [test_chunk_0, test_chunk_1], fuzzy_search=True
     )
-    assert results.model_dump() == {
+    assert results == {
         "a doc with some": {"document": "test doc 0", "link": "doc 0 base"},
         "a doc with some LINK": {
             "document": "test doc 0",

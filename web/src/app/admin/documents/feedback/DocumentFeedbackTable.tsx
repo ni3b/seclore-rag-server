@@ -17,7 +17,6 @@ import { getErrorMsg } from "@/lib/fetchUtils";
 import { HoverPopup } from "@/components/HoverPopup";
 import { CustomCheckbox } from "@/components/CustomCheckbox";
 import { ScoreSection } from "../ScoreEditor";
-import { truncateString } from "@/lib/utils";
 
 const IsVisibleSection = ({
   document,
@@ -38,7 +37,7 @@ const IsVisibleSection = ({
               );
               onUpdate(response);
             }}
-            className="flex text-error cursor-pointer hover:bg-accent-background-hovered py-1 px-2 w-fit rounded-full"
+            className="flex text-error cursor-pointer hover:bg-hover py-1 px-2 w-fit rounded-full"
           >
             <div className="select-none">Hidden</div>
             <div className="ml-1 my-auto">
@@ -54,7 +53,7 @@ const IsVisibleSection = ({
               );
               onUpdate(response);
             }}
-            className="flex cursor-pointer hover:bg-accent-background-hovered py-1 px-2 w-fit rounded-full"
+            className="flex cursor-pointer hover:bg-hover py-1 px-2 w-fit rounded-full"
           >
             <div className="my-auto select-none">Visible</div>
             <div className="ml-1 my-auto">
@@ -110,12 +109,12 @@ export const DocumentFeedbackTable = ({
                 <TableRow key={document.document_id}>
                   <TableCell className="whitespace-normal break-all">
                     <a
-                      className="text-blue-600 dark:text-blue-300"
+                      className="text-blue-600"
                       href={document.link}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      {truncateString(document.semantic_id, 100)}
+                      {document.semantic_id}
                     </a>
                   </TableCell>
                   <TableCell>

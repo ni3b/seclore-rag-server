@@ -136,7 +136,7 @@ async function* sendMessage({
       // checkout https://github.com/onyx-dot-app/onyx/blob/main/backend/onyx/search/models.py#L105 for
       // all available options
       retrieval_options: {
-        run_search: "always",
+        run_search: "auto",
         filters: null,
       },
       query_override: null,

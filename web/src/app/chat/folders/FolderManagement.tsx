@@ -1,15 +1,16 @@
 // Function to create a new folder
-export async function createFolder(folderName: string): Promise<number> {
+export async function createFolder(folderName: string, creatorAssistantId?: number): Promise<number> {
   const response = await fetch("/api/folder", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ folder_name: folderName }),
+    body: JSON.stringify({ folder_name: folderName,
+      creator_assistant_id: creatorAssistantId 
+    }),
   });
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || "Failed to create folder");
+    throw new Error("Failed to create folder");
   }
   const data = await response.json();
   return data;

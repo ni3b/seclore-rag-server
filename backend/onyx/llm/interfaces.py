@@ -26,8 +26,6 @@ class LLMConfig(BaseModel):
     api_base: str | None = None
     api_version: str | None = None
     deployment_name: str | None = None
-    credentials_file: str | None = None
-    max_input_tokens: int
     # This disables the "model_" protected namespace for pydantic
     model_config = {"protected_namespaces": ()}
 
@@ -92,19 +90,13 @@ class LLM(abc.ABC):
         tools: list[dict] | None = None,
         tool_choice: ToolChoiceOptions | None = None,
         structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
     ) -> BaseMessage:
         self._precall(prompt)
         # TODO add a postcall to log model outputs independent of concrete class
         # implementation
+        logger.info(f"tool choice in invoke in llm interface call LLM {tool_choice}")
         return self._invoke_implementation(
-            prompt,
-            tools,
-            tool_choice,
-            structured_response_format,
-            timeout_override,
-            max_tokens,
+            prompt, tools, tool_choice, structured_response_format
         )
 
     @abc.abstractmethod
@@ -114,8 +106,6 @@ class LLM(abc.ABC):
         tools: list[dict] | None = None,
         tool_choice: ToolChoiceOptions | None = None,
         structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
     ) -> BaseMessage:
         raise NotImplementedError
 
@@ -125,19 +115,12 @@ class LLM(abc.ABC):
         tools: list[dict] | None = None,
         tool_choice: ToolChoiceOptions | None = None,
         structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
     ) -> Iterator[BaseMessage]:
         self._precall(prompt)
         # TODO add a postcall to log model outputs independent of concrete class
         # implementation
         messages = self._stream_implementation(
-            prompt,
-            tools,
-            tool_choice,
-            structured_response_format,
-            timeout_override,
-            max_tokens,
+            prompt, tools, tool_choice, structured_response_format
         )
 
         tokens = []
@@ -156,7 +139,5 @@ class LLM(abc.ABC):
         tools: list[dict] | None = None,
         tool_choice: ToolChoiceOptions | None = None,
         structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
     ) -> Iterator[BaseMessage]:
         raise NotImplementedError

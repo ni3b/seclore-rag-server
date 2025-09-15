@@ -26,8 +26,6 @@ from langchain_core.messages.tool import ToolMessage
 from langchain_core.prompt_values import PromptValue
 
 from onyx.configs.app_configs import LOG_DANSWER_MODEL_INTERACTIONS
-from onyx.configs.app_configs import MOCK_LLM_RESPONSE
-from onyx.configs.chat_configs import QA_TIMEOUT
 from onyx.configs.model_configs import (
     DISABLE_LITELLM_STREAMING,
 )
@@ -36,8 +34,6 @@ from onyx.configs.model_configs import LITELLM_EXTRA_BODY
 from onyx.llm.interfaces import LLM
 from onyx.llm.interfaces import LLMConfig
 from onyx.llm.interfaces import ToolChoiceOptions
-from onyx.llm.llm_provider_options import CREDENTIALS_FILE_CUSTOM_CONFIG_KEY
-from onyx.llm.utils import model_is_reasoning_model
 from onyx.server.utils import mask_string
 from onyx.utils.logger import setup_logger
 from onyx.utils.long_term_log import LongTermLogger
@@ -51,19 +47,6 @@ litellm.drop_params = True
 litellm.telemetry = False
 
 _LLM_PROMPT_LONG_TERM_LOG_CATEGORY = "llm_prompt"
-VERTEX_CREDENTIALS_KWARG = "vertex_credentials"
-
-
-class LLMTimeoutError(Exception):
-    """
-    Exception raised when an LLM call times out.
-    """
-
-
-class LLMRateLimitError(Exception):
-    """
-    Exception raised when an LLM call is rate limited.
-    """
 
 
 def _base_msg_to_role(msg: BaseMessage) -> str:
@@ -101,18 +84,16 @@ def _convert_litellm_message_to_langchain_message(
     elif role == "assistant":
         return AIMessage(
             content=content,
-            tool_calls=(
-                [
-                    {
-                        "name": tool_call.function.name or "",
-                        "args": json.loads(tool_call.function.arguments),
-                        "id": tool_call.id,
-                    }
-                    for tool_call in tool_calls
-                ]
-                if tool_calls
-                else []
-            ),
+            tool_calls=[
+                {
+                    "name": tool_call.function.name or "",
+                    "args": json.loads(tool_call.function.arguments),
+                    "id": tool_call.id,
+                }
+                for tool_call in tool_calls
+            ]
+            if tool_calls
+            else [],
         )
     elif role == "system":
         return SystemMessage(content=content)
@@ -171,7 +152,7 @@ def _convert_delta_to_message_chunk(
     stop_reason: str | None = None,
 ) -> BaseMessageChunk:
     """Adapted from langchain_community.chat_models.litellm._convert_delta_to_message_chunk"""
-    role = _dict.get("role") or (_base_msg_to_role(curr_msg) if curr_msg else "unknown")
+    role = _dict.get("role") or (_base_msg_to_role(curr_msg) if curr_msg else None)
     content = _dict.get("content") or ""
     additional_kwargs = {}
     if _dict.get("function_call"):
@@ -247,15 +228,15 @@ class DefaultMultiLLM(LLM):
     def __init__(
         self,
         api_key: str | None,
+        timeout: int,
         model_provider: str,
         model_name: str,
-        max_input_tokens: int,
-        timeout: int | None = None,
         api_base: str | None = None,
         api_version: str | None = None,
         deployment_name: str | None = None,
+        max_output_tokens: int | None = None,
         custom_llm_provider: str | None = None,
-        temperature: float | None = None,
+        temperature: float = GEN_AI_TEMPERATURE,
         custom_config: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
         extra_body: dict | None = LITELLM_EXTRA_BODY,
@@ -263,23 +244,26 @@ class DefaultMultiLLM(LLM):
         long_term_logger: LongTermLogger | None = None,
     ):
         self._timeout = timeout
-        if timeout is None:
-            if model_is_reasoning_model(model_name, model_provider):
-                self._timeout = QA_TIMEOUT * 10  # Reasoning models are slow
-            else:
-                self._timeout = QA_TIMEOUT
-
-        self._temperature = GEN_AI_TEMPERATURE if temperature is None else temperature
-
         self._model_provider = model_provider
         self._model_version = model_name
+        self._temperature = temperature
         self._api_key = api_key
         self._deployment_name = deployment_name
         self._api_base = api_base
         self._api_version = api_version
         self._custom_llm_provider = custom_llm_provider
         self._long_term_logger = long_term_logger
-        self._max_input_tokens = max_input_tokens
+
+        # This can be used to store the maximum output tokens for this model.
+        # self._max_output_tokens = (
+        #     max_output_tokens
+        #     if max_output_tokens is not None
+        #     else get_llm_max_output_tokens(
+        #         model_map=litellm.model_cost,
+        #         model_name=model_name,
+        #         model_provider=model_provider,
+        #     )
+        # )
         self._custom_config = custom_config
 
         # Create a dictionary for model-specific arguments if it's None
@@ -294,10 +278,11 @@ class DefaultMultiLLM(LLM):
             # Specifically pass in "vertex_credentials" / "vertex_location" as a
             # model_kwarg to the completion call for vertex AI. More details here:
             # https://docs.litellm.ai/docs/providers/vertex
+            vertex_credentials_key = "vertex_credentials"
             vertex_location_key = "vertex_location"
             for k, v in custom_config.items():
                 if model_provider == "vertex_ai":
-                    if k == VERTEX_CREDENTIALS_KWARG:
+                    if k == vertex_credentials_key:
                         model_kwargs[k] = v
                         continue
                     elif k == vertex_location_key:
@@ -363,6 +348,30 @@ class DefaultMultiLLM(LLM):
                 category=_LLM_PROMPT_LONG_TERM_LOG_CATEGORY,
             )
 
+    # def _calculate_max_output_tokens(self, prompt: LanguageModelInput) -> int:
+    #     # NOTE: This method can be used for calculating the maximum tokens for the stream,
+    #     # but it isn't used in practice due to the computational cost of counting tokens
+    #     # and because LLM providers automatically cut off at the maximum output.
+    #     # The implementation is kept for potential future use or debugging purposes.
+
+    #     # Get max input tokens for the model
+    #     max_context_tokens = get_max_input_tokens(
+    #         model_name=self.config.model_name, model_provider=self.config.model_provider
+    #     )
+
+    #     llm_tokenizer = get_tokenizer(
+    #         model_name=self.config.model_name,
+    #         provider_type=self.config.model_provider,
+    #     )
+    #     # Calculate tokens in the input prompt
+    #     input_tokens = sum(len(llm_tokenizer.encode(str(m))) for m in prompt)
+
+    #     # Calculate available tokens for output
+    #     available_output_tokens = max_context_tokens - input_tokens
+
+    #     # Return the lesser of available tokens or configured max
+    #     return min(self._max_output_tokens, available_output_tokens)
+
     def _completion(
         self,
         prompt: LanguageModelInput,
@@ -370,26 +379,15 @@ class DefaultMultiLLM(LLM):
         tool_choice: ToolChoiceOptions | None,
         stream: bool,
         structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
     ) -> litellm.ModelResponse | litellm.CustomStreamWrapper:
         # litellm doesn't accept LangChain BaseMessage objects, so we need to convert them
         # to a dict representation
         processed_prompt = _prompt_to_dict(prompt)
         self._record_call(processed_prompt)
 
-        final_model_kwargs = {**self._model_kwargs}
-        if (
-            VERTEX_CREDENTIALS_KWARG not in final_model_kwargs
-            and self.config.credentials_file
-        ):
-            final_model_kwargs[VERTEX_CREDENTIALS_KWARG] = self.config.credentials_file
-
         try:
             return litellm.completion(
-                mock_response=MOCK_LLM_RESPONSE,
                 # model choice
-                # model="openai/gpt-4",
                 model=f"{self.config.model_provider}/{self.config.deployment_name or self.config.model_name}",
                 # NOTE: have to pass in None instead of empty string for these
                 # otherwise litellm can have some issues with bedrock
@@ -401,56 +399,29 @@ class DefaultMultiLLM(LLM):
                 messages=processed_prompt,
                 tools=tools,
                 tool_choice=tool_choice if tools else None,
-                max_tokens=max_tokens,
                 # streaming choice
                 stream=stream,
                 # model params
                 temperature=self._temperature,
-                timeout=timeout_override or self._timeout,
+                timeout=self._timeout,
                 # For now, we don't support parallel tool calls
                 # NOTE: we can't pass this in if tools are not specified
                 # or else OpenAI throws an error
-                **(
-                    {"parallel_tool_calls": False}
-                    if tools
-                    and self.config.model_name
-                    not in [
-                        "o3-mini",
-                        "o3-preview",
-                        "o1",
-                        "o1-preview",
-                        "o1-mini",
-                        "o1-mini-2024-09-12",
-                        "o3-mini-2025-01-31",
-                    ]
-                    else {}
-                ),  # TODO: remove once LITELLM has patched
+                **({"parallel_tool_calls": False} if tools else {}),
                 **(
                     {"response_format": structured_response_format}
                     if structured_response_format
                     else {}
                 ),
-                **final_model_kwargs,
+                **self._model_kwargs,
             )
         except Exception as e:
             self._record_error(processed_prompt, e)
             # for break pointing
-            if isinstance(e, litellm.Timeout):
-                raise LLMTimeoutError(e)
-
-            elif isinstance(e, litellm.RateLimitError):
-                raise LLMRateLimitError(e)
-
             raise e
 
     @property
     def config(self) -> LLMConfig:
-        credentials_file: str | None = (
-            self._custom_config.get(CREDENTIALS_FILE_CUSTOM_CONFIG_KEY, None)
-            if self._custom_config
-            else None
-        )
-
         return LLMConfig(
             model_provider=self._model_provider,
             model_name=self._model_version,
@@ -459,8 +430,6 @@ class DefaultMultiLLM(LLM):
             api_base=self._api_base,
             api_version=self._api_version,
             deployment_name=self._deployment_name,
-            credentials_file=credentials_file,
-            max_input_tokens=self._max_input_tokens,
         )
 
     def _invoke_implementation(
@@ -469,8 +438,6 @@ class DefaultMultiLLM(LLM):
         tools: list[dict] | None = None,
         tool_choice: ToolChoiceOptions | None = None,
         structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
     ) -> BaseMessage:
         if LOG_DANSWER_MODEL_INTERACTIONS:
             self.log_model_configs()
@@ -478,13 +445,7 @@ class DefaultMultiLLM(LLM):
         response = cast(
             litellm.ModelResponse,
             self._completion(
-                prompt=prompt,
-                tools=tools,
-                tool_choice=tool_choice,
-                stream=False,
-                structured_response_format=structured_response_format,
-                timeout_override=timeout_override,
-                max_tokens=max_tokens,
+                prompt, tools, tool_choice, False, structured_response_format
             ),
         )
         choice = response.choices[0]
@@ -502,34 +463,21 @@ class DefaultMultiLLM(LLM):
         tools: list[dict] | None = None,
         tool_choice: ToolChoiceOptions | None = None,
         structured_response_format: dict | None = None,
-        timeout_override: int | None = None,
-        max_tokens: int | None = None,
     ) -> Iterator[BaseMessage]:
         if LOG_DANSWER_MODEL_INTERACTIONS:
             self.log_model_configs()
 
-        if DISABLE_LITELLM_STREAMING:
-            yield self.invoke(
-                prompt,
-                tools,
-                tool_choice,
-                structured_response_format,
-                timeout_override,
-                max_tokens,
-            )
+        if (
+            DISABLE_LITELLM_STREAMING or self.config.model_name == "o1-2024-12-17"
+        ):  # TODO: remove once litellm supports streaming
+            yield self.invoke(prompt, tools, tool_choice, structured_response_format)
             return
 
         output = None
         response = cast(
             litellm.CustomStreamWrapper,
             self._completion(
-                prompt=prompt,
-                tools=tools,
-                tool_choice=tool_choice,
-                stream=True,
-                structured_response_format=structured_response_format,
-                timeout_override=timeout_override,
-                max_tokens=max_tokens,
+                prompt, tools, tool_choice, True, structured_response_format
             ),
         )
         try:

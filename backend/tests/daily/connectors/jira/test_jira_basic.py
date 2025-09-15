@@ -1,20 +1,16 @@
 import os
 import time
-from unittest.mock import patch
 
 import pytest
 
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.jira.connector import JiraConnector
-from onyx.connectors.models import Document
-from tests.daily.connectors.utils import load_all_docs_from_checkpoint_connector
+from onyx.connectors.onyx_jira.connector import JiraConnector
 
 
 @pytest.fixture
 def jira_connector() -> JiraConnector:
     connector = JiraConnector(
-        jira_base_url="https://danswerai.atlassian.net",
-        project_key="AS",
+        "https://danswerai.atlassian.net/jira/software/c/projects/AS/boards/6",
         comment_email_blacklist=[],
     )
     connector.load_credentials(
@@ -26,88 +22,27 @@ def jira_connector() -> JiraConnector:
     return connector
 
 
-@patch(
-    "onyx.file_processing.extract_file_text.get_unstructured_api_key",
-    return_value=None,
-)
-def test_jira_connector_basic(reset: None, jira_connector: JiraConnector) -> None:
-    docs = load_all_docs_from_checkpoint_connector(
-        connector=jira_connector,
-        start=0,
-        end=time.time(),
-    )
-    assert len(docs) == 2
+def test_jira_connector_basic(jira_connector: JiraConnector) -> None:
+    doc_batch_generator = jira_connector.poll_source(0, time.time())
 
-    # Find story and epic
-    story: Document | None = None
-    epic: Document | None = None
-    for doc in docs:
-        if doc.metadata["issuetype"] == "Story":
-            story = doc
-        elif doc.metadata["issuetype"] == "Epic":
-            epic = doc
+    doc_batch = next(doc_batch_generator)
+    with pytest.raises(StopIteration):
+        next(doc_batch_generator)
 
-    assert story is not None
-    assert epic is not None
+    assert len(doc_batch) == 1
 
-    # Check task
-    assert story.id == "https://danswerai.atlassian.net/browse/AS-3"
-    assert story.semantic_identifier == "AS-3: Magic Answers"
-    assert story.source == DocumentSource.JIRA
-    assert story.metadata == {
-        "priority": "Medium",
-        "status": "Done",
-        "resolution": "Done",
-        "resolution_date": "2025-05-29T15:33:31.031-0700",
-        "reporter": "Chris Weaver",
-        "assignee": "Chris Weaver",
-        "issuetype": "Story",
-        "created": "2025-04-16T16:44:06.716-0700",
-        "reporter_email": "chris@onyx.app",
-        "assignee_email": "chris@onyx.app",
-        "project_name": "DailyConnectorTestProject",
-        "project": "AS",
-        "parent": "AS-4",
-        "key": "AS-3",
-        "updated": "2025-06-17T12:13:00.070-0700",
-    }
-    assert story.secondary_owners is None
-    assert story.title == "AS-3 Magic Answers"
-    assert story.from_ingestion_api is False
-    assert story.additional_info is None
+    doc = doc_batch[0]
 
-    assert len(story.sections) == 1
-    section = story.sections[0]
-    assert (
-        section.text
-        == "This is a critical request for super-human answer quality in Onyx! We need magic!\n"
-    )
-    assert section.link == "https://danswerai.atlassian.net/browse/AS-3"
+    assert doc.id == "https://danswerai.atlassian.net/browse/AS-2"
+    assert doc.semantic_identifier == "test123small"
+    assert doc.source == DocumentSource.JIRA
+    assert doc.metadata == {"priority": "Medium", "status": "Backlog"}
+    assert doc.secondary_owners is None
+    assert doc.title is None
+    assert doc.from_ingestion_api is False
+    assert doc.additional_info is None
 
-    # Check epic
-    assert epic.id == "https://danswerai.atlassian.net/browse/AS-4"
-    assert epic.semantic_identifier == "AS-4: EPIC"
-    assert epic.source == DocumentSource.JIRA
-    assert epic.metadata == {
-        "priority": "Medium",
-        "status": "Backlog",
-        "reporter": "Founder Onyx",
-        "assignee": "Chris Weaver",
-        "issuetype": "Epic",
-        "created": "2025-04-16T16:55:53.068-0700",
-        "reporter_email": "founders@onyx.app",
-        "assignee_email": "chris@onyx.app",
-        "project_name": "DailyConnectorTestProject",
-        "project": "AS",
-        "key": "AS-4",
-        "updated": "2025-05-29T14:43:05.312-0700",
-    }
-    assert epic.secondary_owners is None
-    assert epic.title == "AS-4 EPIC"
-    assert epic.from_ingestion_api is False
-    assert epic.additional_info is None
-
-    assert len(epic.sections) == 1
-    section = epic.sections[0]
+    assert len(doc.sections) == 1
+    section = doc.sections[0]
     assert section.text == "example_text\n"
-    assert section.link == "https://danswerai.atlassian.net/browse/AS-4"
+    assert section.link == "https://danswerai.atlassian.net/browse/AS-2"

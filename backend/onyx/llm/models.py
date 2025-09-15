@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from onyx.configs.constants import MessageType
 from onyx.file_store.models import InMemoryChatFile
 from onyx.llm.utils import build_content_with_imgs
-from onyx.llm.utils import message_to_string
 from onyx.tools.models import ToolCallFinalResult
 
 if TYPE_CHECKING:
@@ -24,7 +23,6 @@ class PreviousMessage(BaseModel):
     message_type: MessageType
     files: list[InMemoryChatFile]
     tool_call: ToolCallFinalResult | None
-    refined_answer_improvement: bool | None
 
     @classmethod
     def from_chat_message(
@@ -42,16 +40,13 @@ class PreviousMessage(BaseModel):
                 for file in available_files
                 if str(file.file_id) in message_file_ids
             ],
-            tool_call=(
-                ToolCallFinalResult(
-                    tool_name=chat_message.tool_call.tool_name,
-                    tool_args=chat_message.tool_call.tool_arguments,
-                    tool_result=chat_message.tool_call.tool_result,
-                )
-                if chat_message.tool_call
-                else None
-            ),
-            refined_answer_improvement=chat_message.refined_answer_improvement,
+            tool_call=ToolCallFinalResult(
+                tool_name=chat_message.tool_call.tool_name,
+                tool_args=chat_message.tool_call.tool_arguments,
+                tool_result=chat_message.tool_call.tool_result,
+            )
+            if chat_message.tool_call
+            else None,
         )
 
     def to_langchain_msg(self) -> BaseMessage:
@@ -62,22 +57,3 @@ class PreviousMessage(BaseModel):
             return AIMessage(content=content)
         else:
             return SystemMessage(content=content)
-
-    @classmethod
-    def from_langchain_msg(
-        cls, msg: BaseMessage, token_count: int
-    ) -> "PreviousMessage":
-        message_type = MessageType.SYSTEM
-        if isinstance(msg, HumanMessage):
-            message_type = MessageType.USER
-        elif isinstance(msg, AIMessage):
-            message_type = MessageType.ASSISTANT
-        message = message_to_string(msg)
-        return cls(
-            message=message,
-            token_count=token_count,
-            message_type=message_type,
-            files=[],
-            tool_call=None,
-            refined_answer_improvement=None,
-        )

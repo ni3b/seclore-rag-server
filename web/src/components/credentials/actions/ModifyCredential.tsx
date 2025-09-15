@@ -3,7 +3,7 @@ import { Modal } from "@/components/Modal";
 import { Button } from "@/components/ui/button";
 import Text from "@/components/ui/text";
 import { Badge } from "@/components/ui/badge";
-import { AccessType } from "@/lib/types";
+import { ValidSources } from "@/lib/types";
 import {
   EditIcon,
   NewChatIcon,
@@ -62,18 +62,12 @@ const CredentialSelectionTable = ({
     <div className="w-full max-h-[50vh] overflow-auto">
       <table className="w-full text-sm border-collapse">
         <thead className="sticky top-0 w-full">
-          <tr className="bg-neutral-100 dark:bg-neutral-900">
-            <th className="p-2 text-left font-medium text-neutral-600 dark:text-neutral-400"></th>
-            <th className="p-2 text-left font-medium text-neutral-600 dark:text-neutral-400">
-              ID
-            </th>
-            <th className="p-2 text-left font-medium text-neutral-600 dark:text-neutral-400">
-              Name
-            </th>
-            <th className="p-2 text-left font-medium text-neutral-600 dark:text-neutral-400">
-              Created
-            </th>
-            <th className="p-2 text-left font-medium text-neutral-600 dark:text-neutral-400">
+          <tr className="bg-gray-100">
+            <th className="p-2 text-left font-medium text-gray-600"></th>
+            <th className="p-2 text-left font-medium text-gray-600">ID</th>
+            <th className="p-2 text-left font-medium text-gray-600">Name</th>
+            <th className="p-2 text-left font-medium text-gray-600">Created</th>
+            <th className="p-2 text-left font-medium text-gray-600">
               Last Updated
             </th>
             <th />
@@ -90,10 +84,7 @@ const CredentialSelectionTable = ({
                 (editableCredential) => editableCredential.id === credential.id
               );
               return (
-                <tr
-                  key={credential.id}
-                  className="border-b hover:bg-background-50"
-                >
+                <tr key={credential.id} className="border-b hover:bg-gray-50">
                   <td className="min-w-[60px] p-2">
                     {!selected ? (
                       <input
@@ -157,7 +148,6 @@ export default function ModifyCredential({
   credentials,
   editableCredentials,
   defaultedCredential,
-  accessType,
   onSwap,
   onSwitch,
   onEditCredential,
@@ -167,19 +157,15 @@ export default function ModifyCredential({
   close?: () => void;
   showIfEmpty?: boolean;
   attachedConnector?: Connector<any>;
+  defaultedCredential?: Credential<any>;
   credentials: Credential<any>[];
   editableCredentials: Credential<any>[];
-  defaultedCredential?: Credential<any>;
-  accessType: AccessType;
-  onSwap?: (
-    newCredential: Credential<any>,
-    connectorId: number,
-    accessType: AccessType
-  ) => void;
+  source: ValidSources;
   onSwitch?: (newCredential: Credential<any>) => void;
-  onEditCredential?: (credential: Credential<ConfluenceCredentialJson>) => void;
-  onDeleteCredential: (credential: Credential<any | null>) => void;
+  onSwap?: (newCredential: Credential<any>, connectorId: number) => void;
   onCreateNew?: () => void;
+  onDeleteCredential: (credential: Credential<any | null>) => void;
+  onEditCredential?: (credential: Credential<ConfluenceCredentialJson>) => void;
 }) {
   const [selectedCredential, setSelectedCredential] =
     useState<Credential<any> | null>(null);
@@ -202,21 +188,23 @@ export default function ModifyCredential({
               Are you sure you want to delete this credential? You cannot delete
               credentials that are linked to live connectors.
             </p>
-            <div className="mt-6 flex gap-x-2 justify-end">
-              <Button
+            <div className="mt-6 flex justify-between">
+              <button
+                className="rounded py-1.5 px-2 bg-background-800 text-text-200"
                 onClick={async () => {
                   await onDeleteCredential(confirmDeletionCredential);
                   setConfirmDeletionCredential(null);
                 }}
               >
-                Confirm
-              </Button>
-              <Button
-                variant="outline"
+                Yes
+              </button>
+              <button
                 onClick={() => setConfirmDeletionCredential(null)}
+                className="rounded py-1.5 px-2 bg-background-150 text-text-800"
               >
-                Cancel
-              </Button>
+                {" "}
+                No
+              </button>
             </div>
           </>
         </Modal>
@@ -259,9 +247,9 @@ export default function ModifyCredential({
                 onClick={() => {
                   onCreateNew();
                 }}
-                className="bg-background-500 disabled:border-transparent 
-              transition-colors duration-150 ease-in disabled:bg-background-300 
-              disabled:hover:bg-background-300 hover:bg-background-600 cursor-pointer"
+                className="bg-neutral-500 disabled:border-transparent 
+              transition-colors duration-150 ease-in disabled:bg-neutral-300 
+              disabled:hover:bg-neutral-300 hover:bg-neutral-600 cursor-pointer"
               >
                 <div className="flex gap-x-2 items-center w-full border-none">
                   <NewChatIcon className="text-white" />
@@ -276,7 +264,7 @@ export default function ModifyCredential({
               disabled={selectedCredential == null}
               onClick={() => {
                 if (onSwap && attachedConnector) {
-                  onSwap(selectedCredential!, attachedConnector.id, accessType);
+                  onSwap(selectedCredential!, attachedConnector.id);
                   if (close) {
                     close();
                   }

@@ -1,4 +1,3 @@
-import contextvars
 import threading
 import uuid
 from enum import Enum
@@ -12,7 +11,7 @@ from onyx.configs.app_configs import ENTERPRISE_EDITION_ENABLED
 from onyx.configs.constants import KV_CUSTOMER_UUID_KEY
 from onyx.configs.constants import KV_INSTANCE_DOMAIN_KEY
 from onyx.configs.constants import MilestoneRecordType
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.engine import get_session_with_tenant
 from onyx.db.milestone import create_milestone_if_not_exists
 from onyx.db.models import User
 from onyx.key_value_store.factory import get_kv_store
@@ -22,7 +21,7 @@ from onyx.utils.variable_functionality import (
 )
 from onyx.utils.variable_functionality import noop_fallback
 from shared_configs.configs import MULTI_TENANT
-from shared_configs.contextvars import get_current_tenant_id
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
 
 _DANSWER_TELEMETRY_ENDPOINT = "https://telemetry.onyx.app/anonymous_telemetry"
 _CACHED_UUID: str | None = None
@@ -36,18 +35,13 @@ class RecordType(str, Enum):
     LATENCY = "latency"
     FAILURE = "failure"
     METRIC = "metric"
-    INDEXING_PROGRESS = "indexing_progress"
-    INDEXING_COMPLETE = "indexing_complete"
-    PERMISSION_SYNC_PROGRESS = "permission_sync_progress"
-    PERMISSION_SYNC_COMPLETE = "permission_sync_complete"
-    INDEX_ATTEMPT_STATUS = "index_attempt_status"
 
 
 def _get_or_generate_customer_id_mt(tenant_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_X500, tenant_id))
 
 
-def get_or_generate_uuid() -> str:
+def get_or_generate_uuid(tenant_id: str | None) -> str:
     # TODO: split out the whole "instance UUID" generation logic into a separate
     # utility function. Telemetry should not be aware at all of how the UUID is
     # generated/stored.
@@ -58,7 +52,7 @@ def get_or_generate_uuid() -> str:
     if _CACHED_UUID is not None:
         return _CACHED_UUID
 
-    kv_store = get_kv_store()
+    kv_store = get_kv_store(tenant_id=tenant_id)
 
     try:
         _CACHED_UUID = cast(str, kv_store.load(KV_CUSTOMER_UUID_KEY))
@@ -69,18 +63,18 @@ def get_or_generate_uuid() -> str:
     return _CACHED_UUID
 
 
-def _get_or_generate_instance_domain() -> str | None:  #
+def _get_or_generate_instance_domain(tenant_id: str | None = None) -> str | None:  #
     global _CACHED_INSTANCE_DOMAIN
 
     if _CACHED_INSTANCE_DOMAIN is not None:
         return _CACHED_INSTANCE_DOMAIN
 
-    kv_store = get_kv_store()
+    kv_store = get_kv_store(tenant_id=tenant_id)
 
     try:
         _CACHED_INSTANCE_DOMAIN = cast(str, kv_store.load(KV_INSTANCE_DOMAIN_KEY))
     except KvKeyNotFoundError:
-        with get_session_with_current_tenant() as db_session:
+        with get_session_with_tenant(tenant_id=tenant_id) as db_session:
             first_user = db_session.query(User).first()
             if first_user:
                 _CACHED_INSTANCE_DOMAIN = first_user.email.split("@")[-1]
@@ -95,12 +89,12 @@ def optional_telemetry(
     record_type: RecordType,
     data: dict,
     user_id: str | None = None,
-    tenant_id: str | None = None,  # Allows for override of tenant_id
+    tenant_id: str | None = None,
 ) -> None:
     if DISABLE_TELEMETRY:
         return
 
-    tenant_id = tenant_id or get_current_tenant_id()
+    tenant_id = tenant_id or CURRENT_TENANT_ID_CONTEXTVAR.get()
 
     try:
 
@@ -109,7 +103,7 @@ def optional_telemetry(
                 customer_uuid = (
                     _get_or_generate_customer_id_mt(tenant_id)
                     if MULTI_TENANT
-                    else get_or_generate_uuid()
+                    else get_or_generate_uuid(tenant_id)
                 )
                 payload = {
                     "data": data,
@@ -121,7 +115,9 @@ def optional_telemetry(
                     "is_cloud": MULTI_TENANT,
                 }
                 if ENTERPRISE_EDITION_ENABLED:
-                    payload["instance_domain"] = _get_or_generate_instance_domain()
+                    payload["instance_domain"] = _get_or_generate_instance_domain(
+                        tenant_id
+                    )
                 requests.post(
                     _DANSWER_TELEMETRY_ENDPOINT,
                     headers={"Content-Type": "application/json"},
@@ -132,15 +128,11 @@ def optional_telemetry(
                 # This way it silences all thread level logging as well
                 pass
 
-        # Run in separate thread with the same context as the current thread
-        # This is to ensure that the thread gets the current tenant ID
-        current_context = contextvars.copy_context()
-        thread = threading.Thread(
-            target=lambda: current_context.run(telemetry_logic), daemon=True
-        )
+        # Run in separate thread to have minimal overhead in main flows
+        thread = threading.Thread(target=telemetry_logic, daemon=True)
         thread.start()
     except Exception:
-        # Should never interfere with normal functions of Onyx
+        # Should never interfere with normal functions of Seclore
         pass
 
 
@@ -153,8 +145,8 @@ def mt_cloud_telemetry(
         return
 
     # MIT version should not need to include any Posthog code
-    # This is only for Onyx MT Cloud, this code should also never be hit, no reason for any orgs to
-    # be running the Multi Tenant version of Onyx.
+    # This is only for Seclore MT Cloud, this code should also never be hit, no reason for any orgs to
+    # be running the Multi Tenant version of Seclore.
     fetch_versioned_implementation_with_fallback(
         module="onyx.utils.telemetry",
         attribute="event_telemetry",

@@ -1,23 +1,27 @@
+import asyncio
+import uuid
 from uuid import UUID
 
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
+from fastapi import Request
 from fastapi import UploadFile
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
-from onyx.auth.users import current_chat_accessible_user
+from onyx.auth.users import current_chat_accesssible_user
 from onyx.auth.users import current_curator_or_admin_user
 from onyx.auth.users import current_limited_user
 from onyx.auth.users import current_user
 from onyx.configs.constants import FileOrigin
 from onyx.configs.constants import MilestoneRecordType
 from onyx.configs.constants import NotificationType
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_current_tenant_id
+from onyx.db.engine import get_session
 from onyx.db.models import StarterMessageModel as StarterMessage
 from onyx.db.models import User
 from onyx.db.notification import create_notification
@@ -30,7 +34,7 @@ from onyx.db.persona import get_personas_for_user
 from onyx.db.persona import mark_persona_as_deleted
 from onyx.db.persona import mark_persona_as_not_deleted
 from onyx.db.persona import update_all_personas_display_priority
-from onyx.db.persona import update_persona_is_default
+from onyx.db.persona import update_persona_default_status
 from onyx.db.persona import update_persona_label
 from onyx.db.persona import update_persona_public_status
 from onyx.db.persona import update_persona_shared_users
@@ -42,7 +46,6 @@ from onyx.file_store.models import ChatFileType
 from onyx.secondary_llm_flows.starter_message_creation import (
     generate_starter_messages,
 )
-from onyx.server.features.persona.models import FullPersonaSnapshot
 from onyx.server.features.persona.models import GenerateStarterMessageRequest
 from onyx.server.features.persona.models import ImageGenerationToolStatus
 from onyx.server.features.persona.models import PersonaLabelCreate
@@ -55,9 +58,10 @@ from onyx.server.models import DisplayPriorityRequest
 from onyx.tools.utils import is_image_generation_available
 from onyx.utils.logger import setup_logger
 from onyx.utils.telemetry import create_milestone_and_report
-from shared_configs.contextvars import get_current_tenant_id
+from onyx.auth.microsoft_oidc import check_and_grant_group_access
 
 logger = setup_logger()
+
 
 admin_router = APIRouter(prefix="/admin/persona")
 basic_router = APIRouter(prefix="/persona")
@@ -72,7 +76,7 @@ class IsPublicRequest(BaseModel):
 
 
 class IsDefaultRequest(BaseModel):
-    is_default_persona: bool
+    is_default: bool
 
 
 @admin_router.patch("/{persona_id}/visible")
@@ -91,7 +95,7 @@ def patch_persona_visibility(
 
 
 @basic_router.patch("/{persona_id}/public")
-def patch_user_persona_public_status(
+def patch_user_presona_public_status(
     persona_id: int,
     is_public_request: IsPublicRequest,
     user: User | None = Depends(current_user),
@@ -109,17 +113,17 @@ def patch_user_persona_public_status(
         raise HTTPException(status_code=403, detail=str(e))
 
 
-@admin_router.patch("/{persona_id}/default")
-def patch_persona_default_status(
+@basic_router.patch("/{persona_id}/default")
+def patch_user_persona_default_status(
     persona_id: int,
     is_default_request: IsDefaultRequest,
-    user: User | None = Depends(current_curator_or_admin_user),
+    user: User | None = Depends(current_user),
     db_session: Session = Depends(get_session),
 ) -> None:
     try:
-        update_persona_is_default(
+        update_persona_default_status(
             persona_id=persona_id,
-            is_default=is_default_request.is_default_persona,
+            is_default=is_default_request.is_default,
             db_session=db_session,
             user=user,
         )
@@ -172,7 +176,7 @@ def undelete_persona(
     )
 
 
-# used for assistant profile pictures
+# used for assistat profile pictures
 @admin_router.post("/upload-image")
 def upload_file(
     file: UploadFile,
@@ -181,7 +185,9 @@ def upload_file(
 ) -> dict[str, str]:
     file_store = get_default_file_store(db_session)
     file_type = ChatFileType.IMAGE
-    file_id = file_store.save_file(
+    file_id = str(uuid.uuid4())
+    file_store.save_file(
+        file_name=file_id,
         content=file.file,
         display_name=file.filename,
         file_origin=FileOrigin.CHAT_UPLOAD,
@@ -198,21 +204,24 @@ def create_persona(
     persona_upsert_request: PersonaUpsertRequest,
     user: User | None = Depends(current_user),
     db_session: Session = Depends(get_session),
+    tenant_id: str | None = Depends(get_current_tenant_id),
 ) -> PersonaSnapshot:
-    tenant_id = get_current_tenant_id()
-
     prompt_id = (
         persona_upsert_request.prompt_ids[0]
         if persona_upsert_request.prompt_ids
         and len(persona_upsert_request.prompt_ids) > 0
         else None
     )
-
     prompt = upsert_prompt(
         db_session=db_session,
         user=user,
         name=build_prompt_name_from_persona_name(persona_upsert_request.name),
         system_prompt=persona_upsert_request.system_prompt,
+        search_tool_description=persona_upsert_request.search_tool_description,
+        history_query_rephrase=persona_upsert_request.history_query_rephrase,
+        custom_tool_argument_system_prompt=persona_upsert_request.custom_tool_argument_system_prompt,
+        search_query_prompt=persona_upsert_request.search_query_prompt,
+        search_data_source_selector_prompt=persona_upsert_request.search_data_source_selector_prompt,
         task_prompt=persona_upsert_request.task_prompt,
         datetime_aware=persona_upsert_request.datetime_aware,
         include_citations=persona_upsert_request.include_citations,
@@ -261,6 +270,11 @@ def update_persona(
         datetime_aware=persona_upsert_request.datetime_aware,
         system_prompt=persona_upsert_request.system_prompt,
         task_prompt=persona_upsert_request.task_prompt,
+        search_tool_description=persona_upsert_request.search_tool_description,
+        history_query_rephrase=persona_upsert_request.history_query_rephrase,
+        custom_tool_argument_system_prompt=persona_upsert_request.custom_tool_argument_system_prompt,
+        search_query_prompt=persona_upsert_request.search_query_prompt,
+        search_data_source_selector_prompt=persona_upsert_request.search_data_source_selector_prompt,
         include_citations=persona_upsert_request.include_citations,
         prompt_id=prompt_id,
     )
@@ -378,9 +392,8 @@ def delete_persona(
 
 @basic_router.get("/image-generation-tool")
 def get_image_generation_tool(
-    _: User | None = Depends(
-        current_user
-    ),  # User param not used but kept for consistency
+    _: User
+    | None = Depends(current_user),  # User param not used but kept for consistency
     db_session: Session = Depends(get_session),
 ) -> ImageGenerationToolStatus:  # Use bool instead of str for boolean values
     is_available = is_image_generation_available(db_session=db_session)
@@ -389,19 +402,28 @@ def get_image_generation_tool(
 
 @basic_router.get("")
 def list_personas(
-    user: User | None = Depends(current_chat_accessible_user),
+    user: User | None = Depends(current_chat_accesssible_user),
     db_session: Session = Depends(get_session),
     include_deleted: bool = False,
     persona_ids: list[int] = Query(None),
+    request: Request = None,
 ) -> list[PersonaSnapshot]:
+    # Trigger AD group sync for OIDC users to ensure they have access to assistants
+    # that were recently granted to their groups
+
+    logger.info(f"inside list persona API....")
     personas = get_personas_for_user(
         user=user,
         include_deleted=include_deleted,
         db_session=db_session,
         get_editable=False,
         joinedload_all=True,
-        include_prompt=False,
     )
+    
+    # Extract persona names for logging
+    persona_names = [persona.name for persona in personas]
+    logger.info(f"persona names in list_personas api result: {persona_names}")
+    logger.info(f"total personas count: {len(personas)}")
 
     if persona_ids:
         personas = [p for p in personas if p.id in persona_ids]
@@ -424,8 +446,8 @@ def get_persona(
     persona_id: int,
     user: User | None = Depends(current_limited_user),
     db_session: Session = Depends(get_session),
-) -> FullPersonaSnapshot:
-    return FullPersonaSnapshot.from_model(
+) -> PersonaSnapshot:
+    return PersonaSnapshot.from_model(
         get_persona_by_id(
             persona_id=persona_id,
             user=user,

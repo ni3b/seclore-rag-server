@@ -16,7 +16,7 @@ export default function OpenEmbeddingPage({
   onSelectOpenSource,
   selectedProvider,
 }: {
-  onSelectOpenSource: (model: HostedEmbeddingModel) => void;
+  onSelectOpenSource: (model: HostedEmbeddingModel) => Promise<void>;
   selectedProvider: HostedEmbeddingModel | CloudEmbeddingModel;
 }) {
   const [configureModel, setConfigureModel] = useState(false);
@@ -57,9 +57,9 @@ export default function OpenEmbeddingPage({
         </a>
         .
         <br />
-        <b>NOTE:</b> not all models listed will work with Onyx, since some have
+        <b>NOTE:</b> not all models listed will work with Seclore, since some have
         unique interfaces or special requirements. If in doubt, reach out to the
-        Onyx team.
+        Seclore team.
       </Text>
       {!configureModel && (
         <Button

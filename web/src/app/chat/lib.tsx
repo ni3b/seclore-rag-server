@@ -4,12 +4,6 @@ import {
   Filters,
   DocumentInfoPacket,
   StreamStopInfo,
-  ProSearchPacket,
-  SubQueryPiece,
-  AgentAnswerPiece,
-  SubQuestionPiece,
-  ExtendedToolResponse,
-  RefinedAnswerImprovement,
 } from "@/lib/search/interfaces";
 import { handleSSEStream } from "@/lib/search/streamingUtils";
 import { ChatState, FeedbackType } from "./types";
@@ -25,8 +19,6 @@ import {
   RetrievalType,
   StreamingError,
   ToolCallMetadata,
-  AgenticMessageResponseIDInfo,
-  UserKnowledgeFilePacket,
 } from "./interfaces";
 import { Persona } from "../admin/assistants/interfaces";
 import { ReadonlyURLSearchParams } from "next/navigation";
@@ -49,10 +41,10 @@ export function getChatRetentionInfo(
 ): ChatRetentionInfo {
   // If `maximum_chat_retention_days` isn't set- never display retention warning.
   const chatRetentionDays = settings.maximum_chat_retention_days || 10000;
-  const updatedDate = new Date(chatSession.time_updated);
+  const createdDate = new Date(chatSession.time_created);
   const today = new Date();
   const daysFromCreation = Math.ceil(
-    (today.getTime() - updatedDate.getTime()) / (1000 * 3600 * 24)
+    (today.getTime() - createdDate.getTime()) / (1000 * 3600 * 24)
   );
   const daysUntilExpiration = chatRetentionDays - daysFromCreation;
   const showRetentionWarning =
@@ -66,7 +58,7 @@ export function getChatRetentionInfo(
   };
 }
 
-export async function updateLlmOverrideForChatSession(
+export async function updateModelOverrideForChatSession(
   chatSessionId: string,
   newAlternateModel: string
 ) {
@@ -78,23 +70,6 @@ export async function updateLlmOverrideForChatSession(
     body: JSON.stringify({
       chat_session_id: chatSessionId,
       new_alternate_model: newAlternateModel,
-    }),
-  });
-  return response;
-}
-
-export async function updateTemperatureOverrideForChatSession(
-  chatSessionId: string,
-  newTemperature: number
-) {
-  const response = await fetch("/api/chat/update-chat-session-temperature", {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      chat_session_id: chatSessionId,
-      temperature_override: newTemperature,
     }),
   });
   return response;
@@ -127,20 +102,6 @@ export async function createChatSession(
   return chatSessionResponseJson.chat_session_id;
 }
 
-export const isPacketType = (data: any): data is PacketType => {
-  return (
-    data.hasOwnProperty("answer_piece") ||
-    data.hasOwnProperty("top_documents") ||
-    data.hasOwnProperty("tool_name") ||
-    data.hasOwnProperty("file_ids") ||
-    data.hasOwnProperty("error") ||
-    data.hasOwnProperty("message_id") ||
-    data.hasOwnProperty("stop_reason") ||
-    data.hasOwnProperty("user_message_id") ||
-    data.hasOwnProperty("reserved_assistant_message_id")
-  );
-};
-
 export type PacketType =
   | ToolCallMetadata
   | BackendMessage
@@ -150,46 +111,15 @@ export type PacketType =
   | FileChatDisplay
   | StreamingError
   | MessageResponseIDInfo
-  | StreamStopInfo
-  | ProSearchPacket
-  | SubQueryPiece
-  | AgentAnswerPiece
-  | SubQuestionPiece
-  | ExtendedToolResponse
-  | RefinedAnswerImprovement
-  | AgenticMessageResponseIDInfo
-  | UserKnowledgeFilePacket;
-
-export interface SendMessageParams {
-  regenerate: boolean;
-  message: string;
-  fileDescriptors: FileDescriptor[];
-  parentMessageId: number | null;
-  chatSessionId: string;
-  filters: Filters | null;
-  selectedDocumentIds: number[] | null;
-  queryOverride?: string;
-  forceSearch?: boolean;
-  modelProvider?: string;
-  modelVersion?: string;
-  temperature?: number;
-  systemPromptOverride?: string;
-  useExistingUserMessage?: boolean;
-  alternateAssistantId?: number;
-  signal?: AbortSignal;
-  userFileIds?: number[];
-  userFolderIds?: number[];
-  useLanggraph?: boolean;
-}
+  | StreamStopInfo;
 
 export async function* sendMessage({
   regenerate,
   message,
   fileDescriptors,
-  userFileIds,
-  userFolderIds,
   parentMessageId,
   chatSessionId,
+  promptId,
   filters,
   selectedDocumentIds,
   queryOverride,
@@ -200,9 +130,28 @@ export async function* sendMessage({
   systemPromptOverride,
   useExistingUserMessage,
   alternateAssistantId,
+  allowedCustomToolIds,
   signal,
-  useLanggraph,
-}: SendMessageParams): AsyncGenerator<PacketType, void, unknown> {
+}: {
+  regenerate: boolean;
+  message: string;
+  fileDescriptors: FileDescriptor[];
+  parentMessageId: number | null;
+  chatSessionId: string;
+  promptId: number | null | undefined;
+  filters: Filters | null;
+  selectedDocumentIds: number[] | null;
+  queryOverride?: string;
+  forceSearch?: boolean;
+  modelProvider?: string;
+  modelVersion?: string;
+  temperature?: number;
+  systemPromptOverride?: string;
+  useExistingUserMessage?: boolean;
+  alternateAssistantId?: number;
+  allowedCustomToolIds?: number[];
+  signal?: AbortSignal;
+}): AsyncGenerator<PacketType, void, unknown> {
   const documentsAreSelected =
     selectedDocumentIds && selectedDocumentIds.length > 0;
   const body = JSON.stringify({
@@ -210,20 +159,21 @@ export async function* sendMessage({
     chat_session_id: chatSessionId,
     parent_message_id: parentMessageId,
     message: message,
-    // just use the default prompt for the assistant.
-    // should remove this in the future, as we don't support multiple prompts for a
-    // single assistant anyways
-    prompt_id: null,
+    prompt_id: promptId,
     search_doc_ids: documentsAreSelected ? selectedDocumentIds : null,
     file_descriptors: fileDescriptors,
-    user_file_ids: userFileIds,
-    user_folder_ids: userFolderIds,
     regenerate,
     retrieval_options: !documentsAreSelected
       ? {
-          run_search: queryOverride || forceSearch ? "always" : "auto",
+          run_search:
+            promptId === null ||
+            promptId === undefined ||
+            queryOverride ||
+            forceSearch
+              ? "always"
+              : "auto",
           real_time: true,
-          filters: filters,
+          filters: filters
         }
       : null,
     query_override: queryOverride,
@@ -241,7 +191,7 @@ export async function* sendMessage({
           }
         : null,
     use_existing_user_message: useExistingUserMessage,
-    use_agentic_search: useLanggraph ?? false,
+    allowed_custom_tool_ids: allowedCustomToolIds || null,
   });
 
   const response = await fetch(`/api/chat/send-message`, {
@@ -257,7 +207,7 @@ export async function* sendMessage({
     throw new Error(`HTTP error! status: ${response.status}`);
   }
 
-  yield* handleSSEStream<PacketType>(response, signal);
+  yield* handleSSEStream<PacketType>(response);
 }
 
 export async function nameChatSession(chatSessionId: string) {
@@ -334,7 +284,7 @@ export async function deleteChatSession(chatSessionId: string) {
   return response;
 }
 
-export async function deleteAllChatSessions() {
+export async function deleteAllChatSessions(sessionType: "Chat" | "Search") {
   const response = await fetch(`/api/chat/delete-all-chat-sessions`, {
     method: "DELETE",
     headers: {
@@ -374,18 +324,14 @@ export function getHumanAndAIMessageFromMessageNumber(
   if (messageInd !== -1) {
     const matchingMessage = messageHistory[messageInd];
     const pairedMessage =
-      matchingMessage && matchingMessage.type === "user"
+      matchingMessage.type === "user"
         ? messageHistory[messageInd + 1]
         : messageHistory[messageInd - 1];
 
     const humanMessage =
-      matchingMessage && matchingMessage.type === "user"
-        ? matchingMessage
-        : pairedMessage;
+      matchingMessage.type === "user" ? matchingMessage : pairedMessage;
     const aiMessage =
-      matchingMessage && matchingMessage.type === "user"
-        ? pairedMessage
-        : matchingMessage;
+      matchingMessage.type === "user" ? pairedMessage : matchingMessage;
 
     return {
       humanMessage,
@@ -418,7 +364,10 @@ export function getCitedDocumentsFromMessage(message: Message) {
 
 export function groupSessionsByDateRange(chatSessions: ChatSession[]) {
   const today = new Date();
-  today.setHours(0, 0, 0, 0); // Set to start of today for accurate comparison
+  today.setHours(0, 0, 0, 0); // start of today
+
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
 
   const groups: Record<string, ChatSession[]> = {
     Today: [],
@@ -429,35 +378,68 @@ export function groupSessionsByDateRange(chatSessions: ChatSession[]) {
 
   chatSessions.forEach((chatSession) => {
     const chatSessionDate = new Date(chatSession.time_updated);
+    chatSessionDate.setHours(0, 0, 0, 0); // normalize
 
-    const diffTime = today.getTime() - chatSessionDate.getTime();
-    const diffDays = diffTime / (1000 * 3600 * 24); // Convert time difference to days
-
-    if (diffDays < 1) {
-      const groups_today = groups["Today"];
-      if (groups_today) {
-        groups_today.push(chatSession);
-      }
-    } else if (diffDays <= 7) {
-      const groups_7 = groups["Previous 7 Days"];
-      if (groups_7) {
-        groups_7.push(chatSession);
-      }
-    } else if (diffDays <= 30) {
-      const groups_30 = groups["Previous 30 Days"];
-      if (groups_30) {
-        groups_30.push(chatSession);
-      }
+    if (chatSessionDate.toDateString() === today.toDateString()) {
+      groups["Today"].push(chatSession);
+    } else if (chatSessionDate.toDateString() === yesterday.toDateString()) {
+      groups["Previous 7 Days"].push(chatSession);
     } else {
-      const groups_over_30 = groups["Over 30 days"];
-      if (groups_over_30) {
-        groups_over_30.push(chatSession);
+      const diffTime = today.getTime() - chatSessionDate.getTime();
+      const diffDays = diffTime / (1000 * 3600 * 24);
+
+      if (diffDays <= 7) {
+        groups["Previous 7 Days"].push(chatSession);
+      } else if (diffDays <= 30) {
+        groups["Previous 30 days"].push(chatSession);
+      } else {
+        groups["Over 30 days"].push(chatSession);
       }
     }
   });
 
+  // sort each group by time_updated (latest first)
+  Object.keys(groups).forEach((key) => {
+    groups[key].sort(
+      (a, b) =>
+        new Date(b.time_updated).getTime() - new Date(a.time_updated).getTime()
+    );
+  });
+
   return groups;
 }
+
+
+// export function groupSessionsByDateRange(chatSessions: ChatSession[]) {
+//   const today = new Date();
+//   today.setHours(0, 0, 0, 0); // Set to start of today for accurate comparison
+
+//   const groups: Record<string, ChatSession[]> = {
+//     Today: [],
+//     "Previous 7 Days": [],
+//     "Previous 30 days": [],
+//     "Over 30 days": [],
+//   };
+
+//   chatSessions.forEach((chatSession) => {
+//     const chatSessionDate = new Date(chatSession.time_created);
+
+//     const diffTime = today.getTime() - chatSessionDate.getTime();
+//     const diffDays = diffTime / (1000 * 3600 * 24); // Convert time difference to days
+
+//     if (diffDays < 1) {
+//       groups["Today"].push(chatSession);
+//     } else if (diffDays <= 7) {
+//       groups["Previous 7 Days"].push(chatSession);
+//     } else if (diffDays <= 30) {
+//       groups["Previous 30 days"].push(chatSession);
+//     } else {
+//       groups["Over 30 days"].push(chatSession);
+//     }
+//   });
+
+//   return groups;
+// }
 
 export function getLastSuccessfulMessageId(messageHistory: Message[]) {
   const lastSuccessfulMessage = messageHistory
@@ -490,10 +472,6 @@ export function processRawChatHistory(
     } else {
       retrievalType = RetrievalType.None;
     }
-    const subQuestions = messageInfo.sub_questions?.map((q) => ({
-      ...q,
-      is_complete: true,
-    }));
 
     const message: Message = {
       messageId: messageInfo.message_id,
@@ -519,10 +497,7 @@ export function processRawChatHistory(
       childrenMessageIds: [],
       latestChildMessageId: messageInfo.latest_child_message,
       overridden_model: messageInfo.overridden_model,
-      sub_questions: subQuestions,
-      isImprovement:
-        (messageInfo.refined_answer_improvement as unknown as boolean) || false,
-      is_agentic: messageInfo.is_agentic,
+      timestamp: messageInfo.time_sent,
     };
 
     messages.set(messageInfo.message_id, message);
@@ -571,13 +546,8 @@ export function buildLatestMessageChain(
     }
   }
 
-  //
   // remove system message
-  if (
-    finalMessageList.length > 0 &&
-    finalMessageList[0] &&
-    finalMessageList[0].type === "system"
-  ) {
+  if (finalMessageList.length > 0 && finalMessageList[0].type === "system") {
     finalMessageList = finalMessageList.slice(1);
   }
   return finalMessageList.concat(additionalMessagesOnMainline);
@@ -657,11 +627,7 @@ export function personaIncludesRetrieval(selectedPersona: Persona) {
   return selectedPersona.tools.some(
     (tool) =>
       tool.in_code_tool_id &&
-      [SEARCH_TOOL_ID, INTERNET_SEARCH_TOOL_ID].includes(
-        tool.in_code_tool_id
-      ) &&
-      selectedPersona.user_file_ids?.length === 0 &&
-      selectedPersona.user_folder_ids?.length === 0
+      [SEARCH_TOOL_ID, INTERNET_SEARCH_TOOL_ID].includes(tool.in_code_tool_id)
   );
 }
 
@@ -682,7 +648,7 @@ const PARAMS_TO_SKIP = [
 ];
 
 export function buildChatUrl(
-  existingSearchParams: ReadonlyURLSearchParams | null,
+  existingSearchParams: ReadonlyURLSearchParams,
   chatSessionId: string | null,
   personaId: number | null,
   search?: boolean
@@ -699,7 +665,7 @@ export function buildChatUrl(
     finalSearchParams.push(`${SEARCH_PARAM_NAMES.PERSONA_ID}=${personaId}`);
   }
 
-  existingSearchParams?.forEach((value, key) => {
+  existingSearchParams.forEach((value, key) => {
     if (!PARAMS_TO_SKIP.includes(key)) {
       finalSearchParams.push(`${key}=${value}`);
     }
@@ -733,7 +699,7 @@ export async function uploadFilesForChat(
   return [responseJson.files as FileDescriptor[], null];
 }
 
-export function useScrollonStream({
+export async function useScrollonStream({
   chatState,
   scrollableDivRef,
   scrollDist,
@@ -831,5 +797,5 @@ export function useScrollonStream({
         });
       }
     }
-  }, [chatState, distance, scrollDist, scrollableDivRef, enableAutoScroll]);
+  }, [chatState, distance, scrollDist, scrollableDivRef]);
 }

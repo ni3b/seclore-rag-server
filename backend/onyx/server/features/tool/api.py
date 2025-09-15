@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_admin_user
 from onyx.auth.users import current_user
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.models import User
 from onyx.db.tools import create_tool
 from onyx.db.tools import delete_tool
@@ -152,6 +152,6 @@ def list_tools(
     return [
         ToolSnapshot.from_model(tool)
         for tool in tools
-        if tool.in_code_tool_id != ImageGenerationTool._NAME
+        if tool.in_code_tool_id != ImageGenerationTool.name
         or is_image_generation_available(db_session=db_session)
     ]

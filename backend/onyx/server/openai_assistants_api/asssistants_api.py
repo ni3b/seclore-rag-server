@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_user
 from onyx.context.search.enums import RecencyBiasSetting
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.models import Persona
 from onyx.db.models import User
 from onyx.db.persona import get_persona_by_id
@@ -114,6 +114,11 @@ def create_assistant(
             name=f"Prompt for {request.name or 'New Assistant'}",
             description="Auto-generated prompt",
             system_prompt=request.instructions,
+            search_tool_description="",
+            history_query_rephrase="",
+            custom_tool_argument_system_prompt="",
+            search_query_prompt="",
+            search_data_source_selector_prompt="",
             task_prompt="",
             include_citations=True,
             datetime_aware=True,

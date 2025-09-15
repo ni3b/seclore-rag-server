@@ -4,12 +4,8 @@ from datetime import datetime
 from typing import Any
 
 from onyx.access.models import DocumentAccess
-from onyx.access.models import ExternalAccess
-from onyx.agents.agent_search.shared_graph_utils.models import QueryExpansionType
-from onyx.configs.chat_configs import TITLE_CONTENT_RATIO
 from onyx.context.search.models import IndexFilters
 from onyx.context.search.models import InferenceChunkUncleaned
-from onyx.db.enums import EmbeddingPrecision
 from onyx.indexing.models import DocMetadataAwareIndexChunk
 from shared_configs.model_server_models import Embedding
 
@@ -47,7 +43,7 @@ class IndexBatchParams:
 
     doc_id_to_previous_chunk_cnt: dict[str, int | None]
     doc_id_to_new_chunk_cnt: dict[str, int]
-    tenant_id: str
+    tenant_id: str | None
     large_chunks_enabled: bool
 
 
@@ -85,12 +81,10 @@ class DocumentMetadata:
     first_link: str
     doc_updated_at: datetime | None = None
     # Emails, not necessarily attached to users
-    # Users may not be in Onyx
+    # Users may not be in Seclore
     primary_owners: list[str] | None = None
     secondary_owners: list[str] | None = None
     from_ingestion_api: bool = False
-
-    external_access: ExternalAccess | None = None
 
 
 @dataclass
@@ -106,17 +100,6 @@ class VespaDocumentFields:
     document_sets: set[str] | None = None
     boost: float | None = None
     hidden: bool | None = None
-    aggregated_chunk_boost_factor: float | None = None
-
-
-@dataclass
-class VespaDocumentUserFields:
-    """
-    Fields that are specific to the user who is indexing the document.
-    """
-
-    user_file_id: str | None = None
-    user_folder_id: str | None = None
 
 
 @dataclass
@@ -162,21 +145,17 @@ class Verifiable(abc.ABC):
     @abc.abstractmethod
     def ensure_indices_exist(
         self,
-        primary_embedding_dim: int,
-        primary_embedding_precision: EmbeddingPrecision,
+        index_embedding_dim: int,
         secondary_index_embedding_dim: int | None,
-        secondary_index_embedding_precision: EmbeddingPrecision | None,
     ) -> None:
         """
         Verify that the document index exists and is consistent with the expectations in the code.
 
         Parameters:
-        - primary_embedding_dim: Vector dimensionality for the vector similarity part of the search
-        - primary_embedding_precision: Precision of the vector similarity part of the search
+        - index_embedding_dim: Vector dimensionality for the vector similarity part of the search
         - secondary_index_embedding_dim: Vector dimensionality of the secondary index being built
                 behind the scenes. The secondary index should only be built when switching
                 embedding models therefore this dim should be different from the primary index.
-        - secondary_index_embedding_precision: Precision of the vector similarity part of the secondary index
         """
         raise NotImplementedError
 
@@ -185,7 +164,6 @@ class Verifiable(abc.ABC):
     def register_multitenant_indices(
         indices: list[str],
         embedding_dims: list[int],
-        embedding_precisions: list[EmbeddingPrecision],
     ) -> None:
         """
         Register multitenant indices with the document index.
@@ -244,7 +222,7 @@ class Deletable(abc.ABC):
         self,
         doc_id: str,
         *,
-        tenant_id: str,
+        tenant_id: str | None,
         chunk_count: int | None,
     ) -> int:
         """
@@ -271,10 +249,9 @@ class Updatable(abc.ABC):
         self,
         doc_id: str,
         *,
-        tenant_id: str,
+        tenant_id: str | None,
         chunk_count: int | None,
-        fields: VespaDocumentFields | None,
-        user_fields: VespaDocumentUserFields | None,
+        fields: VespaDocumentFields,
     ) -> int:
         """
         Updates all chunks for a document with the specified fields.
@@ -293,7 +270,9 @@ class Updatable(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def update(self, update_requests: list[UpdateRequest], *, tenant_id: str) -> None:
+    def update(
+        self, update_requests: list[UpdateRequest], *, tenant_id: str | None
+    ) -> None:
         """
         Updates some set of chunks. The document and fields to update are specified in the update
         requests. Each update request in the list applies its changes to a list of document ids.
@@ -356,9 +335,7 @@ class HybridCapable(abc.ABC):
         hybrid_alpha: float,
         time_decay_multiplier: float,
         num_to_retrieve: int,
-        ranking_profile_type: QueryExpansionType,
         offset: int = 0,
-        title_content_ratio: float | None = TITLE_CONTENT_RATIO,
     ) -> list[InferenceChunkUncleaned]:
         """
         Run hybrid search and return a list of inference chunks.
@@ -464,7 +441,7 @@ class BaseIndex(
 
 class DocumentIndex(HybridCapable, BaseIndex, abc.ABC):
     """
-    A valid document index that can plug into all Onyx flows must implement all of these
+    A valid document index that can plug into all Seclore flows must implement all of these
     functionalities, though "technically" it does not need to be keyword or vector capable as
     currently all default search flows use Hybrid Search.
     """

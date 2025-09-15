@@ -1,13 +1,9 @@
-from collections import OrderedDict
 from collections.abc import Callable
 from collections.abc import Iterator
-from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from typing import Literal
 from typing import TYPE_CHECKING
-from typing import Union
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -18,9 +14,7 @@ from onyx.configs.constants import MessageType
 from onyx.context.search.enums import QueryFlow
 from onyx.context.search.enums import RecencyBiasSetting
 from onyx.context.search.enums import SearchType
-from onyx.context.search.models import RetrievalDocs
-from onyx.db.models import SearchDoc as DbSearchDoc
-from onyx.file_store.models import FileDescriptor
+from onyx.context.search.models import RetrievalDocs, TimeRange
 from onyx.llm.override_models import PromptOverride
 from onyx.tools.models import ToolCallFinalResult
 from onyx.tools.models import ToolCallKickoff
@@ -46,60 +40,24 @@ class LlmDoc(BaseModel):
     match_highlights: list[str] | None
 
 
-class SubQuestionIdentifier(BaseModel):
-    """None represents references to objects in the original flow. To our understanding,
-    these will not be None in the packets returned from agent search.
-    """
-
-    level: int | None = None
-    level_question_num: int | None = None
-
-    @staticmethod
-    def make_dict_by_level(
-        original_dict: Mapping[tuple[int, int], "SubQuestionIdentifier"],
-    ) -> dict[int, list["SubQuestionIdentifier"]]:
-        """returns a dict of level to object list (sorted by level_question_num)
-        Ordering is asc for readability.
-        """
-
-        # organize by level, then sort ascending by question_index
-        level_dict: dict[int, list[SubQuestionIdentifier]] = {}
-
-        # group by level
-        for k, obj in original_dict.items():
-            level = k[0]
-            if level not in level_dict:
-                level_dict[level] = []
-            level_dict[level].append(obj)
-
-        # for each level, sort the group
-        for k2, value2 in level_dict.items():
-            # we need to handle the none case due to SubQuestionIdentifier typing
-            # level_question_num as int | None, even though it should never be None here.
-            level_dict[k2] = sorted(
-                value2,
-                key=lambda x: (x.level_question_num is None, x.level_question_num),
-            )
-
-        # sort by level
-        sorted_dict = OrderedDict(sorted(level_dict.items()))
-        return sorted_dict
-
-
 # First chunk of info for streaming QA
-class QADocsResponse(RetrievalDocs, SubQuestionIdentifier):
+class QADocsResponse(RetrievalDocs):
     rephrased_query: str | None = None
     predicted_flow: QueryFlow | None
     predicted_search: SearchType | None
     applied_source_filters: list[DocumentSource] | None
-    applied_time_cutoff: datetime | None
+    applied_time_range: TimeRange | None = None
     recency_bias_multiplier: float
 
     def model_dump(self, *args: list, **kwargs: dict[str, Any]) -> dict[str, Any]:  # type: ignore
         initial_dict = super().model_dump(mode="json", *args, **kwargs)  # type: ignore
-        initial_dict["applied_time_cutoff"] = (
-            self.applied_time_cutoff.isoformat() if self.applied_time_cutoff else None
-        )
+        if self.applied_time_range:
+            initial_dict["applied_time_range"] = {
+                "start_date": self.applied_time_range.start_date.isoformat() if self.applied_time_range.start_date else None,
+                "end_date": self.applied_time_range.end_date.isoformat() if self.applied_time_range.end_date else None
+            }
+        else:
+            initial_dict["applied_time_range"] = None
 
         return initial_dict
 
@@ -107,28 +65,15 @@ class QADocsResponse(RetrievalDocs, SubQuestionIdentifier):
 class StreamStopReason(Enum):
     CONTEXT_LENGTH = "context_length"
     CANCELLED = "cancelled"
-    FINISHED = "finished"
 
 
-class StreamType(Enum):
-    SUB_QUESTIONS = "sub_questions"
-    SUB_ANSWER = "sub_answer"
-    MAIN_ANSWER = "main_answer"
-
-
-class StreamStopInfo(SubQuestionIdentifier):
+class StreamStopInfo(BaseModel):
     stop_reason: StreamStopReason
-
-    stream_type: StreamType = StreamType.MAIN_ANSWER
 
     def model_dump(self, *args: list, **kwargs: dict[str, Any]) -> dict[str, Any]:  # type: ignore
         data = super().model_dump(mode="json", *args, **kwargs)  # type: ignore
         data["stop_reason"] = self.stop_reason.name
         return data
-
-
-class UserKnowledgeFilePacket(BaseModel):
-    user_files: list[FileDescriptor]
 
 
 class LLMRelevanceFilterResponse(BaseModel):
@@ -164,7 +109,7 @@ class OnyxAnswerPiece(BaseModel):
 
 # An intermediate representation of citations, later translated into
 # a mapping of the citation [n] number to SearchDoc
-class CitationInfo(SubQuestionIdentifier):
+class CitationInfo(BaseModel):
     citation_num: int
     document_id: str
 
@@ -184,18 +129,20 @@ class MessageResponseIDInfo(BaseModel):
     reserved_assistant_message_id: int
 
 
-class AgentMessageIDInfo(BaseModel):
-    level: int
-    message_id: int
-
-
-class AgenticMessageResponseIDInfo(BaseModel):
-    agentic_message_ids: list[AgentMessageIDInfo]
-
-
 class StreamingError(BaseModel):
     error: str
     stack_trace: str | None = None
+
+
+class OnyxContext(BaseModel):
+    content: str
+    document_id: str
+    semantic_identifier: str
+    blurb: str
+
+
+class OnyxContexts(BaseModel):
+    contexts: list[OnyxContext]
 
 
 class OnyxAnswer(BaseModel):
@@ -263,6 +210,7 @@ class PersonaOverrideConfig(BaseModel):
 AnswerQuestionPossibleReturn = (
     OnyxAnswerPiece
     | CitationInfo
+    | OnyxContexts
     | FileChatDisplay
     | CustomToolResponse
     | StreamingError
@@ -329,9 +277,14 @@ class AnswerStyleConfig(BaseModel):
 
 class PromptConfig(BaseModel):
     """Final representation of the Prompt configuration passed
-    into the `PromptBuilder` object."""
+    into the `Answer` object."""
 
     system_prompt: str
+    search_tool_description: str
+    history_query_rephrase: str
+    custom_tool_argument_system_prompt: str
+    search_query_prompt: str
+    search_data_source_selector_prompt: str
     task_prompt: str
     datetime_aware: bool
     include_citations: bool
@@ -343,53 +296,36 @@ class PromptConfig(BaseModel):
         override_system_prompt = (
             prompt_override.system_prompt if prompt_override else None
         )
+        override_search_tool_description = (
+            prompt_override.search_tool_description if prompt_override else None
+        )
+        override_history_query_rephrase = (
+            prompt_override.history_query_rephrase if prompt_override else None
+        )
+        override_custom_tool_argument_system_prompt = (
+            prompt_override.custom_tool_argument_system_prompt if prompt_override else None
+        )
+        override_search_query_prompt = (
+            prompt_override.search_query_prompt if prompt_override else None
+        )
+        override_search_data_source_selector_prompt = (
+            prompt_override.search_data_source_selector_prompt if prompt_override else None
+        )
         override_task_prompt = prompt_override.task_prompt if prompt_override else None
 
         return cls(
             system_prompt=override_system_prompt or model.system_prompt,
+            search_tool_description=override_search_tool_description or model.search_tool_description,
+            history_query_rephrase=override_history_query_rephrase or model.history_query_rephrase,
+            custom_tool_argument_system_prompt=override_custom_tool_argument_system_prompt or model.custom_tool_argument_system_prompt,
+            search_query_prompt=override_search_query_prompt or model.search_query_prompt,
+            search_data_source_selector_prompt=override_search_data_source_selector_prompt or model.search_data_source_selector_prompt,
             task_prompt=override_task_prompt or model.task_prompt,
             datetime_aware=model.datetime_aware,
             include_citations=model.include_citations,
         )
 
     model_config = ConfigDict(frozen=True)
-
-
-class SubQueryPiece(SubQuestionIdentifier):
-    sub_query: str
-    query_id: int
-
-
-class AgentAnswerPiece(SubQuestionIdentifier):
-    answer_piece: str
-    answer_type: Literal["agent_sub_answer", "agent_level_answer"]
-
-
-class SubQuestionPiece(SubQuestionIdentifier):
-    """Refined sub questions generated from the initial user question."""
-
-    sub_question: str
-
-
-class ExtendedToolResponse(ToolResponse, SubQuestionIdentifier):
-    pass
-
-
-class RefinedAnswerImprovement(BaseModel):
-    refined_answer_improvement: bool
-
-
-AgentSearchPacket = Union[
-    SubQuestionPiece
-    | AgentAnswerPiece
-    | SubQueryPiece
-    | ExtendedToolResponse
-    | RefinedAnswerImprovement
-]
-
-AnswerPacket = (
-    AnswerQuestionPossibleReturn | AgentSearchPacket | ToolCallKickoff | ToolResponse
-)
 
 
 ResponsePart = (
@@ -399,33 +335,4 @@ ResponsePart = (
     | ToolResponse
     | ToolCallFinalResult
     | StreamStopInfo
-    | AgentSearchPacket
 )
-
-AnswerStream = Iterator[AnswerPacket]
-
-
-class AnswerPostInfo(BaseModel):
-    ai_message_files: list[FileDescriptor]
-    qa_docs_response: QADocsResponse | None = None
-    reference_db_search_docs: list[DbSearchDoc] | None = None
-    dropped_indices: list[int] | None = None
-    tool_result: ToolCallFinalResult | None = None
-    message_specific_citations: MessageSpecificCitations | None = None
-
-    class Config:
-        arbitrary_types_allowed = True
-
-
-class SubQuestionKey(BaseModel):
-    level: int
-    question_num: int
-
-    def __hash__(self) -> int:
-        return hash((self.level, self.question_num))
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, SubQuestionKey) and (
-            self.level,
-            self.question_num,
-        ) == (other.level, other.question_num)

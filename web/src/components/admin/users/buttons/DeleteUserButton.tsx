@@ -4,20 +4,16 @@ import userMutationFetcher from "@/lib/admin/users/userMutationFetcher";
 import useSWRMutation from "swr/mutation";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
-import { ConfirmEntityModal } from "@/components/modals/ConfirmEntityModal";
+import { DeleteEntityModal } from "@/components/modals/DeleteEntityModal";
 
 const DeleteUserButton = ({
   user,
   setPopup,
   mutate,
-  className,
-  children,
 }: {
   user: User;
   setPopup: (spec: PopupSpec) => void;
   mutate: () => void;
-  className?: string;
-  children?: React.ReactNode;
 }) => {
   const { trigger, isMutating } = useSWRMutation(
     "/api/manage/admin/delete-user",
@@ -32,7 +28,7 @@ const DeleteUserButton = ({
       },
       onError: (errorMsg) =>
         setPopup({
-          message: `Unable to delete user - ${errorMsg.message}`,
+          message: `Unable to delete user - ${errorMsg}`,
           type: "error",
         }),
     }
@@ -42,7 +38,7 @@ const DeleteUserButton = ({
   return (
     <>
       {showDeleteModal && (
-        <ConfirmEntityModal
+        <DeleteEntityModal
           entityType="user"
           entityName={user.email}
           onClose={() => setShowDeleteModal(false)}
@@ -52,13 +48,13 @@ const DeleteUserButton = ({
       )}
 
       <Button
-        className={className}
+        className="w-min"
         onClick={() => setShowDeleteModal(true)}
         disabled={isMutating}
         size="sm"
         variant="destructive"
       >
-        {children}
+        Delete
       </Button>
     </>
   );

@@ -113,7 +113,7 @@ def _mark_document_set_cc_pairs_as_outdated__no_commit(
 def delete_document_set_privacy__no_commit(
     document_set_id: int, db_session: Session
 ) -> None:
-    """No private document sets in Onyx MIT"""
+    """No private document sets in Seclore MIT"""
 
 
 def get_document_set_by_id_for_user(
@@ -163,7 +163,7 @@ def make_doc_set_private(
 ) -> None:
     # May cause error if someone switches down to MIT from EE
     if user_ids or group_ids:
-        raise NotImplementedError("Onyx MIT does not support private Document Sets")
+        raise NotImplementedError("Seclore MIT does not support private Document Sets")
 
 
 def _check_if_cc_pairs_are_owned_by_groups(
@@ -198,7 +198,7 @@ def _check_if_cc_pairs_are_owned_by_groups(
             ids=missing_cc_pair_ids,
         )
         for cc_pair in cc_pairs:
-            if cc_pair.access_type == AccessType.PRIVATE:
+            if cc_pair.access_type != AccessType.PUBLIC:
                 raise ValueError(
                     f"Connector Credential Pair with ID: '{cc_pair.id}'"
                     " is not owned by the specified groups"
@@ -221,8 +221,6 @@ def insert_document_set(
             group_ids=document_set_creation_request.groups or [],
         )
 
-    new_document_set_row: DocumentSetDBModel
-    ds_cc_pairs: list[DocumentSet__ConnectorCredentialPair]
     try:
         new_document_set_row = DocumentSetDBModel(
             name=document_set_creation_request.name,
@@ -545,7 +543,7 @@ def fetch_documents_for_document_set_paginated(
     return documents, documents[-1].id if documents else None
 
 
-def construct_document_id_select_by_docset(
+def construct_document_select_by_docset(
     document_set_id: int,
     current_only: bool = True,
 ) -> Select:
@@ -554,7 +552,7 @@ def construct_document_id_select_by_docset(
     are background processing task generators."""
 
     stmt = (
-        select(Document.id)
+        select(Document)
         .join(
             DocumentByConnectorCredentialPair,
             DocumentByConnectorCredentialPair.id == Document.id,
@@ -605,6 +603,7 @@ def fetch_document_sets_for_document(
     result = fetch_document_sets_for_documents([document_id], db_session)
     if not result:
         return []
+
     return result[0][1]
 
 

@@ -1,18 +1,18 @@
 "use client";
 
-import { ArrayHelpers } from "formik";
+import { ArrayHelpers, ErrorMessage, Field, useFormikContext } from "formik";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useState } from "react";
-import { FiTrash2, FiRefreshCw } from "react-icons/fi";
+import { useEffect, useState } from "react";
+import { FiTrash2, FiRefreshCcw, FiRefreshCw } from "react-icons/fi";
 import { StarterMessage } from "./interfaces";
 import { Button } from "@/components/ui/button";
 import { SwapIcon } from "@/components/icons/icons";
-import { TextFormField } from "@/components/Field";
+import { TextFormField } from "@/components/admin/connectors/Field";
 
 export default function StarterMessagesList({
   values,
@@ -36,12 +36,12 @@ export default function StarterMessagesList({
 
     if (value && index === values.length - 1 && values.length < 4) {
       arrayHelpers.push({ message: "" });
-    } else if (!value && index === values.length - 2) {
-      const lastItem = values[values.length - 1];
-      if (lastItem !== undefined && !lastItem.message) {
-        // Check if lastItem's message is also empty
-        arrayHelpers.pop();
-      }
+    } else if (
+      !value &&
+      index === values.length - 2 &&
+      !values[values.length - 1].message
+    ) {
+      arrayHelpers.pop();
     }
   };
 
@@ -52,6 +52,7 @@ export default function StarterMessagesList({
           <TextFormField
             name={`starter_messages.${index}.message`}
             label=""
+            value={starterMessage.message}
             onChange={(e) => handleInputChange(index, e.target.value)}
             className="flex-grow"
             removeLabel
@@ -63,16 +64,19 @@ export default function StarterMessagesList({
             size="icon"
             onClick={() => {
               arrayHelpers.remove(index);
+              if (
+                index === values.length - 2 &&
+                !values[values.length - 1].message
+              ) {
+                arrayHelpers.pop();
+              }
             }}
-            className={`text-text-400 hover:text-red-500 ${
+            className={`text-gray-400 hover:text-red-500 ${
               index === values.length - 1 && !starterMessage.message
                 ? "opacity-50 cursor-not-allowed"
                 : ""
             }`}
-            disabled={
-              (index === values.length - 1 && !starterMessage.message) ||
-              (values.length === 1 && index === 0) // should never happen, but just in case
-            }
+            disabled={index === values.length - 1 && !starterMessage.message}
           >
             <FiTrash2 className="h-4 w-4" />
           </Button>
@@ -104,7 +108,7 @@ export default function StarterMessagesList({
                       4 ||
                     isRefreshing ||
                     !autoStarterMessageEnabled
-                      ? "bg-background-800 text-text-300 cursor-not-allowed"
+                      ? "bg-neutral-800 text-neutral-300 cursor-not-allowed"
                       : ""
                   }
                 `}

@@ -6,18 +6,18 @@ import {
   LiteLLMIcon,
   MicrosoftIcon,
   NomicIcon,
-  OpenAIISVG,
+  OpenAIIcon,
   OpenSourceIcon,
-  VoyageIconSVG,
+  VoyageIcon,
 } from "@/components/icons/icons";
 
 export enum EmbeddingProvider {
-  OPENAI = "openai",
-  COHERE = "cohere",
-  VOYAGE = "voyage",
-  GOOGLE = "google",
-  LITELLM = "litellm",
-  AZURE = "azure",
+  OPENAI = "OpenAI",
+  COHERE = "Cohere",
+  VOYAGE = "Voyage",
+  GOOGLE = "Google",
+  LITELLM = "LiteLLM",
+  AZURE = "Azure",
 }
 
 export interface CloudEmbeddingProvider {
@@ -47,14 +47,13 @@ export interface EmbeddingModelDescriptor {
   normalize: boolean;
   query_prefix: string;
   passage_prefix: string;
-  provider_type: EmbeddingProvider | null;
+  provider_type: string | null;
   description: string;
   api_key: string | null;
   api_url: string | null;
   api_version?: string | null;
   deployment_name?: string | null;
   index_name: string | null;
-  background_reindex_enabled?: boolean;
 }
 
 export interface CloudEmbeddingModel extends EmbeddingModelDescriptor {
@@ -111,7 +110,7 @@ export const AVAILABLE_MODELS: HostedEmbeddingModel[] = [
     model_dim: 384,
     normalize: true,
     description:
-      "The smallest and fastest version of the E5 line of models. If you're running Onyx on a resource constrained system, then this may be a good choice.",
+      "The smallest and fastest version of the E5 line of models. If you're running Seclore on a resource constrained system, then this may be a good choice.",
     link: "https://huggingface.co/intfloat/e5-small-v2",
     query_prefix: "query: ",
     passage_prefix: "passage: ",
@@ -217,7 +216,7 @@ export const AVAILABLE_CLOUD_PROVIDERS: CloudEmbeddingProvider[] = [
   {
     provider_type: EmbeddingProvider.OPENAI,
     website: "https://openai.com",
-    icon: OpenAIISVG,
+    icon: OpenAIIcon,
     description: "AI industry leader known for ChatGPT and DALL-E",
     apiLink: "https://platform.openai.com/api-keys",
     docsLink: "https://docs.onyx.app/guides/embedding_providers#openai-models",
@@ -267,7 +266,7 @@ export const AVAILABLE_CLOUD_PROVIDERS: CloudEmbeddingProvider[] = [
     embedding_models: [
       {
         provider_type: EmbeddingProvider.GOOGLE,
-        model_name: "text-embedding-005",
+        model_name: "text-embedding-004",
         description: "Google's most recent text embedding model.",
         pricePerMillion: 0.025,
         model_dim: 768,
@@ -296,7 +295,7 @@ export const AVAILABLE_CLOUD_PROVIDERS: CloudEmbeddingProvider[] = [
   {
     provider_type: EmbeddingProvider.VOYAGE,
     website: "https://www.voyageai.com",
-    icon: VoyageIconSVG,
+    icon: VoyageIcon,
     description: "Advanced NLP research startup born from Stanford AI Labs",
     docsLink: "https://docs.onyx.app/guides/embedding_providers#voyage-models",
     apiLink: "https://www.voyageai.com/dashboard",

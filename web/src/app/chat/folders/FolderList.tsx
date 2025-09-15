@@ -168,7 +168,7 @@ const FolderItem = ({
   };
 
   const folders = folder.chat_sessions.sort((a, b) => {
-    return a.time_updated.localeCompare(b.time_updated);
+    return a.time_created.localeCompare(b.time_created);
   });
 
   // Determine whether to show the trash can icon
@@ -184,7 +184,7 @@ const FolderItem = ({
       onDragLeave={() => setIsDragOver(false)}
       onDrop={handleDrop}
       className={`transition duration-300 ease-in-out rounded-md ${
-        isDragOver ? "bg-accent-background-hovered" : ""
+        isDragOver ? "bg-hover" : ""
       }`}
     >
       <BasicSelectable fullWidth selected={false}>
@@ -261,7 +261,7 @@ const FolderItem = ({
                           </button>
                           <button
                             onClick={cancelDelete}
-                            className="bg-background-300 hover:bg-background-200 px-2 py-1 rounded text-xs"
+                            className="bg-gray-300 hover:bg-gray-200 px-2 py-1 rounded text-xs"
                           >
                             No
                           </button>
@@ -303,6 +303,7 @@ const FolderItem = ({
               key={chatSession.id}
               chatSession={chatSession}
               isSelected={chatSession.id === currentChatId}
+              skipGradient={isDragOver}
               showShareModal={showShareModal}
               showDeleteModal={showDeleteModal}
             />
@@ -347,14 +348,12 @@ export const FolderList = ({
           showDeleteModal={showDeleteModal}
         />
       ))}
-      {folders.length == 1 &&
-        folders[0] &&
-        folders[0].chat_sessions.length == 0 && (
-          <p className="text-sm font-normal text-subtle mt-2">
-            {" "}
-            Drag a chat into a folder to save for later{" "}
-          </p>
-        )}
+      {folders.length == 1 && folders[0].chat_sessions.length == 0 && (
+        <p className="text-sm font-normal text-subtle mt-2">
+          {" "}
+          Drag a chat into a folder to save for later{" "}
+        </p>
+      )}
     </div>
   );
 };

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ee.onyx.db.standard_answer import fetch_standard_answer_categories_by_names
 from ee.onyx.db.standard_answer import find_matching_standard_answers
+from ee.onyx.server.manage.models import StandardAnswer as PydanticStandardAnswer
 from onyx.configs.constants import MessageType
 from onyx.configs.onyxbot_configs import DANSWER_REACT_EMOJI
 from onyx.db.chat import create_chat_session
@@ -21,9 +22,8 @@ from onyx.onyxbot.slack.blocks import get_restate_blocks
 from onyx.onyxbot.slack.constants import GENERATE_ANSWER_BUTTON_ACTION_ID
 from onyx.onyxbot.slack.handlers.utils import send_team_member_message
 from onyx.onyxbot.slack.models import SlackMessageInfo
-from onyx.onyxbot.slack.utils import respond_in_thread_or_channel
+from onyx.onyxbot.slack.utils import respond_in_thread
 from onyx.onyxbot.slack.utils import update_emote_react
-from onyx.server.manage.models import StandardAnswer as PydanticStandardAnswer
 from onyx.utils.logger import OnyxLoggingAdapter
 from onyx.utils.logger import setup_logger
 
@@ -80,7 +80,7 @@ def oneoff_standard_answers(
 def _handle_standard_answers(
     message_info: SlackMessageInfo,
     receiver_ids: list[str] | None,
-    slack_channel_config: SlackChannelConfig,
+    slack_channel_config: SlackChannelConfig | None,
     prompt: Prompt | None,
     logger: OnyxLoggingAdapter,
     client: WebClient,
@@ -94,10 +94,13 @@ def _handle_standard_answers(
     Returns True if standard answers are found to match the user's message and therefore,
     we still need to respond to the users.
     """
+    # if no channel config, then no standard answers are configured
+    if not slack_channel_config:
+        return False
 
     slack_thread_id = message_info.thread_to_respond
     configured_standard_answer_categories = (
-        slack_channel_config.standard_answer_categories
+        slack_channel_config.standard_answer_categories if slack_channel_config else []
     )
     configured_standard_answers = set(
         [
@@ -216,11 +219,11 @@ def _handle_standard_answers(
         all_blocks = restate_question_blocks + answer_blocks
 
         try:
-            respond_in_thread_or_channel(
+            respond_in_thread(
                 client=client,
                 channel=message_info.channel_to_respond,
                 receiver_ids=receiver_ids,
-                text="Hello! Onyx has some results for you!",
+                text="Hello! Seclore has some results for you!",
                 blocks=all_blocks,
                 thread_ts=message_info.msg_to_respond,
                 unfurl=False,
@@ -231,7 +234,6 @@ def _handle_standard_answers(
                     client=client,
                     channel=message_info.channel_to_respond,
                     thread_ts=slack_thread_id,
-                    receiver_ids=receiver_ids,
                 )
 
             return True

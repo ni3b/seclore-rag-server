@@ -1,11 +1,11 @@
 import os
 from datetime import datetime
 from datetime import timezone
+from typing import Any
 
 import pytest
 
 from onyx.connectors.models import InputType
-from onyx.connectors.slack.models import ChannelType
 from onyx.db.enums import AccessType
 from onyx.server.documents.models import DocumentSource
 from tests.integration.common_utils.managers.cc_pair import CCPairManager
@@ -28,7 +28,7 @@ from tests.integration.connector_job_tests.slack.slack_api_utils import SlackMan
 def test_slack_prune(
     reset: None,
     vespa_client: vespa_fixture,
-    slack_test_setup: tuple[ChannelType, ChannelType],
+    slack_test_setup: tuple[dict[str, Any], dict[str, Any]],
 ) -> None:
     public_channel, private_channel = slack_test_setup
 
@@ -111,9 +111,7 @@ def test_slack_prune(
 
     # Run indexing
     before = datetime.now(timezone.utc)
-    CCPairManager.run_once(
-        cc_pair, from_beginning=True, user_performing_action=admin_user
-    )
+    CCPairManager.run_once(cc_pair, admin_user)
     CCPairManager.wait_for_indexing_completion(
         cc_pair=cc_pair,
         after=before,

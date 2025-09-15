@@ -8,9 +8,9 @@ import { useState } from "react";
 import { ThreeDotsLoader } from "@/components/Loading";
 import { useConnectorStatus, useUserGroups, useUsers } from "@/lib/hooks";
 import { AdminPageTitle } from "@/components/admin/Title";
+import { Button } from "@/components/ui/button";
 
 import { useUser } from "@/components/user/UserProvider";
-import CreateButton from "@/components/ui/createButton";
 
 const Main = () => {
   const { popup, setPopup } = usePopup();
@@ -28,7 +28,7 @@ const Main = () => {
     data: users,
     isLoading: userIsLoading,
     error: usersError,
-  } = useUsers({ includeApiKeys: true });
+  } = useUsers();
 
   const { isAdmin } = useUser();
 
@@ -52,13 +52,18 @@ const Main = () => {
     <>
       {popup}
       {isAdmin && (
-        <CreateButton
-          onClick={() => setShowForm(true)}
-          text="Create New User Group"
-        />
+        <div className="my-3">
+          <Button
+            size="sm"
+            variant="navigate"
+            onClick={() => setShowForm(true)}
+          >
+            Create New User Group
+          </Button>
+        </div>
       )}
       {data.length > 0 && (
-        <div className="mt-2">
+        <div>
           <UserGroupsTable
             userGroups={data}
             setPopup={setPopup}

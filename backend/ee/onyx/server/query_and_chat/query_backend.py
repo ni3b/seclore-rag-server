@@ -31,13 +31,14 @@ from onyx.context.search.utils import dedupe_documents
 from onyx.context.search.utils import drop_llm_indices
 from onyx.context.search.utils import relevant_sections_to_indices
 from onyx.db.chat import get_prompt_by_id
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.models import Persona
 from onyx.db.models import User
 from onyx.db.persona import get_persona_by_id
 from onyx.llm.factory import get_default_llms
 from onyx.llm.factory import get_llms_for_persona
 from onyx.llm.factory import get_main_llm_from_tuple
+from onyx.llm.utils import get_max_input_tokens
 from onyx.natural_language_processing.utils import get_tokenizer
 from onyx.server.utils import get_json_line
 from onyx.utils.logger import setup_logger
@@ -82,23 +83,20 @@ def handle_search_request(
         user=user,
         llm=llm,
         fast_llm=fast_llm,
-        skip_query_analysis=False,
         db_session=db_session,
         bypass_acl=False,
     )
     top_sections = search_pipeline.reranked_sections
     relevance_sections = search_pipeline.section_relevance
-    top_docs = [
-        SavedSearchDocWithContent(
+    top_docs = []
+    for section in top_sections:
+        top_docs.append(
+            SavedSearchDocWithContent(
             document_id=section.center_chunk.document_id,
             chunk_ind=section.center_chunk.chunk_id,
             content=section.center_chunk.content,
             semantic_identifier=section.center_chunk.semantic_identifier or "Unknown",
-            link=(
-                section.center_chunk.source_links.get(0)
-                if section.center_chunk.source_links
-                else None
-            ),
+            link=section.center_chunk.source_links.get(0) if section.center_chunk.source_links else None,
             blurb=section.center_chunk.blurb,
             source_type=section.center_chunk.source_type,
             boost=section.center_chunk.boost,
@@ -110,10 +108,35 @@ def handle_search_request(
             primary_owners=section.center_chunk.primary_owners,
             secondary_owners=section.center_chunk.secondary_owners,
             is_internet=False,
-            db_doc_id=0,
-        )
-        for section in top_sections
-    ]
+            db_doc_id=0))
+    
+
+    
+    # [
+    #     SavedSearchDocWithContent(
+    #         document_id=section.center_chunk.document_id,
+    #         chunk_ind=section.center_chunk.chunk_id,
+    #         content=section.center_chunk.content,
+    #         semantic_identifier=section.center_chunk.semantic_identifier or "Unknown",
+    #         link=section.center_chunk.source_links.get(0)
+    #         if section.center_chunk.source_links
+    #         else None,
+    #         blurb=section.center_chunk.blurb,
+    #         source_type=section.center_chunk.source_type,
+    #         boost=section.center_chunk.boost,
+    #         hidden=section.center_chunk.hidden,
+    #         metadata=section.center_chunk.metadata,
+    #         score=section.center_chunk.score or 0.0,
+    #         match_highlights=section.center_chunk.match_highlights,
+    #         updated_at=section.center_chunk.updated_at,
+    #         primary_owners=section.center_chunk.primary_owners,
+    #         secondary_owners=section.center_chunk.secondary_owners,
+    #         is_internet=False,
+    #         db_doc_id=0,
+    #     )
+    #     for section in top_sections
+    #         if section.center_chunk.score and section.center_chunk.score > 0.8:
+    # ]
 
     # Deduping happens at the last step to avoid harming quality by dropping content early on
     deduped_docs = top_docs
@@ -176,9 +199,10 @@ def get_answer_stream(
         provider_type=llm.config.model_provider,
     )
 
-    max_history_tokens = int(
-        llm.config.max_input_tokens * MAX_THREAD_CONTEXT_PERCENTAGE
+    input_tokens = get_max_input_tokens(
+        model_name=llm.config.model_name, model_provider=llm.config.model_provider
     )
+    max_history_tokens = int(input_tokens * MAX_THREAD_CONTEXT_PERCENTAGE)
 
     combined_message = combine_message_thread(
         messages=query_request.messages,
@@ -197,8 +221,6 @@ def get_answer_stream(
         retrieval_details=query_request.retrieval_options,
         rerank_settings=query_request.rerank_settings,
         db_session=db_session,
-        use_agentic_search=query_request.use_agentic_search,
-        skip_gen_ai_answer_generation=query_request.skip_gen_ai_answer_generation,
     )
 
     packets = stream_chat_message_objects(

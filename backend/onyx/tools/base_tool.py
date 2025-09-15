@@ -34,7 +34,7 @@ Now respond to the following:
 """.strip()
 
 
-class BaseTool(Tool[None]):
+class BaseTool(Tool):
     def build_next_prompt(
         self,
         prompt_builder: "AnswerPromptBuilder",

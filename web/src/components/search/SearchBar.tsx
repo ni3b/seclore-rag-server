@@ -1,4 +1,4 @@
-import React, { KeyboardEvent, ChangeEvent } from "react";
+import React, { KeyboardEvent, ChangeEvent, useContext } from "react";
 
 import { MagnifyingGlass } from "@phosphor-icons/react";
 interface FullSearchBarProps {
@@ -26,6 +26,7 @@ import {
 import { useRef } from "react";
 import { SendIcon } from "../icons/icons";
 import { Separator } from "@/components/ui/separator";
+import { CustomTooltip } from "../tooltip/CustomTooltip";
 import KeyboardSymbol from "@/lib/browserUtilities";
 import { CCPairBasicInfo, DocumentSet, Tag } from "@/lib/types";
 import { HorizontalSourceSelector } from "./filtering/HorizontalSourceSelector";
@@ -220,12 +221,12 @@ export const FullSearchBar = ({
               className="flex my-auto cursor-pointer"
             >
               <SendIcon
-                size={22}
-                className={`text-neutral-50 dark:text-neutral-900 p-1 my-auto rounded-full ${
-                  query
-                    ? "bg-neutral-900 dark:bg-neutral-50"
-                    : "bg-neutral-500 dark:bg-neutral-400"
-                }`}
+                size={28}
+                className={`text-emphasis ${
+                  disabled || !query
+                    ? "bg-disabled-submit-background"
+                    : "bg-submit-background"
+                } text-white p-1 rounded-full`}
               />
             </button>
           </div>
@@ -267,7 +268,7 @@ export const SearchBar = ({ query, setQuery, onSearch }: SearchBarProps) => {
   return (
     <div className="flex text-text-chatbar justify-center">
       <div className="flex items-center w-full opacity-100 border-2 border-border rounded-lg px-4 py-2 focus-within:border-accent bg-background-search">
-        <MagnifyingGlass className="text-text-darker" />
+        <MagnifyingGlass className="text-emphasis" />
         <textarea
           autoFocus
           className="flex-grow ml-2 h-6 placeholder:text-text-chatbar-subtle outline-none placeholder-default overflow-hidden whitespace-normal resize-none"
