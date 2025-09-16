@@ -9,8 +9,21 @@ export const CustomCheckbox = ({
   onChange?: () => void;
   disabled?: boolean;
 }) => {
+   const handleContainerClick = (event: any) => {
+     event.stopPropagation();
+   };
+
+  const handleInputChange = (event: any) => {
+    event.stopPropagation();
+    if (disabled) {
+      return;
+    }
+    onChange?.();
+  };
+
   return (
     <label
+      onClick={handleContainerClick}
       className={`flex items-center cursor-pointer ${
         disabled ? "opacity-50" : ""
       }`}
@@ -19,7 +32,7 @@ export const CustomCheckbox = ({
         type="checkbox"
         className="hidden"
         checked={checked}
-        onChange={onChange}
+        onChange={handleInputChange}
         readOnly={onChange ? false : true}
         disabled={disabled}
       />

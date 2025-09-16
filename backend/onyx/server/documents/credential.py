@@ -12,19 +12,17 @@ from sqlalchemy.orm import Session
 from onyx.auth.users import current_admin_user
 from onyx.auth.users import current_curator_or_admin_user
 from onyx.auth.users import current_user
-from onyx.connectors.factory import validate_ccpair_for_user
 from onyx.db.credentials import alter_credential
 from onyx.db.credentials import cleanup_gmail_credentials
 from onyx.db.credentials import create_credential
 from onyx.db.credentials import CREDENTIAL_PERMISSIONS_TO_IGNORE
 from onyx.db.credentials import delete_credential
-from onyx.db.credentials import delete_credential_for_user
 from onyx.db.credentials import fetch_credential_by_id_for_user
 from onyx.db.credentials import fetch_credentials_by_source_for_user
 from onyx.db.credentials import fetch_credentials_for_user
 from onyx.db.credentials import swap_credentials_connector
 from onyx.db.credentials import update_credential
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.models import DocumentSource
 from onyx.db.models import User
 from onyx.server.documents.models import CredentialBase
@@ -98,7 +96,7 @@ def delete_credential_by_id_admin(
     db_session: Session = Depends(get_session),
 ) -> StatusResponse:
     """Same as the user endpoint, but can delete any credential (not just the user's own)"""
-    delete_credential(db_session=db_session, credential_id=credential_id)
+    delete_credential(db_session=db_session, credential_id=credential_id, user=None)
     return StatusResponse(
         success=True, message="Credential deleted successfully", data=credential_id
     )
@@ -110,13 +108,6 @@ def swap_credentials_for_connector(
     user: User | None = Depends(current_user),
     db_session: Session = Depends(get_session),
 ) -> StatusResponse:
-    validate_ccpair_for_user(
-        credential_swap_req.connector_id,
-        credential_swap_req.new_credential_id,
-        credential_swap_req.access_type,
-        db_session,
-    )
-
     connector_credential_pair = swap_credentials_connector(
         new_credential_id=credential_swap_req.new_credential_id,
         connector_id=credential_swap_req.connector_id,
@@ -364,7 +355,7 @@ def delete_credential_by_id(
     user: User = Depends(current_user),
     db_session: Session = Depends(get_session),
 ) -> StatusResponse:
-    delete_credential_for_user(
+    delete_credential(
         credential_id,
         user,
         db_session,
@@ -381,7 +372,7 @@ def force_delete_credential_by_id(
     user: User = Depends(current_user),
     db_session: Session = Depends(get_session),
 ) -> StatusResponse:
-    delete_credential_for_user(credential_id, user, db_session, True)
+    delete_credential(credential_id, user, db_session, True)
 
     return StatusResponse(
         success=True, message="Credential deleted successfully", data=credential_id

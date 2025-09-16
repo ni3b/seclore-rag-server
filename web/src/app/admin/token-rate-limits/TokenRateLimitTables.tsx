@@ -36,9 +36,7 @@ export const TokenRateLimitTable = ({
   isAdmin,
 }: TokenRateLimitTableArgs) => {
   const shouldRenderGroupName = () =>
-    tokenRateLimits.length > 0 &&
-    tokenRateLimits[0] !== undefined &&
-    tokenRateLimits[0].group_name !== undefined;
+    tokenRateLimits.length > 0 && tokenRateLimits[0].group_name !== undefined;
 
   const handleEnabledChange = (id: number) => {
     const tokenRateLimit = tokenRateLimits.find(
@@ -111,7 +109,7 @@ export const TokenRateLimitTable = ({
                       }
                       className={`px-1 py-0.5 rounded select-none w-24 ${
                         isAdmin
-                          ? "hover:bg-accent-background cursor-pointer"
+                          ? "hover:bg-hover-light cursor-pointer"
                           : "opacity-50"
                       }`}
                     >
@@ -133,7 +131,7 @@ export const TokenRateLimitTable = ({
                   </div>
                 </TableCell>
                 {shouldRenderGroupName() && (
-                  <TableCell className="font-bold text-text-darker">
+                  <TableCell className="font-bold text-emphasis">
                     {tokenRateLimit.group_name}
                   </TableCell>
                 )}

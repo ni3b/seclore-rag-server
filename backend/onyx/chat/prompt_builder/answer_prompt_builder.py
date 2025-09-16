@@ -4,7 +4,6 @@ from typing import cast
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import HumanMessage
 from langchain_core.messages import SystemMessage
-from pydantic import BaseModel
 from pydantic.v1 import BaseModel as BaseModel__v1
 
 from onyx.chat.models import PromptConfig
@@ -12,7 +11,6 @@ from onyx.chat.prompt_builder.citations_prompt import compute_max_llm_input_toke
 from onyx.chat.prompt_builder.utils import translate_history_to_basemessages
 from onyx.file_store.models import InMemoryChatFile
 from onyx.llm.interfaces import LLMConfig
-from onyx.llm.llm_provider_options import OPENAI_PROVIDER_NAME
 from onyx.llm.models import PreviousMessage
 from onyx.llm.utils import build_content_with_imgs
 from onyx.llm.utils import check_message_tokens
@@ -20,7 +18,6 @@ from onyx.llm.utils import message_to_prompt_and_imgs
 from onyx.llm.utils import model_supports_image_input
 from onyx.natural_language_processing.utils import get_tokenizer
 from onyx.prompts.chat_prompts import CHAT_USER_CONTEXT_FREE_PROMPT
-from onyx.prompts.chat_prompts import CODE_BLOCK_MARKDOWN
 from onyx.prompts.direct_qa_prompts import HISTORY_BLOCK
 from onyx.prompts.prompt_utils import drop_messages_history_overflow
 from onyx.prompts.prompt_utils import handle_onyx_date_awareness
@@ -29,20 +26,16 @@ from onyx.tools.models import ToolCallFinalResult
 from onyx.tools.models import ToolCallKickoff
 from onyx.tools.models import ToolResponse
 from onyx.tools.tool import Tool
+from onyx.utils.logger import setup_logger
+
+logger = setup_logger()
 
 
 def default_build_system_message(
     prompt_config: PromptConfig,
-    llm_config: LLMConfig,
 ) -> SystemMessage | None:
     system_prompt = prompt_config.system_prompt.strip()
-    # See https://simonwillison.net/tags/markdown/ for context on this temporary fix
-    # for o-series markdown generation
-    if (
-        llm_config.model_provider == OPENAI_PROVIDER_NAME
-        and llm_config.model_name.startswith("o")
-    ):
-        system_prompt = CODE_BLOCK_MARKDOWN + system_prompt
+    
     tag_handled_prompt = handle_onyx_date_awareness(
         system_prompt,
         prompt_config,
@@ -79,11 +72,9 @@ def default_build_user_message(
     user_prompt = user_prompt.strip()
     tag_handled_prompt = handle_onyx_date_awareness(user_prompt, prompt_config)
     user_msg = HumanMessage(
-        content=(
-            build_content_with_imgs(tag_handled_prompt, files)
-            if files
-            else tag_handled_prompt
-        )
+        content=build_content_with_imgs(tag_handled_prompt, files)
+        if files
+        else tag_handled_prompt
     )
     return user_msg
 
@@ -97,7 +88,6 @@ class AnswerPromptBuilder:
         raw_user_query: str,
         raw_user_uploaded_files: list[InMemoryChatFile],
         single_message_history: str | None = None,
-        system_message: SystemMessage | None = None,
     ) -> None:
         self.max_tokens = compute_max_llm_input_tokens(llm_config)
 
@@ -122,8 +112,14 @@ class AnswerPromptBuilder:
             ),
         )
 
-        self.update_system_prompt(system_message)
-        self.update_user_prompt(user_message)
+        self.system_message_and_token_cnt: tuple[SystemMessage, int] | None = None
+        self.user_message_and_token_cnt = (
+            user_message,
+            check_message_tokens(
+                user_message,
+                self.llm_tokenizer_encode_func,
+            ),
+        )
 
         self.new_messages_and_token_cnts: list[tuple[BaseMessage, int]] = []
 
@@ -136,7 +132,7 @@ class AnswerPromptBuilder:
         if not system_message:
             self.system_message_and_token_cnt = None
             return
-
+        
         self.system_message_and_token_cnt = (
             system_message,
             check_message_tokens(system_message, self.llm_tokenizer_encode_func),
@@ -157,20 +153,8 @@ class AnswerPromptBuilder:
         query, _ = message_to_prompt_and_imgs(self.user_message_and_token_cnt[0])
         return query
 
-    def get_message_history(self) -> list[PreviousMessage]:
-        """
-        Get the message history as a list of PreviousMessage objects.
-        """
-        message_history = []
-        if self.system_message_and_token_cnt:
-            tmp = PreviousMessage.from_langchain_msg(*self.system_message_and_token_cnt)
-            message_history.append(tmp)
-        for i, msg in enumerate(self.message_history):
-            tmp = PreviousMessage.from_langchain_msg(msg, self.history_token_cnts[i])
-            message_history.append(tmp)
-        return message_history
-
     def build(self) -> list[BaseMessage]:
+        logger.info(f"inside the answer prompt builder function")
         if not self.user_message_and_token_cnt:
             raise ValueError("User message must be set before building prompt")
 
@@ -186,6 +170,10 @@ class AnswerPromptBuilder:
         )
 
         final_messages_with_tokens.append(self.user_message_and_token_cnt)
+        logger.info(f"final messages with tokens: {[token[1] for token in final_messages_with_tokens]}")
+        logger.info(f"history token counts: {self.history_token_cnts}")
+        logger.info(f"user message and token counts: {self.user_message_and_token_cnt[1]}")
+        logger.info(f"system message and token counts: {self.system_message_and_token_cnt[1]}")
 
         if self.new_messages_and_token_cnts:
             final_messages_with_tokens.extend(self.new_messages_and_token_cnts)
@@ -195,14 +183,6 @@ class AnswerPromptBuilder:
         )
 
 
-# Stores some parts of a prompt builder as needed for tool calls
-class PromptSnapshot(BaseModel):
-    raw_message_history: list[PreviousMessage]
-    raw_user_query: str
-    built_prompt: list[BaseMessage]
-
-
-# TODO: rename this? AnswerConfig maybe?
 class LLMCall(BaseModel__v1):
     prompt_builder: AnswerPromptBuilder
     tools: list[Tool]

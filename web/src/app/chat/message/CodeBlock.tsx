@@ -30,11 +30,31 @@ export const CodeBlock = memo(function CodeBlock({
 
   const handleCopy = useCallback(() => {
     if (!codeText) return;
-    navigator.clipboard.writeText(codeText).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(codeText).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(err => {
+        console.error("Failed to copy:", err);
+      });
+    } else {
+      // Fallback for older browsers
+      const textArea = document.createElement("textarea");
+      textArea.value = codeText;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand("copy");
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error("Fallback: Copy failed", err);
+      }
+      document.body.removeChild(textArea);
+    }
   }, [codeText]);
+  
 
   const CopyButton = () => (
     <div
@@ -60,10 +80,10 @@ export const CodeBlock = memo(function CodeBlock({
       <span
         className={`
           font-mono 
-          text-text-800 
-          bg-background-50 
+          text-gray-800 
+          bg-gray-50 
           border 
-          border-background-300 
+          border-gray-300 
           rounded 
           align-bottom
           px-1

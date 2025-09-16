@@ -1,14 +1,9 @@
 from uuid import uuid4
 
 import requests
-from sqlalchemy import and_
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from onyx.configs.constants import DocumentSource
 from onyx.db.enums import AccessType
-from onyx.db.models import ConnectorCredentialPair
-from onyx.db.models import DocumentByConnectorCredentialPair
 from tests.integration.common_utils.constants import API_SERVER_URL
 from tests.integration.common_utils.constants import GENERAL_HEADERS
 from tests.integration.common_utils.constants import NUM_DOCS
@@ -66,14 +61,8 @@ def _generate_dummy_document(
     document_id: str,
     cc_pair_id: int,
     content: str | None = None,
-    extra_metadata: dict | None = None,
 ) -> dict:
     text = content if content else f"This is test document {document_id}"
-
-    metadata: dict = {"document_id": document_id}
-    if extra_metadata:
-        metadata.update(extra_metadata)
-
     return {
         "document": {
             "id": document_id,
@@ -84,7 +73,8 @@ def _generate_dummy_document(
                 }
             ],
             "source": DocumentSource.NOT_APPLICABLE,
-            "metadata": metadata,
+            # just for testing metadata
+            "metadata": {"document_id": document_id},
             "semantic_identifier": f"Test Document {document_id}",
             "from_ingestion_api": True,
         },
@@ -117,8 +107,7 @@ class DocumentManager:
             )
             response.raise_for_status()
 
-        api_key_id = api_key.api_key_id if api_key else ""
-        print(f"Seeding docs for api_key_id={api_key_id} completed successfully.")
+        print("Seeding completed successfully.")
         return [
             SimpleTestDocument(
                 id=document["document"]["id"],
@@ -133,18 +122,12 @@ class DocumentManager:
         content: str,
         document_id: str | None = None,
         api_key: DATestAPIKey | None = None,
-        metadata: dict | None = None,
     ) -> SimpleTestDocument:
         # Use provided document_ids if available, otherwise generate random UUIDs
         if document_id is None:
             document_id = f"test-doc-{uuid4()}"
         # Create and ingest some documents
-        document: dict = _generate_dummy_document(
-            document_id,
-            cc_pair.id,
-            content,
-            extra_metadata=metadata,
-        )
+        document: dict = _generate_dummy_document(document_id, cc_pair.id, content)
         response = requests.post(
             f"{API_SERVER_URL}/onyx-api/ingestion",
             json=document,
@@ -152,8 +135,7 @@ class DocumentManager:
         )
         response.raise_for_status()
 
-        api_key_id = api_key.api_key_id if api_key else ""
-        print(f"Seeding doc for api_key_id={api_key_id} completed successfully.")
+        print("Seeding completed successfully.")
 
         return SimpleTestDocument(
             id=document["document"]["id"],
@@ -178,12 +160,8 @@ class DocumentManager:
             doc["fields"]["document_id"]: doc["fields"] for doc in retrieved_docs_dict
         }
 
-        # NOTE(rkuo): too much log spam
         # Left this here for debugging purposes.
         # import json
-
-        # print("DEBUGGING DOCUMENTS")
-        # print(retrieved_docs)
         # for doc in retrieved_docs.values():
         #     printable_doc = doc.copy()
         #     print(printable_doc.keys())
@@ -195,9 +173,6 @@ class DocumentManager:
             retrieved_doc = retrieved_docs.get(document.id)
             if not retrieved_doc:
                 if not verify_deleted:
-                    print(f"Document not found: {document.id}")
-                    print(retrieved_docs.keys())
-                    print(retrieved_docs.values())
                     raise ValueError(f"Document not found: {document.id}")
                 continue
             if verify_deleted:
@@ -211,45 +186,3 @@ class DocumentManager:
                 group_names,
                 doc_creating_user,
             )
-
-    @staticmethod
-    def fetch_documents_for_cc_pair(
-        cc_pair_id: int,
-        db_session: Session,
-        vespa_client: vespa_fixture,
-    ) -> list[SimpleTestDocument]:
-        stmt = (
-            select(DocumentByConnectorCredentialPair)
-            .join(
-                ConnectorCredentialPair,
-                and_(
-                    DocumentByConnectorCredentialPair.connector_id
-                    == ConnectorCredentialPair.connector_id,
-                    DocumentByConnectorCredentialPair.credential_id
-                    == ConnectorCredentialPair.credential_id,
-                ),
-            )
-            .where(ConnectorCredentialPair.id == cc_pair_id)
-        )
-        documents = db_session.execute(stmt).scalars().all()
-        if not documents:
-            return []
-
-        doc_ids = [document.id for document in documents]
-        retrieved_docs_dict = vespa_client.get_documents_by_id(doc_ids)["documents"]
-
-        final_docs: list[SimpleTestDocument] = []
-        # NOTE: they are really chunks, but we're assuming that for these tests
-        # we only have one chunk per document for now
-        for doc_dict in retrieved_docs_dict:
-            doc_id = doc_dict["fields"]["document_id"]
-            doc_content = doc_dict["fields"]["content"]
-            # still called `image_file_name` in Vespa for backwards compatibility
-            image_file_id = doc_dict["fields"].get("image_file_name", None)
-            final_docs.append(
-                SimpleTestDocument(
-                    id=doc_id, content=doc_content, image_file_id=image_file_id
-                )
-            )
-
-        return final_docs

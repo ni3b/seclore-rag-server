@@ -1,5 +1,6 @@
 import React from "react";
-import { TextArrayField } from "@/components/Field";
+import { ListOption } from "@/lib/connectors/connectors";
+import { TextArrayField } from "@/components/admin/connectors/Field";
 import { useFormikContext } from "formik";
 
 interface ListInputProps {

@@ -7,9 +7,6 @@ from sqlalchemy.orm import Session
 
 from onyx.db.document import delete_documents_complete__no_commit
 from onyx.db.enums import ConnectorCredentialPairStatus
-from onyx.db.search_settings import get_active_search_settings
-from onyx.db.tag import delete_orphan_tags__no_commit
-from shared_configs.configs import POSTGRES_DEFAULT_SCHEMA
 
 # Modify sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +16,7 @@ sys.path.append(parent_dir)
 # pylint: disable=E402
 # flake8: noqa: E402
 
-# Now import Onyx modules
+# Now import Seclore modules
 from onyx.db.models import (
     DocumentSet__ConnectorCredentialPair,
     UserGroup__ConnectorCredentialPair,
@@ -38,9 +35,10 @@ from onyx.db.connector_credential_pair import (
     get_connector_credential_pair_from_id,
     get_connector_credential_pair,
 )
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.engine import get_session_context_manager
 from onyx.document_index.factory import get_default_document_index
 from onyx.file_store.file_store import get_default_file_store
+from onyx.document_index.document_index_utils import get_both_index_names
 
 # pylint: enable=E402
 # flake8: noqa: E402
@@ -76,7 +74,7 @@ def _unsafe_deletion(
         for document in documents:
             document_index.delete_single(
                 doc_id=document.id,
-                tenant_id=POSTGRES_DEFAULT_SCHEMA,
+                tenant_id=None,
                 chunk_count=document.chunk_count,
             )
 
@@ -84,7 +82,6 @@ def _unsafe_deletion(
             db_session=db_session,
             document_ids=[document.id for document in documents],
         )
-        delete_orphan_tags__no_commit(db_session=db_session)
 
         num_docs_deleted += len(documents)
 
@@ -136,7 +133,7 @@ def _unsafe_deletion(
 def _delete_connector(cc_pair_id: int, db_session: Session) -> None:
     user_input = input(
         "DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING. \
-        IT MAY CAUSE ISSUES with your Onyx instance! \
+        IT MAY CAUSE ISSUES with your Seclore instance! \
         Are you SURE you want to continue? (enter 'Y' to continue): "
     )
     if user_input != "Y":
@@ -194,10 +191,9 @@ def _delete_connector(cc_pair_id: int, db_session: Session) -> None:
     )
     try:
         logger.notice("Deleting information from Vespa and Postgres")
-        active_search_settings = get_active_search_settings(db_session)
+        curr_ind_name, sec_ind_name = get_both_index_names(db_session)
         document_index = get_default_document_index(
-            active_search_settings.primary,
-            active_search_settings.secondary,
+            primary_index_name=curr_ind_name, secondary_index_name=sec_ind_name
         )
 
         files_deleted_count = _unsafe_deletion(
@@ -228,5 +224,5 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    with get_session_with_current_tenant() as db_session:
+    with get_session_context_manager() as db_session:
         _delete_connector(args.connector_id, db_session)

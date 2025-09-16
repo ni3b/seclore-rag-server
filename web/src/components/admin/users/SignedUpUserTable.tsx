@@ -29,41 +29,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { useUser } from "@/components/user/UserProvider";
-import { LeaveOrganizationButton } from "./buttons/LeaveOrganizationButton";
-import { NEXT_PUBLIC_CLOUD_ENABLED } from "@/lib/constants";
-import ResetPasswordModal from "./ResetPasswordModal";
-import {
-  MoreHorizontal,
-  LogOut,
-  UserMinus,
-  UserX,
-  KeyRound,
-} from "lucide-react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 
 const ITEMS_PER_PAGE = 10;
 const PAGES_PER_BATCH = 2;
+import { useUser } from "@/components/user/UserProvider";
+import { LeaveOrganizationButton } from "./buttons/LeaveOrganizationButton";
+import { NEXT_PUBLIC_CLOUD_ENABLED } from "@/lib/constants";
 
 interface Props {
   invitedUsers: InvitedUserSnapshot[];
   setPopup: (spec: PopupSpec) => void;
   q: string;
   invitedUsersMutate: () => void;
-}
-
-interface ActionMenuProps {
-  user: User;
-  currentUser: User | null;
-  setPopup: (spec: PopupSpec) => void;
-  refresh: () => void;
-  invitedUsersMutate: () => void;
-  handleResetPassword: (user: User) => void;
 }
 
 const SignedUpUserTable = ({
@@ -78,7 +55,6 @@ const SignedUpUserTable = ({
   }>({});
 
   const [selectedRoles, setSelectedRoles] = useState<UserRole[]>([]);
-  const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null);
 
   const {
     currentPageData: pageOfUsers,
@@ -137,10 +113,6 @@ const SignedUpUserTable = ({
     toggleRole(roleEnum); // Deselect the role in filters
   };
 
-  const handleResetPassword = (user: User) => {
-    setResetPasswordUser(user);
-  };
-
   // --------------
   // Render Functions
   // --------------
@@ -166,7 +138,7 @@ const SignedUpUserTable = ({
           <SelectTrigger className="w-[260px] h-[34px] bg-neutral">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-background-50">
+          <SelectContent className="bg-neutral-50">
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="true">Active</SelectItem>
             <SelectItem value="false">Inactive</SelectItem>
@@ -180,13 +152,13 @@ const SignedUpUserTable = ({
                 : "All Roles"}
             </SelectValue>
           </SelectTrigger>
-          <SelectContent className="bg-background-50">
+          <SelectContent className="bg-neutral-50">
             {Object.entries(USER_ROLE_LABELS)
               .filter(([role]) => role !== UserRole.EXT_PERM_USER)
               .map(([role, label]) => (
                 <div
                   key={role}
-                  className="flex items-center space-x-2 px-2 py-1.5 cursor-pointer hover:bg-background-200"
+                  className="flex items-center space-x-2 px-2 py-1.5 cursor-pointer hover:bg-gray-200"
                   onClick={() => toggleRole(role as UserRole)}
                 >
                   <input
@@ -204,7 +176,7 @@ const SignedUpUserTable = ({
         {selectedRoles.map((role) => (
           <button
             key={role}
-            className="border border-background-300 bg-neutral p-1 rounded text-sm hover:bg-background-200"
+            className="border border-neutral-300 bg-neutral p-1 rounded text-sm hover:bg-neutral-200"
             onClick={() => removeRole(role)}
             style={{ padding: "2px 8px" }}
           >
@@ -229,77 +201,6 @@ const SignedUpUserTable = ({
     );
   };
 
-  const ActionMenu: React.FC<ActionMenuProps> = ({
-    user,
-    currentUser,
-    setPopup,
-    refresh,
-    invitedUsersMutate,
-    handleResetPassword,
-  }) => {
-    const buttonClassName = "w-full justify-start";
-
-    return (
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="ghost" className="h-8 w-8 p-0">
-            <span className="sr-only">Open menu</span>
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-48">
-          <div className="grid gap-2">
-            {NEXT_PUBLIC_CLOUD_ENABLED && user.id === currentUser?.id ? (
-              <LeaveOrganizationButton
-                user={user}
-                setPopup={setPopup}
-                mutate={refresh}
-                className={buttonClassName}
-              >
-                <LogOut className="mr-2 h-4 w-4" />
-                <span>Leave Organization</span>
-              </LeaveOrganizationButton>
-            ) : (
-              <>
-                {!user.is_active && (
-                  <DeleteUserButton
-                    user={user}
-                    setPopup={setPopup}
-                    mutate={refresh}
-                    className={buttonClassName}
-                  >
-                    <UserMinus className="mr-2 h-4 w-4" />
-                    <span>Delete User</span>
-                  </DeleteUserButton>
-                )}
-                <DeactivateUserButton
-                  user={user}
-                  deactivate={user.is_active}
-                  setPopup={setPopup}
-                  mutate={refresh}
-                  className={buttonClassName}
-                >
-                  <UserX className="mr-2 h-4 w-4" />
-                  <span>{user.is_active ? "Deactivate" : "Activate"} User</span>
-                </DeactivateUserButton>
-              </>
-            )}
-            {user.password_configured && (
-              <Button
-                variant="ghost"
-                className={buttonClassName}
-                onClick={() => handleResetPassword(user)}
-              >
-                <KeyRound className="mr-2 h-4 w-4" />
-                <span>Reset Password</span>
-              </Button>
-            )}
-          </div>
-        </PopoverContent>
-      </Popover>
-    );
-  };
-
   const renderActionButtons = (user: User) => {
     if (user.role === UserRole.SLACK_USER) {
       return (
@@ -311,15 +212,24 @@ const SignedUpUserTable = ({
         />
       );
     }
-    return (
-      <ActionMenu
+    return NEXT_PUBLIC_CLOUD_ENABLED && user.id === currentUser?.id ? (
+      <LeaveOrganizationButton
         user={user}
-        currentUser={currentUser}
         setPopup={setPopup}
-        refresh={refresh}
-        invitedUsersMutate={invitedUsersMutate}
-        handleResetPassword={handleResetPassword}
+        mutate={refresh}
       />
+    ) : (
+      <>
+        <DeactivateUserButton
+          user={user}
+          deactivate={user.is_active}
+          setPopup={setPopup}
+          mutate={refresh}
+        />
+        {!user.is_active && (
+          <DeleteUserButton user={user} setPopup={setPopup} mutate={refresh} />
+        )}
+      </>
     );
   };
 
@@ -369,7 +279,7 @@ const SignedUpUserTable = ({
                   <TableCell className="text-center w-[140px]">
                     <i>{user.is_active ? "Active" : "Inactive"}</i>
                   </TableCell>
-                  <TableCell className="text-right  w-[300px] ">
+                  <TableCell className="text-right w-[200px]">
                     {renderActionButtons(user)}
                   </TableCell>
                 </TableRow>
@@ -383,13 +293,6 @@ const SignedUpUserTable = ({
           currentPage={currentPage}
           totalPages={totalPages}
           onPageChange={goToPage}
-        />
-      )}
-      {resetPasswordUser && (
-        <ResetPasswordModal
-          user={resetPasswordUser}
-          onClose={() => setResetPasswordUser(null)}
-          setPopup={setPopup}
         />
       )}
     </>

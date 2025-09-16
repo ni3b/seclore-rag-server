@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from onyx.auth.users import current_user
 from onyx.db.chat import get_chat_session_by_id
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.folder import add_chat_to_folder
 from onyx.db.folder import create_folder
 from onyx.db.folder import delete_folder
@@ -18,9 +18,9 @@ from onyx.db.models import User
 from onyx.server.features.folder.models import DeleteFolderOptions
 from onyx.server.features.folder.models import FolderChatSessionRequest
 from onyx.server.features.folder.models import FolderCreationRequest
+from onyx.server.features.folder.models import FolderResponse
 from onyx.server.features.folder.models import FolderUpdateRequest
 from onyx.server.features.folder.models import GetUserFoldersResponse
-from onyx.server.features.folder.models import UserFolderSnapshot
 from onyx.server.models import DisplayPriorityRequest
 from onyx.server.query_and_chat.models import ChatSessionDetails
 
@@ -39,10 +39,11 @@ def get_folders(
     folders.sort()
     return GetUserFoldersResponse(
         folders=[
-            UserFolderSnapshot(
+            FolderResponse(
                 folder_id=folder.id,
                 folder_name=folder.name,
                 display_priority=folder.display_priority,
+                creator_assistant_id=folder.creator_assistant_id,
                 chat_sessions=[
                     ChatSessionDetails(
                         id=chat_session.id,
@@ -84,6 +85,7 @@ def create_folder_endpoint(
     return create_folder(
         user_id=user.id if user else None,
         folder_name=request.folder_name,
+        creator_assistant_id=request.creator_assistant_id,
         db_session=db_session,
     )
 

@@ -1,28 +1,22 @@
 from collections.abc import Callable
 from collections.abc import Generator
+import logging
 from typing import Any
-from typing import Generic
-from typing import TypeVar
 
+from onyx.chat.models import PromptConfig
 from onyx.llm.interfaces import LLM
 from onyx.llm.models import PreviousMessage
 from onyx.tools.models import ToolCallFinalResult
 from onyx.tools.models import ToolCallKickoff
 from onyx.tools.models import ToolResponse
 from onyx.tools.tool import Tool
-from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel
+from onyx.utils.threadpool_concurrency import run_functions_tuples_in_parallel_with_rate_limiting
 
 
-R = TypeVar("R")
-
-
-class ToolRunner(Generic[R]):
-    def __init__(
-        self, tool: Tool[R], args: dict[str, Any], override_kwargs: R | None = None
-    ):
+class ToolRunner:
+    def __init__(self, tool: Tool, args: dict[str, Any]):
         self.tool = tool
         self.args = args
-        self.override_kwargs = override_kwargs
 
         self._tool_responses: list[ToolResponse] | None = None
 
@@ -35,9 +29,7 @@ class ToolRunner(Generic[R]):
             return
 
         tool_responses: list[ToolResponse] = []
-        for tool_response in self.tool.run(
-            override_kwargs=self.override_kwargs, **self.args
-        ):
+        for tool_response in self.tool.run(**self.args):
             yield tool_response
             tool_responses.append(tool_response)
 
@@ -56,10 +48,15 @@ class ToolRunner(Generic[R]):
 
 
 def check_which_tools_should_run_for_non_tool_calling_llm(
-    tools: list[Tool], query: str, history: list[PreviousMessage], llm: LLM
+    tools: list[Tool], query: str, history: list[PreviousMessage], llm: LLM, prompt_config: PromptConfig
 ) -> list[dict[str, Any] | None]:
     tool_args_list: list[tuple[Callable[..., Any], tuple[Any, ...]]] = [
-        (tool.get_args_for_non_tool_calling_llm, (query, history, llm))
+        (tool.get_args_for_non_tool_calling_llm, (query, history, llm, prompt_config))
         for tool in tools
     ]
-    return run_functions_tuples_in_parallel(tool_args_list)
+    
+    return run_functions_tuples_in_parallel_with_rate_limiting(
+        tool_args_list, 
+        use_rate_limiting=True, 
+        use_retry=True
+    )

@@ -4,10 +4,8 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import ToolCall
 
-from onyx.chat.models import ResponsePart
-from onyx.chat.prompt_builder.answer_prompt_builder import AnswerPromptBuilder
+from onyx.chat.models import PromptConfig, ResponsePart
 from onyx.chat.prompt_builder.answer_prompt_builder import LLMCall
-from onyx.chat.prompt_builder.answer_prompt_builder import PromptSnapshot
 from onyx.llm.interfaces import LLM
 from onyx.tools.force import ForceUseTool
 from onyx.tools.message import build_tool_message
@@ -27,13 +25,6 @@ from onyx.utils.logger import setup_logger
 logger = setup_logger()
 
 
-def get_tool_by_name(tools: list[Tool], tool_name: str) -> Tool:
-    for tool in tools:
-        if tool.name == tool_name:
-            return tool
-    raise RuntimeError(f"Tool '{tool_name}' not found")
-
-
 class ToolResponseHandler:
     def __init__(self, tools: list[Tool]):
         self.tools = tools
@@ -50,14 +41,71 @@ class ToolResponseHandler:
 
     @classmethod
     def get_tool_call_for_non_tool_calling_llm(
-        cls, llm_call: LLMCall, llm: LLM
+        cls, llm_call: LLMCall, llm: LLM, prompt_config: PromptConfig
     ) -> tuple[Tool, dict] | None:
-        return get_tool_call_for_non_tool_calling_llm_impl(
-            force_use_tool=llm_call.force_use_tool,
-            tools=llm_call.tools,
-            prompt_builder=llm_call.prompt_builder,
-            llm=llm,
-        )
+        logger.debug(f"in get_tool_call_for_non_tool_calling_llm")
+        if llm_call.force_use_tool.force_use:
+            # if we are forcing a tool, we don't need to check which tools to run
+            tool = next(
+                (
+                    t
+                    for t in llm_call.tools
+                    if t.name == llm_call.force_use_tool.tool_name
+                ),
+                None,
+            )
+            if not tool:
+                raise RuntimeError(
+                    f"Tool '{llm_call.force_use_tool.tool_name}' not found"
+                )
+            tool_args = (
+                llm_call.force_use_tool.args
+                if llm_call.force_use_tool.args is not None
+                else tool.get_args_for_non_tool_calling_llm(
+                    query=llm_call.prompt_builder.raw_user_query,
+                    history=llm_call.prompt_builder.raw_message_history,
+                    llm=llm,
+                    force_run=True,
+                    prompt_config=prompt_config
+                )
+            )
+
+            if tool_args is None:
+                raise RuntimeError(f"Tool '{tool.name}' did not return args")
+
+            return (tool, tool_args)
+        else:
+            tool_options = check_which_tools_should_run_for_non_tool_calling_llm(
+                tools=llm_call.tools,
+                query=llm_call.prompt_builder.raw_user_query,
+                history=llm_call.prompt_builder.raw_message_history,
+                llm=llm,
+                prompt_config=prompt_config
+            )
+            logger.info(f"tool options for tool call is {tool_options}")
+            available_tools_and_args = [
+                (llm_call.tools[ind], args)
+                for ind, args in enumerate(tool_options)
+                if args is not None
+            ]
+
+            logger.info(
+                f"Selecting single tool from tools: {[(tool.name, args) for tool, args in available_tools_and_args]}"
+            )
+
+            chosen_tool_and_args = (
+                select_single_tool_for_non_tool_calling_llm(
+                    tools_and_args=available_tools_and_args,
+                    history=llm_call.prompt_builder.raw_message_history,
+                    query=llm_call.prompt_builder.raw_user_query,
+                    llm=llm,
+                )
+                if available_tools_and_args
+                else None
+            )
+
+            logger.notice(f"Chosen tool: {chosen_tool_and_args}")
+            return chosen_tool_and_args
 
     def _handle_tool_call(self) -> Generator[ResponsePart, None, None]:
         if not self.tool_call_chunk or not self.tool_call_chunk.tool_calls:
@@ -72,16 +120,19 @@ class ToolResponseHandler:
                 tool for tool in self.tools if tool.name == tool_call_request["name"]
             ]
 
-            if known_tools_by_name:
+            if not known_tools_by_name:
+                logger.error(
+                    "Tool call requested with unknown name field. \n"
+                    f"self.tools: {self.tools}"
+                    f"tool_call_request: {tool_call_request}"
+                )
+                continue
+            else:
                 selected_tool = known_tools_by_name[0]
                 selected_tool_call_request = tool_call_request
-                break
 
-            logger.error(
-                "Tool call requested with unknown name field. \n"
-                f"self.tools: {self.tools}"
-                f"tool_call_request: {tool_call_request}"
-            )
+            if selected_tool and selected_tool_call_request:
+                break
 
         if not selected_tool or not selected_tool_call_request:
             return
@@ -108,12 +159,17 @@ class ToolResponseHandler:
 
     def handle_response_part(
         self,
-        response_item: BaseMessage | str | None,
-        previous_response_items: list[BaseMessage | str],
+        response_item: BaseMessage | None,
+        previous_response_items: list[BaseMessage],
     ) -> Generator[ResponsePart, None, None]:
         if response_item is None:
             yield from self._handle_tool_call()
-
+        #logger.info(f"response_item: {response_item}")
+        #logger.info(f"previous_response_items: {previous_response_items}")
+        #logger.info(f"self.tool_call_chunk: {self.tool_call_chunk}")
+        #if response_item is not None:
+            #logger.info(f"response_item.tool_call_chunks: {response_item.tool_call_chunks}")
+            #logger.info(f"response_item.tool_calls: {response_item.tool_calls}")
         if isinstance(response_item, AIMessageChunk) and (
             response_item.tool_call_chunks or response_item.tool_calls
         ):
@@ -121,6 +177,8 @@ class ToolResponseHandler:
                 self.tool_call_chunk = response_item
             else:
                 self.tool_call_chunk += response_item  # type: ignore
+
+        return
 
     def next_llm_call(self, current_llm_call: LLMCall) -> LLMCall | None:
         if (
@@ -142,7 +200,7 @@ class ToolResponseHandler:
             prompt_builder=new_prompt_builder,
             tools=[],  # for now, only allow one tool call per response
             force_use_tool=ForceUseTool(
-                force_use=False,
+                force_use=True,
                 tool_name="",
                 args=None,
             ),
@@ -154,70 +212,3 @@ class ToolResponseHandler:
                 self.tool_final_result,
             ],
         )
-
-
-def get_tool_call_for_non_tool_calling_llm_impl(
-    force_use_tool: ForceUseTool,
-    tools: list[Tool],
-    prompt_builder: AnswerPromptBuilder | PromptSnapshot,
-    llm: LLM,
-) -> tuple[Tool, dict] | None:
-    user_query = prompt_builder.raw_user_query
-    history = prompt_builder.raw_message_history
-    if isinstance(prompt_builder, AnswerPromptBuilder):
-        history = prompt_builder.get_message_history()
-
-    if force_use_tool.force_use:
-        # if we are forcing a tool, we don't need to check which tools to run
-        tool = get_tool_by_name(tools, force_use_tool.tool_name)
-
-        tool_args = (
-            force_use_tool.args
-            if force_use_tool.args is not None
-            else tool.get_args_for_non_tool_calling_llm(
-                query=user_query,
-                history=history,
-                llm=llm,
-                force_run=True,
-            )
-        )
-
-        if tool_args is None:
-            raise RuntimeError(f"Tool '{tool.name}' did not return args")
-
-        # If we have override_kwargs, add them to the tool_args
-        if force_use_tool.override_kwargs is not None:
-            tool_args["override_kwargs"] = force_use_tool.override_kwargs
-
-        return (tool, tool_args)
-    else:
-        tool_options = check_which_tools_should_run_for_non_tool_calling_llm(
-            tools=tools,
-            query=user_query,
-            history=history,
-            llm=llm,
-        )
-
-        available_tools_and_args = [
-            (tools[ind], args)
-            for ind, args in enumerate(tool_options)
-            if args is not None
-        ]
-
-        logger.info(
-            f"Selecting single tool from tools: {[(tool.name, args) for tool, args in available_tools_and_args]}"
-        )
-
-        chosen_tool_and_args = (
-            select_single_tool_for_non_tool_calling_llm(
-                tools_and_args=available_tools_and_args,
-                history=history,
-                query=user_query,
-                llm=llm,
-            )
-            if available_tools_and_args
-            else None
-        )
-
-        logger.notice(f"Chosen tool: {chosen_tool_and_args}")
-        return chosen_tool_and_args

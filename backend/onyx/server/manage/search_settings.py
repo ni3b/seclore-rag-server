@@ -11,7 +11,7 @@ from onyx.context.search.models import SavedSearchSettings
 from onyx.context.search.models import SearchSettingsCreationRequest
 from onyx.db.connector_credential_pair import get_connector_credential_pairs
 from onyx.db.connector_credential_pair import resync_cc_pair
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.index_attempt import expire_index_attempts
 from onyx.db.models import IndexModelStatus
 from onyx.db.models import User
@@ -22,7 +22,6 @@ from onyx.db.search_settings import get_embedding_provider_from_provider_type
 from onyx.db.search_settings import get_secondary_search_settings
 from onyx.db.search_settings import update_current_search_settings
 from onyx.db.search_settings import update_search_settings_status
-from onyx.document_index.document_index_utils import get_multipass_config
 from onyx.document_index.factory import get_default_document_index
 from onyx.file_processing.unstructured import delete_unstructured_api_key
 from onyx.file_processing.unstructured import get_unstructured_api_key
@@ -72,13 +71,11 @@ def set_new_search_settings(
             and not search_settings.index_name.endswith(ALT_INDEX_SUFFIX)
         ):
             index_name += ALT_INDEX_SUFFIX
-        search_values = search_settings_new.model_dump()
+        search_values = search_settings_new.dict()
         search_values["index_name"] = index_name
         new_search_settings_request = SavedSearchSettings(**search_values)
     else:
-        new_search_settings_request = SavedSearchSettings(
-            **search_settings_new.model_dump()
-        )
+        new_search_settings_request = SavedSearchSettings(**search_settings_new.dict())
 
     secondary_search_settings = get_secondary_search_settings(db_session)
 
@@ -100,15 +97,14 @@ def set_new_search_settings(
     )
 
     # Ensure Vespa has the new index immediately
-    get_multipass_config(search_settings)
-    get_multipass_config(new_search_settings)
-    document_index = get_default_document_index(search_settings, new_search_settings)
+    document_index = get_default_document_index(
+        primary_index_name=search_settings.index_name,
+        secondary_index_name=new_search_settings.index_name,
+    )
 
     document_index.ensure_indices_exist(
-        primary_embedding_dim=search_settings.final_embedding_dim,
-        primary_embedding_precision=search_settings.embedding_precision,
-        secondary_index_embedding_dim=new_search_settings.final_embedding_dim,
-        secondary_index_embedding_precision=new_search_settings.embedding_precision,
+        index_embedding_dim=search_settings.model_dim,
+        secondary_index_embedding_dim=new_search_settings.model_dim,
     )
 
     # Pause index attempts for the currently in use index to preserve resources
@@ -117,11 +113,7 @@ def set_new_search_settings(
             search_settings_id=search_settings.id, db_session=db_session
         )
         for cc_pair in get_connector_credential_pairs(db_session):
-            resync_cc_pair(
-                cc_pair=cc_pair,
-                search_settings_id=new_search_settings.id,
-                db_session=db_session,
-            )
+            resync_cc_pair(cc_pair, db_session=db_session)
 
     db_session.commit()
     return IdReturn(id=new_search_settings.id)
@@ -143,17 +135,6 @@ def cancel_new_embedding(
             search_settings=secondary_search_settings,
             new_status=IndexModelStatus.PAST,
             db_session=db_session,
-        )
-
-        # remove the old index from the vector db
-        primary_search_settings = get_current_search_settings(db_session)
-        document_index = get_default_document_index(primary_search_settings, None)
-        document_index.ensure_indices_exist(
-            primary_embedding_dim=primary_search_settings.final_embedding_dim,
-            primary_embedding_precision=primary_search_settings.embedding_precision,
-            # just finished swap, no more secondary index
-            secondary_index_embedding_dim=None,
-            secondary_index_embedding_precision=None,
         )
 
 
@@ -202,11 +183,9 @@ def get_all_search_settings(
     secondary_search_settings = get_secondary_search_settings(db_session)
     return FullModelVersionResponse(
         current_settings=SavedSearchSettings.from_db_model(current_search_settings),
-        secondary_settings=(
-            SavedSearchSettings.from_db_model(secondary_search_settings)
-            if secondary_search_settings
-            else None
-        ),
+        secondary_settings=SavedSearchSettings.from_db_model(secondary_search_settings)
+        if secondary_search_settings
+        else None,
     )
 
 

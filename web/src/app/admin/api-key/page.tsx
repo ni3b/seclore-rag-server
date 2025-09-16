@@ -6,6 +6,7 @@ import { KeyIcon } from "@/components/icons/icons";
 import { errorHandlingFetcher } from "@/lib/fetcher";
 import { ErrorCallout } from "@/components/ErrorCallout";
 import useSWR, { mutate } from "swr";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   TableBody,
@@ -21,15 +22,14 @@ import Title from "@/components/ui/title";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { useState } from "react";
 import { DeleteButton } from "@/components/DeleteButton";
-import { FiCopy, FiEdit2, FiRefreshCw } from "react-icons/fi";
+import { FiCopy, FiEdit2, FiRefreshCw, FiX } from "react-icons/fi";
 import { Modal } from "@/components/Modal";
 import { Spinner } from "@/components/Spinner";
 import { deleteApiKey, regenerateApiKey } from "./lib";
 import { OnyxApiKeyForm } from "./OnyxApiKeyForm";
 import { APIKey } from "./types";
-import CreateButton from "@/components/ui/createButton";
 
-const API_KEY_TEXT = `API Keys allow you to access Onyx APIs programmatically. Click the button below to generate a new API Key.`;
+const API_KEY_TEXT = `API Keys allow you to access Seclore APIs programmatically. Click the button below to generate a new API Key.`;
 
 function NewApiKeyModal({
   apiKey,
@@ -41,8 +41,11 @@ function NewApiKeyModal({
   const [copyClicked, setCopyClicked] = useState(false);
 
   return (
-    <Modal title="New API Key" onOutsideClick={onClose}>
+    <Modal onOutsideClick={onClose}>
       <div className="px-8 py-8">
+        <div className="flex w-full border-b border-border mb-4 pb-4">
+          <Title>New API Key</Title>
+        </div>
         <div className="h-32">
           <Text className="mb-4">
             Make sure you copy your new API key. You won’t be able to see this
@@ -52,7 +55,7 @@ function NewApiKeyModal({
           <div className="flex mt-2">
             <b className="my-auto break-all">{apiKey}</b>
             <div
-              className="ml-2 my-auto p-2 hover:bg-accent-background-hovered rounded cursor-pointer"
+              className="ml-2 my-auto p-2 hover:bg-hover rounded cursor-pointer"
               onClick={() => {
                 setCopyClicked(true);
                 navigator.clipboard.writeText(apiKey);
@@ -108,10 +111,14 @@ function Main() {
   }
 
   const newApiKeyButton = (
-    <CreateButton
+    <Button
+      variant="navigate"
+      size="sm"
+      className="mt-3"
       onClick={() => setShowCreateUpdateForm(true)}
-      text="Create API Key"
-    />
+    >
+      Create API Key
+    </Button>
   );
 
   if (apiKeys.length === 0) {
@@ -178,7 +185,7 @@ function Main() {
                   flex 
                   mb-1 
                   w-fit 
-                  hover:bg-accent-background-hovered cursor-pointer
+                  hover:bg-hover cursor-pointer
                   p-2 
                   rounded-lg
                   border-border
@@ -202,7 +209,7 @@ function Main() {
                   flex 
                   mb-1 
                   w-fit 
-                  hover:bg-accent-background-hovered cursor-pointer
+                  hover:bg-hover cursor-pointer
                   p-2 
                   rounded-lg
                   border-border

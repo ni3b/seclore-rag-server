@@ -3,21 +3,22 @@ import os
 INPUT_PROMPT_YAML = "./onyx/seeding/input_prompts.yaml"
 PROMPTS_YAML = "./onyx/seeding/prompts.yaml"
 PERSONAS_YAML = "./onyx/seeding/personas.yaml"
-USER_FOLDERS_YAML = "./onyx/seeding/user_folders.yaml"
-NUM_RETURNED_HITS = 50
+
+NUM_RETURNED_HITS = int(os.environ.get("NUM_RETURNED_HITS") or 50) # Determines how many results vespa should return
 # Used for LLM filtering and reranking
 # We want this to be approximately the number of results we want to show on the first page
 # It cannot be too large due to cost and latency implications
-NUM_POSTPROCESSED_RESULTS = 20
+NUM_POSTPROCESSED_RESULTS = int(os.environ.get("NUM_POSTPROCESSED_RESULTS") or 50) # Value of max_llm_filter_sections if no reranking
+
+RELEVANCE_BATCH_SIZE = int(os.environ.get("RELEVANCE_BATCH_SIZE") or 25)
+USE_THREADS = os.environ.get("USE_THREADS", "true").lower() == "true"
+USE_SINGLE_BATCH = os.environ.get("USE_SINGLE_BATCH", "false").lower() == "true"
 
 # May be less depending on model
 MAX_CHUNKS_FED_TO_CHAT = float(os.environ.get("MAX_CHUNKS_FED_TO_CHAT") or 10.0)
 # For Chat, need to keep enough space for history and other prompt pieces
 # ~3k input, half for docs, half for chat history + prompts
 CHAT_TARGET_CHUNK_PERCENTAGE = 512 * 3 / 3072
-
-# Maximum percentage of the context window to fill with selected sections
-SELECTED_SECTIONS_MAX_WINDOW_PERCENTAGE = 0.8
 
 # 1 / (1 + DOC_TIME_DECAY * doc-age-in-years), set to 0 to have no decay
 # Capped in Vespa at 0.5
@@ -41,8 +42,9 @@ DISABLE_LLM_QUERY_REPHRASE = (
 # 1 edit per 20 characters, currently unused due to fuzzy match being too slow
 QUOTE_ALLOWED_ERROR_PERCENT = 0.05
 QA_TIMEOUT = int(os.environ.get("QA_TIMEOUT") or "60")  # 60 seconds
+
 # Weighting factor between Vector and Keyword Search, 1 for completely vector search
-HYBRID_ALPHA = max(0, min(1, float(os.environ.get("HYBRID_ALPHA") or 0.5)))
+HYBRID_ALPHA = max(0, min(1, float(os.environ.get("HYBRID_ALPHA") or 0.7)))
 HYBRID_ALPHA_KEYWORD = max(
     0, min(1, float(os.environ.get("HYBRID_ALPHA_KEYWORD") or 0.4))
 )
@@ -50,9 +52,10 @@ HYBRID_ALPHA_KEYWORD = max(
 # Title based. Default heavily favors Content because Title is also included at the top of
 # Content. This is to avoid cases where the Content is very relevant but it may not be clear
 # if the title is separated out. Title is most of a "boost" than a separate field.
-TITLE_CONTENT_RATIO = max(
-    0, min(1, float(os.environ.get("TITLE_CONTENT_RATIO") or 0.10))
-)
+TITLE_CONTENT_RATIO = 0.3
+# max(
+#     0, min(1, float(os.environ.get("TITLE_CONTENT_RATIO") or 0.10))
+# )
 
 # A list of languages passed to the LLM to rephase the query
 # For example "English,French,Spanish", be sure to use the "," separator
@@ -100,10 +103,29 @@ ENABLE_CONNECTOR_CLASSIFIER = os.environ.get("ENABLE_CONNECTOR_CLASSIFIER", Fals
 
 VESPA_SEARCHER_THREADS = int(os.environ.get("VESPA_SEARCHER_THREADS") or 2)
 
-# Whether or not to use the semantic & keyword search expansions for Basic Search
-USE_SEMANTIC_KEYWORD_EXPANSIONS_BASIC_SEARCH = (
-    os.environ.get("USE_SEMANTIC_KEYWORD_EXPANSIONS_BASIC_SEARCH", "false").lower()
-    == "true"
-)
+# Whether to inform the LLM when no relevant search results are found
+# This helps prevent hallucination by modifying the system prompt to let the LLM know
+# that no relevant documents were found, allowing it to respond appropriately
+PREVENT_LLM_HALLUCINATION_ON_EMPTY_SEARCH = os.environ.get(
+    "PREVENT_LLM_HALLUCINATION_ON_EMPTY_SEARCH", "true"
+).lower() == "true"
 
-USE_DIV_CON_AGENT = os.environ.get("USE_DIV_CON_AGENT", "false").lower() == "true"
+# Chat Summarization Configuration
+# Number of messages after which chat summarization is triggered
+# Set to 0 to disable summarization entirely
+CHAT_SUMMARIZATION_THRESHOLD = int(os.environ.get("CHAT_SUMMARIZATION_THRESHOLD") or 4)
+
+# Retry Interval for Freshdesk API
+FRESHDESK_RETRY_INTERVAL = int(os.environ.get("FRESHDESK_RETRY_INTERVAL") or 5)
+
+# Freshdesk API max retries count
+FRESHDESK_MAX_RETRIES = int(os.environ.get("FRESHDESK_MAX_RETRIES") or 3)
+
+# Freshdesk API Domain
+FRESHDESK_API_DOMAIN = os.environ.get("FRESHDESK_API_DOMAIN") or "seclore"
+
+# Freshdesk API API Key
+FRESHDESK_API_KEY = os.environ.get("FRESHDESK_API_KEY") or "lBoBQJZXhcbelO1CtYrh"
+
+# Freshdesk API Password
+FRESHDESK_API_PASSWORD = os.environ.get("FRESHDESK_API_PASSWORD") or "Mumbai@123"

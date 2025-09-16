@@ -1,12 +1,14 @@
 import React from "react";
 import { getDisplayNameForModel } from "@/lib/hooks";
 import {
-  parseLlmDescriptor,
-  modelSupportsImageInput,
+  checkLLMSupportsImageInput,
+  destructureValue,
   structureValue,
 } from "@/lib/llm/utils";
-import { LLMProviderDescriptor } from "@/app/admin/configuration/llm/interfaces";
-import { getProviderIcon } from "@/app/admin/configuration/llm/utils";
+import {
+  getProviderIcon,
+  LLMProviderDescriptor,
+} from "@/app/admin/configuration/llm/interfaces";
 import {
   Select,
   SelectContent,
@@ -33,23 +35,22 @@ export const LLMSelector: React.FC<LLMSelectorProps> = ({
   const seenModelNames = new Set();
 
   const llmOptions = llmProviders.flatMap((provider) => {
-    return provider.model_configurations
-      .filter((modelConfiguration) => {
-        const displayName = getDisplayNameForModel(modelConfiguration.name);
+    // Show only the default model name for each provider
+    const modelsToShow = provider.default_model_name ? [provider.default_model_name] : [];
+
+    return modelsToShow
+      .filter((modelName) => {
+        const displayName = getDisplayNameForModel(modelName);
         if (seenModelNames.has(displayName)) {
           return false;
         }
         seenModelNames.add(displayName);
         return true;
       })
-      .map((modelConfiguration) => ({
-        name: getDisplayNameForModel(modelConfiguration.name),
-        value: structureValue(
-          provider.name,
-          provider.provider,
-          modelConfiguration.name
-        ),
-        icon: getProviderIcon(provider.provider, modelConfiguration.name),
+      .map((modelName) => ({
+        name: getDisplayNameForModel(modelName),
+        value: structureValue(provider.name, provider.provider, modelName),
+        icon: getProviderIcon(provider.provider, modelName),
       }));
   });
 
@@ -63,7 +64,7 @@ export const LLMSelector: React.FC<LLMSelectorProps> = ({
     : null;
 
   const destructuredCurrentValue = currentLlm
-    ? parseLlmDescriptor(currentLlm)
+    ? destructureValue(currentLlm)
     : null;
 
   const currentLlmName = destructuredCurrentValue?.modelName;
@@ -94,7 +95,7 @@ export const LLMSelector: React.FC<LLMSelectorProps> = ({
         {llmOptions.map((option) => {
           if (
             !requiresImageGeneration ||
-            modelSupportsImageInput(llmProviders, option.name)
+            checkLLMSupportsImageInput(option.name)
           ) {
             return (
               <SelectItem key={option.value} value={option.value}>
@@ -105,6 +106,7 @@ export const LLMSelector: React.FC<LLMSelectorProps> = ({
               </SelectItem>
             );
           }
+          return null;
         })}
       </SelectContent>
     </Select>

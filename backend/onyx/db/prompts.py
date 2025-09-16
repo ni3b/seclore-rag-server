@@ -66,6 +66,11 @@ def upsert_prompt(
     name: str,
     system_prompt: str,
     task_prompt: str,
+    search_tool_description: str,  #assistant_change
+    history_query_rephrase: str,  #assistant_change
+    custom_tool_argument_system_prompt: str,
+    search_query_prompt: str,
+    search_data_source_selector_prompt: str,
     datetime_aware: bool,
     prompt_id: int | None = None,
     personas: list[Persona] | None = None,
@@ -90,6 +95,11 @@ def upsert_prompt(
         prompt.description = description
         prompt.system_prompt = system_prompt
         prompt.task_prompt = task_prompt
+        prompt.search_tool_description = search_tool_description
+        prompt.history_query_rephrase = history_query_rephrase
+        prompt.custom_tool_argument_system_prompt = custom_tool_argument_system_prompt
+        prompt.search_query_prompt = search_query_prompt
+        prompt.search_data_source_selector_prompt = search_data_source_selector_prompt
         prompt.include_citations = include_citations
         prompt.datetime_aware = datetime_aware
         prompt.default_prompt = default_prompt
@@ -105,6 +115,11 @@ def upsert_prompt(
             name=name,
             description=description,
             system_prompt=system_prompt,
+            search_tool_description=search_tool_description,
+            history_query_rephrase=history_query_rephrase,
+            custom_tool_argument_system_prompt=custom_tool_argument_system_prompt,
+            search_query_prompt=search_query_prompt,
+            search_data_source_selector_prompt=search_data_source_selector_prompt,
             task_prompt=task_prompt,
             include_citations=include_citations,
             datetime_aware=datetime_aware,

@@ -1,16 +1,22 @@
 import { errorHandlingFetcher } from "@/lib/fetcher";
 import useSWR, { mutate } from "swr";
-import { OnyxBotAnalytics, QueryAnalytics, UserAnalytics } from "./usage/types";
+import {
+  ChatSessionMinimal,
+  OnyxBotAnalytics,
+  QueryAnalytics,
+  UserAnalytics,
+} from "./usage/types";
 import { useState } from "react";
 import { buildApiPath } from "@/lib/urlBuilder";
+import { Feedback } from "@/lib/types";
 
 import {
   convertDateToEndOfDay,
   convertDateToStartOfDay,
   getXDaysAgo,
-} from "../../../../components/dateRangeSelectors/dateUtils";
-import { THIRTY_DAYS } from "../../../../components/dateRangeSelectors/AdminDateRangeSelector";
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+} from "./dateUtils";
+import { DateRange, THIRTY_DAYS } from "./DateRangeSelector";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
 
 export const useTimeRange = () => {
   return useState<DateRangePickerValue>({
@@ -65,9 +71,7 @@ export function getDatesList(startDate: Date): string[] {
 
   for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
     const dateStr = d.toISOString().split("T")[0]; // convert date object to 'YYYY-MM-DD' format
-    if (dateStr !== undefined) {
-      datesList.push(dateStr);
-    }
+    datesList.push(dateStr);
   }
 
   return datesList;

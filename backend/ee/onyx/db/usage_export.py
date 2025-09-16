@@ -5,8 +5,6 @@ from typing import IO
 from typing import Optional
 
 from fastapi_users_db_sqlalchemy import UUID_ID
-from sqlalchemy import cast
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Session
 
 from ee.onyx.db.query_history import fetch_chat_sessions_eagerly_by_time
@@ -15,24 +13,16 @@ from ee.onyx.server.reporting.usage_export_models import FlowType
 from ee.onyx.server.reporting.usage_export_models import UsageReportMetadata
 from onyx.configs.constants import MessageType
 from onyx.db.models import UsageReport
-from onyx.db.models import User
 from onyx.file_store.file_store import get_default_file_store
 
 
-# Gets skeletons of all messages in the given range
+# Gets skeletons of all message
 def get_empty_chat_messages_entries__paginated(
     db_session: Session,
     period: tuple[datetime, datetime],
     limit: int | None = 500,
     initial_time: datetime | None = None,
 ) -> tuple[Optional[datetime], list[ChatMessageSkeleton]]:
-    """Returns a tuple where:
-    first element is the most recent timestamp out of the sessions iterated
-    - this timestamp can be used to paginate forward in time
-    second element is a list of messages belonging to all the sessions iterated
-
-    Only messages of type USER are returned
-    """
     chat_sessions = fetch_chat_sessions_eagerly_by_time(
         start=period[0],
         end=period[1],
@@ -62,17 +52,18 @@ def get_empty_chat_messages_entries__paginated(
     if len(chat_sessions) == 0:
         return None, []
 
-    return chat_sessions[-1].time_created, message_skeletons
+    return chat_sessions[0].time_created, message_skeletons
 
 
 def get_all_empty_chat_message_entries(
     db_session: Session,
     period: tuple[datetime, datetime],
 ) -> Generator[list[ChatMessageSkeleton], None, None]:
-    """period is the range of time over which to fetch messages."""
     initial_time: Optional[datetime] = period[0]
+    ind = 0
     while True:
-        # iterate from oldest to newest
+        ind += 1
+
         time_created, message_skeletons = get_empty_chat_messages_entries__paginated(
             db_session,
             period,
@@ -89,49 +80,26 @@ def get_all_empty_chat_message_entries(
 
 
 def get_all_usage_reports(db_session: Session) -> list[UsageReportMetadata]:
-    # Get the user emails
-    usage_reports = db_session.query(UsageReport).all()
-    user_ids = {r.requestor_user_id for r in usage_reports if r.requestor_user_id}
-    user_emails = {
-        user.id: user.email
-        for user in db_session.query(User)
-        .filter(cast(User.id, UUID).in_(user_ids))
-        .all()
-    }
-
     return [
         UsageReportMetadata(
             report_name=r.report_name,
-            requestor=(
-                user_emails.get(r.requestor_user_id) if r.requestor_user_id else None
-            ),
+            requestor=str(r.requestor_user_id) if r.requestor_user_id else None,
             time_created=r.time_created,
             period_from=r.period_from,
             period_to=r.period_to,
         )
-        for r in usage_reports
+        for r in db_session.query(UsageReport).all()
     ]
 
 
 def get_usage_report_data(
     report_display_name: str,
+    db_session: Session,
+    report_name: str,
 ) -> IO:
-    """
-    Get the usage report data from the file store.
-
-    Args:
-        db_session: The database session.
-        report_display_name: The display name of the usage report. Also assumes
-                             that the file is stored with this as the ID in the file store.
-
-    Returns:
-        The usage report data.
-    """
     file_store = get_default_file_store()
     # usage report may be very large, so don't load it all into memory
-    return file_store.read_file(
-        file_id=report_display_name, mode="b", use_tempfile=True
-    )
+    return file_store.read_file(file_name=report_name, mode="b", use_tempfile=True)
 
 
 def write_usage_report(

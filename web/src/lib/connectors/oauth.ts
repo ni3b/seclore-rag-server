@@ -27,9 +27,6 @@ export async function getConnectorOauthRedirectUrl(
 export function useOAuthDetails(sourceType: ValidSources) {
   return useSWR<OAuthDetails>(
     `/api/connector/oauth/details/${sourceType}`,
-    errorHandlingFetcher,
-    {
-      shouldRetryOnError: false,
-    }
+    errorHandlingFetcher
   );
 }

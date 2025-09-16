@@ -3,7 +3,6 @@ import urllib.parse
 from datetime import datetime
 from datetime import timezone
 from typing import Any
-from typing import cast
 
 import requests
 from pydantic import BaseModel
@@ -21,8 +20,7 @@ from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.file_processing.html_utils import parse_html_page_basic
 from onyx.utils.logger import setup_logger
 from onyx.utils.retry_wrapper import retry_builder
@@ -60,7 +58,7 @@ class DiscourseConnector(PollConnector):
         self.base_url = base_url
 
         self.categories = [c.lower() for c in categories] if categories else []
-        self.category_id_map: dict[int, dict] = {}
+        self.category_id_map: dict[int, str] = {}
 
         self.batch_size = batch_size
         self.permissions: DiscoursePerms | None = None
@@ -83,7 +81,7 @@ class DiscourseConnector(PollConnector):
         )
         categories = response.json()["category_list"]["categories"]
         self.category_id_map = {
-            cat["id"]: {"name": cat["name"], "slug": cat["slug"]}
+            cat["id"]: cat["name"]
             for cat in categories
             if not self.categories or cat["name"].lower() in self.categories
         }
@@ -114,9 +112,9 @@ class DiscourseConnector(PollConnector):
                     responders.append(BasicExpertInfo(display_name=responder_name))
 
             sections.append(
-                TextSection(link=topic_url, text=parse_html_page_basic(post["cooked"]))
+                Section(link=topic_url, text=parse_html_page_basic(post["cooked"]))
             )
-        category_name = self.category_id_map.get(topic["category_id"], {}).get("name")
+        category_name = self.category_id_map.get(topic["category_id"])
 
         metadata: dict[str, str | list[str]] = (
             {
@@ -131,7 +129,7 @@ class DiscourseConnector(PollConnector):
 
         doc = Document(
             id="_".join([DocumentSource.DISCOURSE.value, str(topic["id"])]),
-            sections=cast(list[TextSection | ImageSection], sections),
+            sections=sections,
             source=DocumentSource.DISCOURSE,
             semantic_identifier=topic["title"],
             doc_updated_at=time_str_to_utc(topic["last_posted_at"]),
@@ -158,10 +156,9 @@ class DiscourseConnector(PollConnector):
             topics = []
             empty_categories = []
 
-            for category_id, category_dict in self.category_id_map.items():
+            for category_id in self.category_id_map.keys():
                 category_endpoint = urllib.parse.urljoin(
-                    self.base_url,
-                    f"c/{category_dict['slug']}/{category_id}.json?page={page}&sys=latest",
+                    self.base_url, f"c/{category_id}.json?page={page}&sys=latest"
                 )
                 response = self._make_request(endpoint=category_endpoint)
                 new_topics = response.json()["topic_list"]["topics"]
@@ -183,6 +180,8 @@ class DiscourseConnector(PollConnector):
                 continue
 
             topic_ids.append(topic["id"])
+            if len(topic_ids) >= self.batch_size:
+                break
 
         return topic_ids
 

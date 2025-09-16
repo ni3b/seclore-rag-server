@@ -1,0 +1,23 @@
+# Additional requirements for comprehensive image processing
+# These are optional dependencies that enhance image processing capabilities
+
+# For CLIP embeddings and vision models
+sentence-transformers>=2.2.0
+transformers>=4.20.0
+torch>=1.12.0
+torchvision>=0.13.0
+
+# For image processing
+Pillow>=9.0.0
+opencv-python>=4.5.0
+
+# For additional vision model support
+openai>=1.0.0  # For GPT-4 Vision API
+
+# For enhanced OCR (if not using Unstructured API)
+# pytesseract>=0.3.10
+# easyocr>=1.6.0
+
+# For image format support
+imageio>=2.22.0
+scikit-image>=0.19.0 

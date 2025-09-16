@@ -1,6 +1,6 @@
 "use client";
 
-import { TextFormField } from "@/components/Field";
+import { TextFormField } from "@/components/admin/connectors/Field";
 import { Form, Formik } from "formik";
 import * as Yup from "yup";
 import { createSlackBot, updateSlackBot } from "./new/lib";
@@ -29,13 +29,11 @@ export const SlackTokensForm = ({
     if (onValuesChange) {
       onValuesChange(initialValues);
     }
-  }, [initialValues, onValuesChange]);
+  }, [initialValues]);
 
   return (
     <Formik
-      initialValues={{
-        ...initialValues,
-      }}
+      initialValues={initialValues}
       validationSchema={Yup.object().shape({
         bot_token: Yup.string().required(),
         app_token: Yup.string().required(),

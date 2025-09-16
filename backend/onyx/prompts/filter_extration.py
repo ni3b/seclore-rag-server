@@ -4,22 +4,51 @@
 from onyx.prompts.constants import SOURCES_KEY
 
 
-# Smaller followup prompts in time_filter.py
-TIME_FILTER_PROMPT = """
-You are a tool to identify time filters to apply to a user query for a downstream search \
-application. The downstream application is able to use a recency bias or apply a hard cutoff to \
-remove all documents before the cutoff. Identify the correct filters to apply for the user query.
+# Previous time filter prompt implementation
+# TIME_FILTER_PROMPT = """
+# You are a tool to identify time filters to apply to a user query for a downstream search \
+# application. The downstream application is able to use a recency bias or apply a hard cutoff to \
+# remove all documents before the cutoff. Identify the correct filters to apply for the user query.
+#
+# The current day and time is {current_day_time_str}.
+#
+# Always answer with ONLY a json which contains the keys "filter_type", "filter_value", \
+# "value_multiple" and "date".
+#
+# The valid values for "filter_type" are "hard cutoff", "favors recent", or "not time sensitive".
+# The valid values for "filter_value" are "day", "week", "month", "quarter", "half", or "year".
+# The valid values for "value_multiple" is any number.
+# The valid values for "date" is a date in format MM/DD/YYYY, ALWAYS follow this format.
+# """.strip()
 
-The current day and time is {current_day_time_str}.
+# New implementation with support for date ranges
+TIME_FILTER_PROMPT = '''You are a time filter extraction tool. Your goal is to identify if a query contains any time-based filters or if it implies a preference for more recent documents.
 
-Always answer with ONLY a json which contains the keys "filter_type", "filter_value", \
-"value_multiple" and "date".
+Current time: {current_day_time_str}
 
-The valid values for "filter_type" are "hard cutoff", "favors recent", or "not time sensitive".
-The valid values for "filter_value" are "day", "week", "month", "quarter", "half", or "year".
-The valid values for "value_multiple" is any number.
-The valid values for "date" is a date in format MM/DD/YYYY, ALWAYS follow this format.
-""".strip()
+For queries that specify a time range or cutoff, respond with a JSON object containing:
+- "filter_type": "hard cutoff" for specific time filters, "favor recent" for queries that imply recency preference
+- For date ranges: "date_range": {"start_date": "MM/DD/YYYY", "end_date": "MM/DD/YYYY"}
+- For single dates: "date": "MM/DD/YYYY" and optionally "is_end_date": true if it's meant as an end date
+- For relative time: "filter_value": "day"/"week"/"month"/"quarter"/"year" and "value_multiple": number
+
+For queries with no time filter, respond with: {{"filter_type": "no filter"}}
+
+Examples:
+User: "Show me documents from January 2023 to March 2023"
+Assistant: {{"filter_type": "hard cutoff", "date_range": {{"start_date": "01/01/2023", "end_date": "03/31/2023"}}}}
+
+User: "What happened before May 15th, 2023?"
+Assistant: {{"filter_type": "hard cutoff", "date": "05/15/2023", "is_end_date": true}}
+
+User: "What's new in the last quarter?"
+Assistant: {{"filter_type": "hard cutoff", "filter_value": "quarter", "value_multiple": 1}}
+
+User: "What's the latest update on Project X?"
+Assistant: {{"filter_type": "favor recent"}}
+
+User: "Who is the CEO?"
+Assistant: {{"filter_type": "no filter"}}'''
 
 
 # Smaller followup prompts in source_filter.py

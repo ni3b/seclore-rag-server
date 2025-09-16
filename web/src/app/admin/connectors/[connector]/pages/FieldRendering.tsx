@@ -1,9 +1,10 @@
-import React, { FC, useEffect } from "react";
+import React, { Dispatch, FC, SetStateAction } from "react";
 import { AdminBooleanFormField } from "@/components/credentials/CredentialFields";
+import { FileUpload } from "@/components/admin/connectors/FileUpload";
 import { TabOption } from "@/lib/connectors/connectors";
 import SelectInput from "./ConnectorInput/SelectInput";
 import NumberInput from "./ConnectorInput/NumberInput";
-import { TextFormField, MultiSelectField } from "@/components/Field";
+import { TextFormField } from "@/components/admin/connectors/Field";
 import ListInput from "./ConnectorInput/ListInput";
 import FileInput from "./ConnectorInput/FileInput";
 import { ConfigurableSources } from "@/lib/types";
@@ -15,7 +16,6 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/fully_wrapped_tabs";
-import { useFormikContext } from "formik";
 
 interface TabsFieldProps {
   tabField: TabOption;
@@ -49,68 +49,63 @@ const TabsField: FC<TabsFieldProps> = ({
         </div>
       )}
 
-      {/* Ensure there's at least one tab before rendering */}
-      {tabField.tabs.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No tabs to display.</div>
-      ) : (
-        <Tabs
-          defaultValue={tabField.tabs[0]?.value} // Optional chaining for safety, though the length check above handles it
-          className="w-full"
-          onValueChange={(newTab) => {
-            // Clear values from other tabs but preserve defaults
-            tabField.tabs.forEach((tab) => {
-              if (tab.value !== newTab) {
-                tab.fields.forEach((field) => {
-                  // Only clear if not default value
-                  if (values[field.name] !== field.default) {
-                    values[field.name] = field.default;
-                  }
-                });
-              }
-            });
-          }}
-        >
-          <TabsList>
-            {tabField.tabs.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value}>
-                {tab.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-          {tabField.tabs.map((tab) => (
-            <TabsContent key={tab.value} value={tab.value} className="">
-              {tab.fields.map((subField, index, array) => {
-                // Check visibility condition first
-                if (
-                  subField.visibleCondition &&
-                  !subField.visibleCondition(values, currentCredential)
-                ) {
-                  return null;
+      <Tabs
+        defaultValue={tabField.tabs[0].value}
+        className="w-full"
+        onValueChange={(newTab) => {
+          // Clear values from other tabs but preserve defaults
+          tabField.tabs.forEach((tab) => {
+            if (tab.value !== newTab) {
+              tab.fields.forEach((field) => {
+                // Only clear if not default value
+                if (values[field.name] !== field.default) {
+                  values[field.name] = field.default;
                 }
-
-                return (
-                  <div
-                    key={subField.name}
-                    className={
-                      index < array.length - 1 && subField.type !== "string_tab"
-                        ? "mb-4"
-                        : ""
-                    }
-                  >
-                    <RenderField
-                      key={subField.name}
-                      field={subField}
-                      values={values}
-                      connector={connector}
-                      currentCredential={currentCredential}
-                    />
-                  </div>
-                );
-              })}
-            </TabsContent>
+              });
+            }
+          });
+        }}
+      >
+        <TabsList>
+          {tabField.tabs.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value}>
+              {tab.label}
+            </TabsTrigger>
           ))}
-        </Tabs>
-      )}
+        </TabsList>
+        {tabField.tabs.map((tab) => (
+          <TabsContent key={tab.value} value={tab.value} className="">
+            {tab.fields.map((subField, index, array) => {
+              // Check visibility condition first
+              if (
+                subField.visibleCondition &&
+                !subField.visibleCondition(values, currentCredential)
+              ) {
+                return null;
+              }
+
+              return (
+                <div
+                  key={subField.name}
+                  className={
+                    index < array.length - 1 && subField.type !== "string_tab"
+                      ? "mb-4"
+                      : ""
+                  }
+                >
+                  <RenderField
+                    key={subField.name}
+                    field={subField}
+                    values={values}
+                    connector={connector}
+                    currentCredential={currentCredential}
+                  />
+                </div>
+              );
+            })}
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   );
 };
@@ -128,8 +123,6 @@ export const RenderField: FC<RenderFieldProps> = ({
   connector,
   currentCredential,
 }) => {
-  const { setFieldValue } = useFormikContext<any>(); // Get Formik's context functions
-
   const label =
     typeof field.label === "function"
       ? field.label(currentCredential)
@@ -138,22 +131,6 @@ export const RenderField: FC<RenderFieldProps> = ({
     typeof field.description === "function"
       ? field.description(currentCredential)
       : field.description;
-  const disabled =
-    typeof field.disabled === "function"
-      ? field.disabled(currentCredential)
-      : (field.disabled ?? false);
-  const initialValue =
-    typeof field.initial === "function"
-      ? field.initial(currentCredential)
-      : (field.initial ?? "");
-
-  // if initialValue exists, prepopulate the field with it
-  useEffect(() => {
-    const field_value = values[field.name];
-    if (initialValue && field_value === undefined) {
-      setFieldValue(field.name, initialValue);
-    }
-  }, [field.name, initialValue, setFieldValue, values]);
 
   if (field.type === "tab") {
     return (
@@ -186,20 +163,6 @@ export const RenderField: FC<RenderFieldProps> = ({
           options={field.options || []}
           label={label}
         />
-      ) : field.type === "multiselect" ? (
-        <MultiSelectField
-          name={field.name}
-          label={label}
-          subtext={description}
-          options={
-            field.options?.map((option: { value: string; name: string }) => ({
-              value: option.value,
-              label: option.name,
-            })) || []
-          }
-          selectedInitially={values[field.name] || field.default || []}
-          onChange={(selected) => setFieldValue(field.name, selected)}
-        />
       ) : field.type === "number" ? (
         <NumberInput
           label={label}
@@ -213,8 +176,6 @@ export const RenderField: FC<RenderFieldProps> = ({
           subtext={description}
           name={field.name}
           label={label}
-          disabled={disabled}
-          onChange={(e) => setFieldValue(field.name, e.target.value)}
         />
       ) : field.type === "text" ? (
         <TextFormField
@@ -225,8 +186,6 @@ export const RenderField: FC<RenderFieldProps> = ({
           name={field.name}
           isTextArea={field.isTextArea || false}
           defaultHeight={"h-15"}
-          disabled={disabled}
-          onChange={(e) => setFieldValue(field.name, e.target.value)}
         />
       ) : field.type === "string_tab" ? (
         <div className="text-center">{description}</div>

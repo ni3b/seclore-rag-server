@@ -1,4 +1,4 @@
-import { FiFileText } from "react-icons/fi";
+import { FiFileText, FiLoader } from "react-icons/fi";
 import { useState, useRef, useEffect } from "react";
 import {
   Tooltip,
@@ -13,13 +13,47 @@ export function DocumentPreview({
   maxWidth,
   alignBubble,
   open,
+  fileUrl,
 }: {
   fileName: string;
   open?: () => void;
   maxWidth?: string;
   alignBubble?: boolean;
+  fileUrl?: string;
 }) {
   const fileNameRef = useRef<HTMLDivElement>(null);
+  const [isLoading, setIsLoading] = useState(!fileUrl);
+
+  // Show spinner when file is being uploaded (no fileUrl yet)
+  useEffect(() => {
+    setIsLoading(!fileUrl);
+  }, [fileUrl]);
+
+  const handleFileClick = async () => {
+    if (fileUrl) {
+      try {
+        // Fetch the file
+        const response = await fetch(fileUrl);
+        const blob = await response.blob();
+        
+        // Create a download link
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        
+        // Trigger the download
+        document.body.appendChild(link);
+        link.click();
+        
+        // Cleanup
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error('Error downloading file:', error);
+      }
+    }
+  };
 
   return (
     <div
@@ -27,7 +61,7 @@ export function DocumentPreview({
         ${alignBubble && "min-w-52 max-w-48"}
         flex
         items-center
-        bg-accent-background/50
+        bg-hover-light/50
         border
         border-border
         rounded-lg
@@ -37,7 +71,9 @@ export function DocumentPreview({
         hover:shadow-sm
         transition-all
         px-2
+        ${fileUrl ? 'cursor-pointer' : ''}
       `}
+      onClick={fileUrl ? handleFileClick : undefined}
     >
       <div className="flex-shrink-0">
         <div
@@ -54,7 +90,11 @@ export function DocumentPreview({
             hover:bg-document-dark
           "
         >
-          <FiFileText className="w-5 h-5 text-white" />
+          {isLoading ? (
+            <FiLoader className="w-5 h-5 text-white animate-spin" />
+          ) : (
+            <FiFileText className="w-5 h-5 text-white" />
+          )}
         </div>
       </div>
       <div className="ml-2 h-8 flex flex-col flex-grow">
@@ -75,15 +115,20 @@ export function DocumentPreview({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <div className="text-subtle text-xs">Document</div>
+        <div className="text-subtle text-xs">
+          {isLoading ? 'Uploading...' : 'Document'}
+        </div>
       </div>
       {open && (
         <button
-          onClick={() => open()}
-          className="ml-2 p-2 rounded-full hover:bg-background-200 transition-colors duration-200"
+          onClick={(e) => {
+            e.stopPropagation(); // Prevent triggering the parent's onClick
+            open();
+          }}
+          className="ml-2 p-2 rounded-full hover:bg-gray-200 transition-colors duration-200"
           aria-label="Expand document"
         >
-          <ExpandTwoIcon className="w-5 h-5 text-text-600" />
+          <ExpandTwoIcon className="w-5 h-5 text-gray-600" />
         </button>
       )}
     </div>
@@ -94,13 +139,16 @@ export function InputDocumentPreview({
   fileName,
   maxWidth,
   alignBubble,
+  fileUrl,
 }: {
   fileName: string;
   maxWidth?: string;
   alignBubble?: boolean;
+  fileUrl?: string;
 }) {
   const [isOverflowing, setIsOverflowing] = useState(false);
   const fileNameRef = useRef<HTMLDivElement>(null);
+  const [isLoading, setIsLoading] = useState(!fileUrl);
 
   useEffect(() => {
     if (fileNameRef.current) {
@@ -110,6 +158,37 @@ export function InputDocumentPreview({
     }
   }, [fileName]);
 
+  // Show spinner when file is being uploaded (no fileUrl yet)
+  useEffect(() => {
+    setIsLoading(!fileUrl);
+  }, [fileUrl]);
+
+  const handleFileClick = async () => {
+    if (fileUrl) {
+      try {
+        // Fetch the file
+        const response = await fetch(fileUrl);
+        const blob = await response.blob();
+        
+        // Create a download link
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        
+        // Trigger the download
+        document.body.appendChild(link);
+        link.click();
+        
+        // Cleanup
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error('Error downloading file:', error);
+      }
+    }
+  };
+
   return (
     <div
       className={`
@@ -117,13 +196,15 @@ export function InputDocumentPreview({
         flex
         items-center
         p-2
-        bg-accent-background-hovered
+        bg-hover
         border
         border-border
         rounded-md
         box-border
         h-10
+        ${fileUrl ? 'cursor-pointer' : ''}
       `}
+      onClick={fileUrl ? handleFileClick : undefined}
     >
       <div className="flex-shrink-0">
         <div
@@ -137,7 +218,11 @@ export function InputDocumentPreview({
             rounded-md
           "
         >
-          <FiFileText className="w-4 h-4 text-white" />
+          {isLoading ? (
+            <FiLoader className="w-4 h-4 text-white animate-spin" />
+          ) : (
+            <FiFileText className="w-4 h-4 text-white" />
+          )}
         </div>
       </div>
       <div className="ml-2 relative">
@@ -158,6 +243,11 @@ export function InputDocumentPreview({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+        {isLoading && (
+          <div className="text-subtle text-xs mt-1">
+            Uploading...
+          </div>
+        )}
       </div>
     </div>
   );

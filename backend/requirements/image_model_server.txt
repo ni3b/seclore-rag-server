@@ -1,0 +1,33 @@
+# Core FastAPI and server dependencies
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# Image processing core
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# OCR dependencies
+pytesseract>=0.3.10
+easyocr>=1.7.0
+
+# Vision and embedding models
+sentence-transformers>=2.2.2
+transformers>=4.35.0
+torch>=2.1.0
+torchvision>=0.16.0
+
+# LLM providers (matches main application)
+litellm>=1.35.0
+
+# Claude API for vision descriptions (fallback)
+anthropic>=0.7.0
+
+# HTTP client for API calls
+httpx>=0.25.0
+
+# Logging and monitoring
+sentry-sdk[fastapi]>=1.38.0
+
+# Utility libraries
+python-multipart>=0.0.6 

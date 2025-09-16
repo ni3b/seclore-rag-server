@@ -11,8 +11,6 @@ from typing import Optional
 
 import requests
 
-from onyx.configs.constants import FASTAPI_USERS_AUTH_COOKIE_NAME
-
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 
@@ -173,13 +171,11 @@ class CompareAnalysis:
                     changes.append(
                         {
                             "previous_rank": pos,
-                            "new_rank": (
-                                pos
-                                if content_key == "score"
-                                else {
-                                    "x": k for k, v in new_content.items() if v == data
-                                }.get("x", "not_ranked")
-                            ),
+                            "new_rank": pos
+                            if content_key == "score"
+                            else {
+                                "x": k for k, v in new_content.items() if v == data
+                            }.get("x", "not_ranked"),
                             "document_id": self._previous_content[pos]["document_id"],
                             "previous_score": self._previous_content[pos]["score"],
                             "new_score": self._new_content[pos]["score"],
@@ -188,9 +184,7 @@ class CompareAnalysis:
                     )
         return changes
 
-    def check_config_changes(
-        self, previous_doc_rank: int | str, new_doc_rank: int
-    ) -> None:
+    def check_config_changes(self, previous_doc_rank: int, new_doc_rank: int) -> None:
         """Try to identify possible reasons why a change has been detected by
             checking the latest document update date or the boost value.
 
@@ -198,7 +192,7 @@ class CompareAnalysis:
             previous_doc_rank (int): The document rank for the previous analysis
             new_doc_rank (int): The document rank for the new analysis
         """
-        if isinstance(new_doc_rank, str) and new_doc_rank == "not_ranked":
+        if new_doc_rank == "not_ranked":
             color_output(
                 (
                     "NOTE: The document is missing in the 'current' analysis file. "
@@ -372,19 +366,15 @@ class SelectionAnalysis:
             return False
 
     def do_request(self, query: str) -> dict:
-        """Request the Onyx API
+        """Request the Seclore API
 
         Args:
             query (str): A query
 
         Returns:
-            dict: The Onyx API response content
+            dict: The Seclore API response content
         """
-        cookies = (
-            {FASTAPI_USERS_AUTH_COOKIE_NAME: self._auth_cookie}
-            if self._auth_cookie
-            else {}
-        )
+        cookies = {"fastapiusersauth": self._auth_cookie} if self._auth_cookie else {}
 
         endpoint = f"http://127.0.0.1:{self._web_port}/api/direct-qa"
         query_json = {
@@ -401,7 +391,7 @@ class SelectionAnalysis:
             if response.status_code != 200:
                 color_output(
                     (
-                        "something goes wrong while requesting the Onyx API "
+                        "something goes wrong while requesting the Seclore API "
                         f"for the query '{query}': {response.text}"
                     ),
                     model="critical",
@@ -409,7 +399,7 @@ class SelectionAnalysis:
                 sys.exit(1)
         except Exception as e:
             color_output(
-                f"Unable to request the Onyx API for the query '{query}': {e}",
+                f"Unable to request the Seclore API for the query '{query}': {e}",
                 model="critical",
             )
             sys.exit(1)
@@ -437,7 +427,7 @@ class SelectionAnalysis:
             return json.load(f)
 
     def extract_content(self, contents: dict) -> dict:
-        """Extract the content returns by the Onyx API
+        """Extract the content returns by the Seclore API
 
         Args:
             contents (dict): The onyx response content
@@ -660,7 +650,7 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help=(
-            "Currently, to get this script working when the Onyx Auth is "
+            "Currently, to get this script working when the Seclore Auth is "
             "enabled, you must extract from the UI your cookie 'fastapiusersauth' "
             "and then set it using this argument"
         ),
@@ -695,8 +685,8 @@ if __name__ == "__main__":
         type=int,
         default=3000,
         help=(
-            "The Onyx Web (not the API) port. We use the UI to forward the requests to the API. "
-            "It should be '3000' for local dev and '80' if Onyx runs using docker compose."
+            "The Seclore Web (not the API) port. We use the UI to forward the requests to the API. "
+            "It should be '3000' for local dev and '80' if Seclore runs using docker compose."
         ),
     )
     parser.add_argument(

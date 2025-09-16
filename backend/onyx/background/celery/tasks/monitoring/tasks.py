@@ -4,10 +4,8 @@ from collections.abc import Callable
 from datetime import timedelta
 from itertools import islice
 from typing import Any
-from typing import cast
 from typing import Literal
 
-import psutil
 from celery import shared_task
 from celery import Task
 from celery.exceptions import SoftTimeLimitExceeded
@@ -19,18 +17,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from onyx.background.celery.apps.app_base import task_logger
-from onyx.background.celery.celery_redis import celery_get_queue_length
-from onyx.background.celery.celery_redis import celery_get_unacked_task_ids
-from onyx.background.celery.memory_monitoring import emit_process_memory
+from onyx.background.celery.tasks.vespa.tasks import celery_get_queue_length
 from onyx.configs.constants import CELERY_GENERIC_BEAT_LOCK_TIMEOUT
 from onyx.configs.constants import ONYX_CLOUD_TENANT_ID
 from onyx.configs.constants import OnyxCeleryQueues
 from onyx.configs.constants import OnyxCeleryTask
 from onyx.configs.constants import OnyxRedisLocks
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.engine.sql_engine import get_session_with_shared_schema
-from onyx.db.engine.tenant_utils import get_all_tenant_ids
-from onyx.db.engine.time_utils import get_db_current_time
+from onyx.db.engine import get_all_tenant_ids
+from onyx.db.engine import get_db_current_time
+from onyx.db.engine import get_session_with_tenant
 from onyx.db.enums import IndexingStatus
 from onyx.db.enums import SyncStatus
 from onyx.db.enums import SyncType
@@ -39,14 +34,12 @@ from onyx.db.models import DocumentSet
 from onyx.db.models import IndexAttempt
 from onyx.db.models import SyncRecord
 from onyx.db.models import UserGroup
-from onyx.db.search_settings import get_active_search_settings_list
+from onyx.db.search_settings import get_active_search_settings
 from onyx.redis.redis_pool import get_redis_client
 from onyx.redis.redis_pool import redis_lock_dump
-from onyx.utils.logger import is_running_in_container
 from onyx.utils.telemetry import optional_telemetry
 from onyx.utils.telemetry import RecordType
-from shared_configs.configs import MULTI_TENANT
-from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
+
 
 _MONITORING_SOFT_TIME_LIMIT = 60 * 5  # 5 minutes
 _MONITORING_TIME_LIMIT = _MONITORING_SOFT_TIME_LIMIT + 60  # 6 minutes
@@ -65,11 +58,6 @@ _SYNC_START_LATENCY_KEY_FMT = (
     "sync_start_latency:{sync_type}:{entity_id}:{sync_record_id}"
 )
 
-_CONNECTOR_START_TIME_KEY_FMT = "connector_start_time:{cc_pair_id}:{index_attempt_id}"
-_CONNECTOR_END_TIME_KEY_FMT = "connector_end_time:{cc_pair_id}:{index_attempt_id}"
-_SYNC_START_TIME_KEY_FMT = "sync_start_time:{sync_type}:{entity_id}:{sync_record_id}"
-_SYNC_END_TIME_KEY_FMT = "sync_end_time:{sync_type}:{entity_id}:{sync_record_id}"
-
 
 def _mark_metric_as_emitted(redis_std: Redis, key: str) -> None:
     """Mark a metric as having been emitted by setting a Redis key with expiration"""
@@ -82,9 +70,7 @@ def _has_metric_been_emitted(redis_std: Redis, key: str) -> bool:
 
 
 class Metric(BaseModel):
-    key: (
-        str | None
-    )  # only required if we need to store that we have emitted this metric
+    key: str | None  # only required if we need to store that we have emitted this metric
     name: str
     value: Any
     tags: dict[str, str]
@@ -98,7 +84,7 @@ class Metric(BaseModel):
         }
         task_logger.info(json.dumps(data))
 
-    def emit(self, tenant_id: str) -> None:
+    def emit(self, tenant_id: str | None) -> None:
         # Convert value to appropriate type based on the input value
         bool_value = None
         float_value = None
@@ -197,9 +183,9 @@ def _build_connector_start_latency_metric(
         desired_start_time = cc_pair.connector.time_created
     else:
         if not cc_pair.connector.refresh_freq:
-            task_logger.debug(
-                "Connector has no refresh_freq and this is a non-initial index attempt. "
-                "Assuming user manually triggered indexing, so we'll skip start latency metric."
+            task_logger.error(
+                "Found non-initial index attempt for connector "
+                "without refresh_freq. This should never happen."
             )
             return None
 
@@ -317,6 +303,8 @@ def _build_connector_final_metrics(
                 )
             )
 
+        _mark_metric_as_emitted(redis_std, metric_key)
+
     return metrics
 
 
@@ -327,13 +315,13 @@ def _collect_connector_metrics(db_session: Session, redis_std: Redis) -> list[Me
     # Get all connector credential pairs
     cc_pairs = db_session.scalars(select(ConnectorCredentialPair)).all()
     # Might be more than one search setting, or just one
-    active_search_settings_list = get_active_search_settings_list(db_session)
+    active_search_settings = get_active_search_settings(db_session)
 
     metrics = []
 
     # If you want to process each cc_pair against each search setting:
     for cc_pair in cc_pairs:
-        for search_settings in active_search_settings_list:
+        for search_settings in active_search_settings:
             recent_attempts = (
                 db_session.query(IndexAttempt)
                 .filter(
@@ -356,52 +344,6 @@ def _collect_connector_metrics(db_session: Session, redis_std: Redis) -> list[Me
             if one_hour_ago > most_recent_attempt.time_created:
                 continue
 
-            # Build a job_id for correlation
-            job_id = build_job_id(
-                "connector", str(cc_pair.id), str(most_recent_attempt.id)
-            )
-
-            # Add raw start time metric if available
-            if most_recent_attempt.time_started:
-                start_time_key = _CONNECTOR_START_TIME_KEY_FMT.format(
-                    cc_pair_id=cc_pair.id,
-                    index_attempt_id=most_recent_attempt.id,
-                )
-                metrics.append(
-                    Metric(
-                        key=start_time_key,
-                        name="connector_start_time",
-                        value=most_recent_attempt.time_started.timestamp(),
-                        tags={
-                            "job_id": job_id,
-                            "connector_id": str(cc_pair.connector.id),
-                            "source": str(cc_pair.connector.source),
-                        },
-                    )
-                )
-
-            # Add raw end time metric if available and in terminal state
-            if (
-                most_recent_attempt.status.is_terminal()
-                and most_recent_attempt.time_updated
-            ):
-                end_time_key = _CONNECTOR_END_TIME_KEY_FMT.format(
-                    cc_pair_id=cc_pair.id,
-                    index_attempt_id=most_recent_attempt.id,
-                )
-                metrics.append(
-                    Metric(
-                        key=end_time_key,
-                        name="connector_end_time",
-                        value=most_recent_attempt.time_updated.timestamp(),
-                        tags={
-                            "job_id": job_id,
-                            "connector_id": str(cc_pair.connector.id),
-                            "source": str(cc_pair.connector.source),
-                        },
-                    )
-                )
-
             # Connector start latency
             start_latency_metric = _build_connector_start_latency_metric(
                 cc_pair, most_recent_attempt, second_most_recent_attempt, redis_std
@@ -423,12 +365,10 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
     """
     Collect metrics for document set and group syncing:
       - Success/failure status
-      - Start latency (for doc sets / user groups)
+      - Start latency (always)
       - Duration & doc count (only if success)
       - Throughput (docs/min) (only if success)
-      - Raw start/end times for each sync
     """
-
     one_hour_ago = get_db_current_time(db_session) - timedelta(hours=1)
 
     # Get all sync records that ended in the last hour
@@ -448,43 +388,6 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
     for sync_record in recent_sync_records:
         # Build a job_id for correlation
         job_id = build_job_id("sync_record", str(sync_record.id))
-
-        # Add raw start time metric
-        start_time_key = _SYNC_START_TIME_KEY_FMT.format(
-            sync_type=sync_record.sync_type,
-            entity_id=sync_record.entity_id,
-            sync_record_id=sync_record.id,
-        )
-        metrics.append(
-            Metric(
-                key=start_time_key,
-                name="sync_start_time",
-                value=sync_record.sync_start_time.timestamp(),
-                tags={
-                    "job_id": job_id,
-                    "sync_type": str(sync_record.sync_type),
-                },
-            )
-        )
-
-        # Add raw end time metric if available
-        if sync_record.sync_end_time:
-            end_time_key = _SYNC_END_TIME_KEY_FMT.format(
-                sync_type=sync_record.sync_type,
-                entity_id=sync_record.entity_id,
-                sync_record_id=sync_record.id,
-            )
-            metrics.append(
-                Metric(
-                    key=end_time_key,
-                    name="sync_end_time",
-                    value=sync_record.sync_end_time.timestamp(),
-                    tags={
-                        "job_id": job_id,
-                        "sync_type": str(sync_record.sync_type),
-                    },
-                )
-            )
 
         # Emit a SUCCESS/FAIL boolean metric
         #    Use a single Redis key to avoid re-emitting final metrics
@@ -536,7 +439,7 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
                 if duration_seconds is not None:
                     metrics.append(
                         Metric(
-                            key=final_metric_key,
+                            key=None,
                             name="sync_duration_seconds",
                             value=duration_seconds,
                             tags={
@@ -552,7 +455,7 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
 
                 metrics.append(
                     Metric(
-                        key=final_metric_key,
+                        key=None,
                         name="sync_doc_count",
                         value=doc_count,
                         tags={
@@ -565,7 +468,7 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
                 if sync_speed is not None:
                     metrics.append(
                         Metric(
-                            key=final_metric_key,
+                            key=None,
                             name="sync_speed_docs_per_min",
                             value=sync_speed,
                             tags={
@@ -578,6 +481,9 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
                     task_logger.error(
                         f"Invalid sync record {sync_record.id} with no duration"
                     )
+
+            # Mark final metrics as emitted so we don't re-emit
+            _mark_metric_as_emitted(redis_std, final_metric_key)
 
         # Emit start latency
         start_latency_key = _SYNC_START_LATENCY_KEY_FMT.format(
@@ -597,23 +503,21 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
                     select(UserGroup).where(UserGroup.id == sync_record.entity_id)
                 )
             else:
-                # Only user groups and document set sync records have
-                #  an associated entity we can use for latency metrics
+                task_logger.info(
+                    f"Skipping sync record {sync_record.id} of type {sync_record.sync_type}."
+                )
                 continue
 
             if entity is None:
                 task_logger.error(
-                    f"Sync record of type {sync_record.sync_type} doesn't have an entity "
-                    f"associated with it (id={sync_record.entity_id}). Skipping start latency metric."
+                    f"Could not find entity for sync record {sync_record.id} "
+                    f"(type={sync_record.sync_type}, id={sync_record.entity_id})."
                 )
+                continue
 
             # Calculate start latency in seconds:
             #    (actual sync start) - (last modified time)
-            if (
-                entity is not None
-                and entity.time_last_modified_by_user
-                and sync_record.sync_start_time
-            ):
+            if entity.time_last_modified_by_user and sync_record.sync_start_time:
                 start_latency = (
                     sync_record.sync_start_time - entity.time_last_modified_by_user
                 ).total_seconds()
@@ -636,6 +540,8 @@ def _collect_sync_metrics(db_session: Session, redis_std: Redis) -> list[Metric]
                         },
                     )
                 )
+
+                _mark_metric_as_emitted(redis_std, start_latency_key)
 
     return metrics
 
@@ -663,7 +569,7 @@ def build_job_id(
     queue=OnyxCeleryQueues.MONITORING,
     bind=True,
 )
-def monitor_background_processes(self: Task, *, tenant_id: str) -> None:
+def monitor_background_processes(self: Task, *, tenant_id: str | None) -> None:
     """Collect and emit metrics about background processes.
     This task runs periodically to gather metrics about:
     - Queue lengths for different Celery queues
@@ -671,11 +577,8 @@ def monitor_background_processes(self: Task, *, tenant_id: str) -> None:
     - Syncing speed metrics
     - Worker status and task counts
     """
-    if tenant_id is not None:
-        CURRENT_TENANT_ID_CONTEXTVAR.set(tenant_id)
-
     task_logger.info("Starting background monitoring")
-    r = get_redis_client()
+    r = get_redis_client(tenant_id=tenant_id)
 
     lock_monitoring: RedisLock = r.lock(
         OnyxRedisLocks.MONITOR_BACKGROUND_PROCESSES_LOCK,
@@ -690,7 +593,7 @@ def monitor_background_processes(self: Task, *, tenant_id: str) -> None:
     try:
         # Get Redis client for Celery broker
         redis_celery = self.app.broker_connection().channel().client  # type: ignore
-        redis_std = get_redis_client()
+        redis_std = get_redis_client(tenant_id=tenant_id)
 
         # Define metric collection functions and their dependencies
         metric_functions: list[Callable[[], list[Metric]]] = [
@@ -700,18 +603,13 @@ def monitor_background_processes(self: Task, *, tenant_id: str) -> None:
         ]
 
         # Collect and log each metric
-        with get_session_with_current_tenant() as db_session:
+        with get_session_with_tenant(tenant_id) as db_session:
             for metric_fn in metric_functions:
                 metrics = metric_fn()
                 for metric in metrics:
-                    # double check to make sure we aren't double-emitting metrics
-                    if metric.key is None or not _has_metric_been_emitted(
-                        redis_std, metric.key
-                    ):
-                        metric.log()
-                        metric.emit(tenant_id)
-
-                    if metric.key is not None:
+                    metric.log()
+                    metric.emit(tenant_id)
+                    if metric.key:
                         _mark_metric_as_emitted(redis_std, metric.key)
 
         task_logger.info("Successfully collected background metrics")
@@ -730,7 +628,7 @@ def monitor_background_processes(self: Task, *, tenant_id: str) -> None:
 
 
 @shared_task(
-    name=OnyxCeleryTask.CLOUD_MONITOR_ALEMBIC,
+    name=OnyxCeleryTask.CLOUD_CHECK_ALEMBIC,
 )
 def cloud_check_alembic() -> bool | None:
     """A task to verify that all tenants are on the same alembic revision.
@@ -741,10 +639,6 @@ def cloud_check_alembic() -> bool | None:
     TODO: have the cloud migration script set an activity signal that this check
     uses to know it doesn't make sense to run a check at the present time.
     """
-
-    # Used as a placeholder if the alembic revision cannot be retrieved
-    ALEMBIC_NULL_REVISION = "000000000000"
-
     time_start = time.monotonic()
 
     redis_client = get_redis_client(tenant_id=ONYX_CLOUD_TENANT_ID)
@@ -760,14 +654,13 @@ def cloud_check_alembic() -> bool | None:
 
     last_lock_time = time.monotonic()
 
-    tenant_to_revision: dict[str, str] = {}
+    tenant_to_revision: dict[str, str | None] = {}
     revision_counts: dict[str, int] = {}
-    out_of_date_tenants: dict[str, str] = {}
+    out_of_date_tenants: dict[str, str | None] = {}
     top_revision: str = ""
-    tenant_ids: list[str] | list[None] = []
 
     try:
-        # map tenant_id to revision (or ALEMBIC_NULL_REVISION if the query fails)
+        # map each tenant_id to its revision
         tenant_ids = get_all_tenant_ids()
         for tenant_id in tenant_ids:
             current_time = time.monotonic()
@@ -778,28 +671,20 @@ def cloud_check_alembic() -> bool | None:
             if tenant_id is None:
                 continue
 
-            with get_session_with_shared_schema() as session:
-                try:
-                    result = session.execute(
-                        text(f'SELECT * FROM "{tenant_id}".alembic_version LIMIT 1')
-                    )
-                    result_scalar: str | None = result.scalar_one_or_none()
-                    if result_scalar is None:
-                        raise ValueError("Alembic version should not be None.")
+            with get_session_with_tenant(tenant_id=None) as session:
+                result = session.execute(
+                    text(f'SELECT * FROM "{tenant_id}".alembic_version LIMIT 1')
+                )
 
-                    tenant_to_revision[tenant_id] = result_scalar
-                except Exception:
-                    task_logger.error(f"Tenant {tenant_id} has no revision!")
-                    tenant_to_revision[tenant_id] = ALEMBIC_NULL_REVISION
+                result_scalar: str | None = result.scalar_one_or_none()
+                tenant_to_revision[tenant_id] = result_scalar
 
         # get the total count of each revision
         for k, v in tenant_to_revision.items():
-            revision_counts[v] = revision_counts.get(v, 0) + 1
+            if v is None:
+                continue
 
-        # error if any null revision tenants are found
-        if ALEMBIC_NULL_REVISION in revision_counts:
-            num_null_revisions = revision_counts[ALEMBIC_NULL_REVISION]
-            raise ValueError(f"No revision was found for {num_null_revisions} tenants!")
+            revision_counts[v] = revision_counts.get(v, 0) + 1
 
         # get the revision with the most counts
         sorted_revision_counts = sorted(
@@ -807,24 +692,23 @@ def cloud_check_alembic() -> bool | None:
         )
 
         if len(sorted_revision_counts) == 0:
-            raise ValueError(
+            task_logger.error(
                 f"cloud_check_alembic - No revisions found for {len(tenant_ids)} tenant ids!"
             )
+        else:
+            top_revision, _ = sorted_revision_counts[0]
 
-        top_revision, _ = sorted_revision_counts[0]
+            # build a list of out of date tenants
+            for k, v in tenant_to_revision.items():
+                if v == top_revision:
+                    continue
 
-        # build a list of out of date tenants
-        for k, v in tenant_to_revision.items():
-            if v == top_revision:
-                continue
-
-            out_of_date_tenants[k] = v
+                out_of_date_tenants[k] = v
 
     except SoftTimeLimitExceeded:
         task_logger.info(
             "Soft time limit exceeded, task is being terminated gracefully."
         )
-        raise
     except Exception:
         task_logger.exception("Unexpected exception during cloud alembic check")
         raise
@@ -841,11 +725,6 @@ def cloud_check_alembic() -> bool | None:
             f"num_out_of_date_tenants={len(out_of_date_tenants)} "
             f"num_tenants={len(tenant_ids)} "
             f"revision={top_revision}"
-        )
-
-        num_to_log = min(5, len(out_of_date_tenants))
-        task_logger.info(
-            f"Logging {num_to_log}/{len(out_of_date_tenants)} out of date tenants."
         )
         for k, v in islice(out_of_date_tenants.items(), 5):
             task_logger.info(f"Out of date tenant: tenant={k} revision={v}")

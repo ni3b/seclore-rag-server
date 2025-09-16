@@ -16,7 +16,7 @@ const Page = async (props: {
   const searchParams = await props.searchParams;
   const autoRedirectDisabled = searchParams?.disableAutoRedirect === "true";
   const nextUrl = Array.isArray(searchParams?.next)
-    ? searchParams?.next[0]
+    ? searchParams?.next[0] || null
     : searchParams?.next || null;
 
   // catch cases where the backend is completely unreachable here
@@ -30,7 +30,7 @@ const Page = async (props: {
       getCurrentUserSS(),
     ]);
   } catch (e) {
-    console.log(`Some fetch failed for the login page - ${e}`);
+    console.error("Error fetching auth data:", e);
   }
 
   // simply take the user to the home page if Auth is disabled
@@ -40,51 +40,40 @@ const Page = async (props: {
 
   // if user is already logged in, take them to the main app page
   if (currentUser && currentUser.is_active && !currentUser.is_anonymous_user) {
-    console.log("Login page: User is logged in, redirecting to chat", {
-      userId: currentUser.id,
-      is_active: currentUser.is_active,
-      is_anonymous: currentUser.is_anonymous_user,
-    });
-
     if (authTypeMetadata?.requiresVerification && !currentUser.is_verified) {
       return redirect("/auth/waiting-on-verification");
     }
-
-    // Add a query parameter to indicate this is a redirect from login
-    // This will help prevent redirect loops
-    return redirect("/chat?from=login");
+    return redirect("/chat");
   }
 
   // get where to send the user to authenticate
   let authUrl: string | null = null;
   if (authTypeMetadata) {
     try {
-      authUrl = await getAuthUrlSS(authTypeMetadata.authType, nextUrl!);
+      authUrl = await getAuthUrlSS(authTypeMetadata.authType, nextUrl);
     } catch (e) {
-      console.log(`Some fetch failed for the login page - ${e}`);
+      console.error("Error fetching auth URL:", e);
     }
   }
 
-  if (authTypeMetadata?.autoRedirect && authUrl && !autoRedirectDisabled) {
-    return redirect(authUrl);
-  }
-
   return (
-    <div className="flex flex-col ">
-      <AuthFlowContainer authState="login">
-        <div className="absolute top-10x w-full">
-          <HealthCheckBanner />
+    <>
+      <div className="min-h-screen bg-background">
+        <HealthCheckBanner />
+        <div className="container mx-auto px-4 py-8">
+          <div className="mx-auto max-w-sm">
+            <AuthFlowContainer>
+              <LoginPage
+                authUrl={authUrl}
+                authTypeMetadata={authTypeMetadata}
+                nextUrl={nextUrl}
+                searchParams={searchParams}
+              />
+            </AuthFlowContainer>
+          </div>
         </div>
-
-        <LoginPage
-          authUrl={authUrl}
-          authTypeMetadata={authTypeMetadata}
-          nextUrl={nextUrl!}
-          searchParams={searchParams}
-          hidePageRedirect={true}
-        />
-      </AuthFlowContainer>
-    </div>
+      </div>
+    </>
   );
 };
 

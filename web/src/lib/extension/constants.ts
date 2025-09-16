@@ -31,9 +31,3 @@ export const LocalStorageKeys = {
   SHOW_SHORTCUTS: "showShortcuts",
   USE_ONYX_AS_NEW_TAB: "useOnyxAsDefaultNewTab",
 };
-
-export const SEARCH_PARAMS = {
-  DEFAULT_SIDEBAR_OFF: "defaultSidebarOff",
-};
-
-export const NO_AUTH_USER_ID = "__no_auth_user__";

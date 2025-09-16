@@ -1,8 +1,6 @@
 import io
 import ipaddress
-import random
 import socket
-import time
 from datetime import datetime
 from datetime import timezone
 from enum import Enum
@@ -27,99 +25,22 @@ from onyx.configs.app_configs import WEB_CONNECTOR_OAUTH_CLIENT_SECRET
 from onyx.configs.app_configs import WEB_CONNECTOR_OAUTH_TOKEN_URL
 from onyx.configs.app_configs import WEB_CONNECTOR_VALIDATE_URLS
 from onyx.configs.constants import DocumentSource
-from onyx.connectors.exceptions import ConnectorValidationError
-from onyx.connectors.exceptions import CredentialExpiredError
-from onyx.connectors.exceptions import InsufficientPermissionsError
-from onyx.connectors.exceptions import UnexpectedValidationError
 from onyx.connectors.interfaces import GenerateDocumentsOutput
 from onyx.connectors.interfaces import LoadConnector
 from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.file_processing.extract_file_text import read_pdf_file
+from onyx.file_processing.extract_file_text import image_to_text
+from onyx.file_processing.extract_file_text import is_image_file_extension
+from onyx.file_processing.image_processing import process_image_for_indexing
 from onyx.file_processing.html_utils import web_html_cleanup
 from onyx.utils.logger import setup_logger
 from onyx.utils.sitemap import list_pages_for_site
 from shared_configs.configs import MULTI_TENANT
+from onyx.indexing.embedder import DefaultIndexingEmbedder
+from onyx.configs.image_configs import is_image_processing_enabled
 
 logger = setup_logger()
-
-
-class ScrapeSessionContext:
-    """Session level context for scraping"""
-
-    def __init__(self, base_url: str, to_visit: list[str]):
-        self.base_url = base_url
-        self.to_visit = to_visit
-        self.visited_links: set[str] = set()
-        self.content_hashes: set[int] = set()
-
-        self.doc_batch: list[Document] = []
-
-        self.at_least_one_doc: bool = False
-        self.last_error: str | None = None
-        self.needs_retry: bool = False
-
-        self.playwright: Playwright | None = None
-        self.playwright_context: BrowserContext | None = None
-
-    def initialize(self) -> None:
-        self.stop()
-        self.playwright, self.playwright_context = start_playwright()
-
-    def stop(self) -> None:
-        if self.playwright_context:
-            self.playwright_context.close()
-            self.playwright_context = None
-
-        if self.playwright:
-            self.playwright.stop()
-            self.playwright = None
-
-
-class ScrapeResult:
-    doc: Document | None = None
-    retry: bool = False
-
-
-WEB_CONNECTOR_MAX_SCROLL_ATTEMPTS = 20
-# Threshold for determining when to replace vs append iframe content
-IFRAME_TEXT_LENGTH_THRESHOLD = 700
-# Message indicating JavaScript is disabled, which often appears when scraping fails
-JAVASCRIPT_DISABLED_MESSAGE = "You have JavaScript disabled in your browser"
-
-# Define common headers that mimic a real browser
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-)
-DEFAULT_HEADERS = {
-    "User-Agent": DEFAULT_USER_AGENT,
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,"
-        "image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Sec-CH-UA": '"Google Chrome";v="123", "Not:A-Brand";v="8"',
-    "Sec-CH-UA-Mobile": "?0",
-    "Sec-CH-UA-Platform": '"macOS"',
-}
-
-# Common PDF MIME types
-PDF_MIME_TYPES = [
-    "application/pdf",
-    "application/x-pdf",
-    "application/acrobat",
-    "application/vnd.pdf",
-    "text/pdf",
-    "text/x-pdf",
-]
 
 
 class WEB_CONNECTOR_VALID_SETTINGS(str, Enum):
@@ -169,26 +90,15 @@ def protected_url_check(url: str) -> None:
 
 def check_internet_connection(url: str) -> None:
     try:
-        # Use a more realistic browser-like request
-        session = requests.Session()
-        session.headers.update(DEFAULT_HEADERS)
-
-        response = session.get(url, timeout=5, allow_redirects=True)
-
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Referer': url  # Some CDNs require referer
+        }
+        response = requests.get(url, timeout=3, headers=headers)
         response.raise_for_status()
     except requests.exceptions.HTTPError as e:
         # Extract status code from the response, defaulting to -1 if response is None
         status_code = e.response.status_code if e.response is not None else -1
-
-        # For 403 errors, we do have internet connection, but the request is blocked by the server
-        # this is usually due to bot detection. Future calls (via Playwright) will usually get
-        # around this.
-        if status_code == 403:
-            logger.warning(
-                f"Received 403 Forbidden for {url}, will retry with browser automation"
-            )
-            return
-
         error_msg = {
             400: "Bad Request",
             401: "Unauthorized",
@@ -231,8 +141,7 @@ def get_internal_links(
         # Account for malformed backslashes in URLs
         href = href.replace("\\", "/")
 
-        # "#!" indicates the page is using a hashbang URL, which is a client-side routing technique
-        if should_ignore_pound and "#" in href and "#!" not in href:
+        if should_ignore_pound and "#" in href:
             href = href.split("#")[0]
 
         if not is_valid_url(href):
@@ -241,74 +150,101 @@ def get_internal_links(
 
         if urlparse(href).netloc == urlparse(url).netloc and base_url in href:
             internal_links.add(href)
+        
     return internal_links
 
 
-def is_pdf_content(response: requests.Response) -> bool:
-    """Check if the response contains PDF content based on content-type header"""
-    content_type = response.headers.get("content-type", "").lower()
-    return any(pdf_type in content_type for pdf_type in PDF_MIME_TYPES)
+def extract_images_from_html(soup: BeautifulSoup, base_url: str) -> list[dict[str, str]]:
+    """Extract all image URLs from HTML content with metadata."""
+    images = []
+    
+    for img_tag in soup.find_all("img"):
+        src = img_tag.get("src")
+        if not src:
+            continue
+        
+        # Convert relative URLs to absolute URLs
+        if not is_valid_url(src):
+            src = urljoin(base_url, src)
+        
+        # Check if it's a valid image URL
+        parsed_url = urlparse(src)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            continue
+        
+        # Extract image metadata from HTML attributes
+        image_info = {
+            "url": src,
+            "alt": img_tag.get("alt", ""),
+            "title": img_tag.get("title", ""),
+            "width": img_tag.get("width", ""),
+            "height": img_tag.get("height", ""),
+            "class": " ".join(img_tag.get("class", [])),
+            "id": img_tag.get("id", ""),
+        }
+        
+        # Check for image URLs with traditional extensions
+        has_traditional_extension = any(ext in src.lower() for ext in ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svg'))
+        
+        # Check for data URLs
+        is_data_url = src.startswith('data:image/')
+        
+        # Check for CDN URLs that might not have extensions (common patterns)
+        is_cdn_url = any(cdn in src.lower() for cdn in [
+            'cdn-cgi/imagedelivery',
+            'images.spr.so',
+            'cdn.',
+            'images.',
+            'img.',
+            'static.',
+            'assets.',
+            'media.',
+            'uploads/',
+            '/images/',
+            '/img/',
+            '/media/',
+            '/assets/',
+            '/static/'
+        ])
+        
+        # Additional checks for image-like URLs without extensions
+        # Check for common image URL patterns in CDNs
+        has_image_patterns = any(pattern in src.lower() for pattern in [
+            'quality=',
+            'fit=',
+            'w=',
+            'h=',
+            'format=',
+            'type=image',
+            'image/',
+            'photo',
+            'picture'
+        ])
+        
+        # Include images with traditional extensions, data URLs, CDN patterns, or image-like patterns
+        if has_traditional_extension or is_data_url or is_cdn_url or has_image_patterns:
+            # Add debug info about why this image was included
+            reason = []
+            if has_traditional_extension:
+                reason.append("traditional_extension")
+            if is_data_url:
+                reason.append("data_url")
+            if is_cdn_url:
+                reason.append("cdn_url")
+            if has_image_patterns:
+                reason.append("image_patterns")
+            
+            image_info["extraction_reason"] = ", ".join(reason)
+            images.append(image_info)
+    
+    return images
 
 
 def start_playwright() -> Tuple[Playwright, BrowserContext]:
     playwright = sync_playwright().start()
+    browser = playwright.chromium.launch(headless=True)
 
-    # Launch browser with more realistic settings
-    browser = playwright.chromium.launch(
-        headless=True,
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-site-isolation-trials",
-        ],
-    )
-
-    # Create a context with realistic browser properties
-    context = browser.new_context(
-        user_agent=DEFAULT_USER_AGENT,
-        viewport={"width": 1440, "height": 900},
-        device_scale_factor=2.0,
-        locale="en-US",
-        timezone_id="America/Los_Angeles",
-        has_touch=False,
-        java_script_enabled=True,
-        color_scheme="light",
-        # Add more realistic browser properties
-        bypass_csp=True,
-        ignore_https_errors=True,
-    )
-
-    # Set additional headers to mimic a real browser
-    context.set_extra_http_headers(
-        {
-            "Accept": DEFAULT_HEADERS["Accept"],
-            "Accept-Language": DEFAULT_HEADERS["Accept-Language"],
-            "Sec-Fetch-Dest": DEFAULT_HEADERS["Sec-Fetch-Dest"],
-            "Sec-Fetch-Mode": DEFAULT_HEADERS["Sec-Fetch-Mode"],
-            "Sec-Fetch-Site": DEFAULT_HEADERS["Sec-Fetch-Site"],
-            "Sec-Fetch-User": DEFAULT_HEADERS["Sec-Fetch-User"],
-            "Sec-CH-UA": DEFAULT_HEADERS["Sec-CH-UA"],
-            "Sec-CH-UA-Mobile": DEFAULT_HEADERS["Sec-CH-UA-Mobile"],
-            "Sec-CH-UA-Platform": DEFAULT_HEADERS["Sec-CH-UA-Platform"],
-            "Cache-Control": "max-age=0",
-            "DNT": "1",
-        }
-    )
-
-    # Add a script to modify navigator properties to avoid detection
-    context.add_init_script(
-        """
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
-        });
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en']
-        });
-    """
-    )
+    context = browser.new_context()
 
     if (
         WEB_CONNECTOR_OAUTH_CLIENT_ID
@@ -330,34 +266,29 @@ def start_playwright() -> Tuple[Playwright, BrowserContext]:
 
 
 def extract_urls_from_sitemap(sitemap_url: str) -> list[str]:
-    try:
-        response = requests.get(sitemap_url, headers=DEFAULT_HEADERS)
-        response.raise_for_status()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (compatible) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Referer': sitemap_url  # Some CDNs require referer
+    }
+    response = requests.get(sitemap_url, headers=headers)
+    response.raise_for_status()
 
-        soup = BeautifulSoup(response.content, "html.parser")
-        urls = [
-            _ensure_absolute_url(sitemap_url, loc_tag.text)
-            for loc_tag in soup.find_all("loc")
-        ]
+    soup = BeautifulSoup(response.content, "html.parser")
+    urls = [
+        _ensure_absolute_url(sitemap_url, loc_tag.text)
+        for loc_tag in soup.find_all("loc")
+    ]
 
-        if len(urls) == 0 and len(soup.find_all("urlset")) == 0:
-            # the given url doesn't look like a sitemap, let's try to find one
-            urls = list_pages_for_site(sitemap_url)
+    if len(urls) == 0 and len(soup.find_all("urlset")) == 0:
+        # the given url doesn't look like a sitemap, let's try to find one
+        urls = list_pages_for_site(sitemap_url)
 
-        if len(urls) == 0:
-            raise ValueError(
-                f"No URLs found in sitemap {sitemap_url}. Try using the 'single' or 'recursive' scraping options instead."
-            )
-
-        return urls
-    except requests.RequestException as e:
-        raise RuntimeError(f"Failed to fetch sitemap from {sitemap_url}: {e}")
-    except ValueError as e:
-        raise RuntimeError(f"Error processing sitemap {sitemap_url}: {e}")
-    except Exception as e:
-        raise RuntimeError(
-            f"Unexpected error while processing sitemap {sitemap_url}: {e}"
+    if len(urls) == 0:
+        raise ValueError(
+            f"No URLs found in sitemap {sitemap_url}. Try using the 'single' or 'recursive' scraping options instead."
         )
+
+    return urls
 
 
 def _ensure_absolute_url(source_url: str, maybe_relative_url: str) -> str:
@@ -387,49 +318,10 @@ def _get_datetime_from_last_modified_header(last_modified: str) -> datetime | No
         return None
 
 
-def _handle_cookies(context: BrowserContext, url: str) -> None:
-    """Handle cookies for the given URL to help with bot detection"""
-    try:
-        # Parse the URL to get the domain
-        parsed_url = urlparse(url)
-        domain = parsed_url.netloc
-
-        # Add some common cookies that might help with bot detection
-        cookies: list[dict[str, str]] = [
-            {
-                "name": "cookieconsent",
-                "value": "accepted",
-                "domain": domain,
-                "path": "/",
-            },
-            {
-                "name": "consent",
-                "value": "true",
-                "domain": domain,
-                "path": "/",
-            },
-            {
-                "name": "session",
-                "value": "random_session_id",
-                "domain": domain,
-                "path": "/",
-            },
-        ]
-
-        # Add cookies to the context
-        for cookie in cookies:
-            try:
-                context.add_cookies([cookie])  # type: ignore
-            except Exception as e:
-                logger.debug(f"Failed to add cookie {cookie['name']} for {domain}: {e}")
-    except Exception:
-        logger.exception(
-            f"Unexpected error while handling cookies for Web Connector with URL {url}"
-        )
-
-
 class WebConnector(LoadConnector):
-    MAX_RETRIES = 3
+
+    # attribute to store the connector name in instantiate_connector()
+    name: str | None = None
 
     def __init__(
         self,
@@ -437,14 +329,12 @@ class WebConnector(LoadConnector):
         web_connector_type: str = WEB_CONNECTOR_VALID_SETTINGS.RECURSIVE.value,
         mintlify_cleanup: bool = True,  # Mostly ok to apply to other websites as well
         batch_size: int = INDEX_BATCH_SIZE,
-        scroll_before_scraping: bool = False,
-        **kwargs: Any,
     ) -> None:
         self.mintlify_cleanup = mintlify_cleanup
         self.batch_size = batch_size
         self.recursive = False
-        self.scroll_before_scraping = scroll_before_scraping
-        self.web_connector_type = web_connector_type
+        self.name = "web"
+
         if web_connector_type == WEB_CONNECTOR_VALID_SETTINGS.RECURSIVE.value:
             self.recursive = True
             self.to_visit_list = [_ensure_valid_url(base_url)]
@@ -479,294 +369,451 @@ class WebConnector(LoadConnector):
             logger.warning("Unexpected credentials provided for Web Connector")
         return None
 
-    def _do_scrape(
-        self,
-        index: int,
-        initial_url: str,
-        session_ctx: ScrapeSessionContext,
-    ) -> ScrapeResult:
-        """Returns a ScrapeResult object with a doc and retry flag."""
-
-        if session_ctx.playwright is None:
-            raise RuntimeError("scrape_context.playwright is None")
-
-        if session_ctx.playwright_context is None:
-            raise RuntimeError("scrape_context.playwright_context is None")
-
-        result = ScrapeResult()
-
-        # Handle cookies for the URL
-        _handle_cookies(session_ctx.playwright_context, initial_url)
-
-        # First do a HEAD request to check content type without downloading the entire content
-        head_response = requests.head(
-            initial_url, headers=DEFAULT_HEADERS, allow_redirects=True
-        )
-        is_pdf = is_pdf_content(head_response)
-
-        if is_pdf or initial_url.lower().endswith(".pdf"):
-            # PDF files are not checked for links
-            response = requests.get(initial_url, headers=DEFAULT_HEADERS)
-            page_text, metadata, images = read_pdf_file(
-                file=io.BytesIO(response.content)
-            )
-            last_modified = response.headers.get("Last-Modified")
-
-            result.doc = Document(
-                id=initial_url,
-                sections=[TextSection(link=initial_url, text=page_text)],
-                source=DocumentSource.WEB,
-                semantic_identifier=initial_url.split("/")[-1],
-                metadata=metadata,
-                doc_updated_at=(
-                    _get_datetime_from_last_modified_header(last_modified)
-                    if last_modified
-                    else None
-                ),
-            )
-
-            return result
-
-        page = session_ctx.playwright_context.new_page()
-        try:
-            # Can't use wait_until="networkidle" because it interferes with the scrolling behavior
-            page_response = page.goto(
-                initial_url,
-                timeout=30000,  # 30 seconds
-                wait_until="domcontentloaded",  # Wait for DOM to be ready
-            )
-
-            last_modified = (
-                page_response.header_value("Last-Modified") if page_response else None
-            )
-            final_url = page.url
-            if final_url != initial_url:
-                protected_url_check(final_url)
-                initial_url = final_url
-                if initial_url in session_ctx.visited_links:
-                    logger.info(
-                        f"{index}: {initial_url} redirected to {final_url} - already indexed"
-                    )
-                    page.close()
-                    return result
-
-                logger.info(f"{index}: {initial_url} redirected to {final_url}")
-                session_ctx.visited_links.add(initial_url)
-
-            # If we got here, the request was successful
-            if self.scroll_before_scraping:
-                scroll_attempts = 0
-                previous_height = page.evaluate("document.body.scrollHeight")
-                while scroll_attempts < WEB_CONNECTOR_MAX_SCROLL_ATTEMPTS:
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    # wait for the content to load if we scrolled
-                    page.wait_for_load_state("networkidle", timeout=30000)
-                    time.sleep(0.5)  # let javascript run
-
-                    new_height = page.evaluate("document.body.scrollHeight")
-                    if new_height == previous_height:
-                        break  # Stop scrolling when no more content is loaded
-                    previous_height = new_height
-                    scroll_attempts += 1
-
-            content = page.content()
-            soup = BeautifulSoup(content, "html.parser")
-
-            if self.recursive:
-                internal_links = get_internal_links(
-                    session_ctx.base_url, initial_url, soup
-                )
-                for link in internal_links:
-                    if link not in session_ctx.visited_links:
-                        session_ctx.to_visit.append(link)
-
-            if page_response and str(page_response.status)[0] in ("4", "5"):
-                session_ctx.last_error = f"Skipped indexing {initial_url} due to HTTP {page_response.status} response"
-                logger.info(session_ctx.last_error)
-                result.retry = True
-                return result
-
-            # after this point, we don't need the caller to retry
-            parsed_html = web_html_cleanup(soup, self.mintlify_cleanup)
-
-            """For websites containing iframes that need to be scraped,
-            the code below can extract text from within these iframes.
-            """
-            logger.debug(
-                f"{index}: Length of cleaned text {len(parsed_html.cleaned_text)}"
-            )
-            if JAVASCRIPT_DISABLED_MESSAGE in parsed_html.cleaned_text:
-                iframe_count = page.frame_locator("iframe").locator("html").count()
-                if iframe_count > 0:
-                    iframe_texts = (
-                        page.frame_locator("iframe").locator("html").all_inner_texts()
-                    )
-                    document_text = "\n".join(iframe_texts)
-                    """ 700 is the threshold value for the length of the text extracted
-                    from the iframe based on the issue faced """
-                    if len(parsed_html.cleaned_text) < IFRAME_TEXT_LENGTH_THRESHOLD:
-                        parsed_html.cleaned_text = document_text
-                    else:
-                        parsed_html.cleaned_text += "\n" + document_text
-
-            # Sometimes pages with #! will serve duplicate content
-            # There are also just other ways this can happen
-            hashed_text = hash((parsed_html.title, parsed_html.cleaned_text))
-            if hashed_text in session_ctx.content_hashes:
-                logger.info(
-                    f"{index}: Skipping duplicate title + content for {initial_url}"
-                )
-                return result
-
-            session_ctx.content_hashes.add(hashed_text)
-
-            result.doc = Document(
-                id=initial_url,
-                sections=[TextSection(link=initial_url, text=parsed_html.cleaned_text)],
-                source=DocumentSource.WEB,
-                semantic_identifier=parsed_html.title or initial_url,
-                metadata={},
-                doc_updated_at=(
-                    _get_datetime_from_last_modified_header(last_modified)
-                    if last_modified
-                    else None
-                ),
-            )
-        finally:
-            page.close()
-
-        return result
-
     def load_from_state(self) -> GenerateDocumentsOutput:
         """Traverses through all pages found on the website
         and converts them into documents"""
+        # Log image processing status for debugging
+        image_processing_status = "enabled" if is_image_processing_enabled() else "disabled"
+        logger.info(f"WebConnector starting with image processing {image_processing_status}")
+        
+        visited_links: set[str] = set()
+        to_visit: list[str] = self.to_visit_list
 
-        if not self.to_visit_list:
+        if not to_visit:
             raise ValueError("No URLs to visit")
 
-        base_url = self.to_visit_list[0]  # For the recursive case
-        check_internet_connection(base_url)  # make sure we can connect to the base url
+        base_url = to_visit[0]  # For the recursive case
+        doc_batch: list[Document] = []
 
-        session_ctx = ScrapeSessionContext(base_url, self.to_visit_list)
-        session_ctx.initialize()
+        # Needed to report error
+        at_least_one_doc = False
+        last_error = None
 
-        while session_ctx.to_visit:
-            initial_url = session_ctx.to_visit.pop()
-            if initial_url in session_ctx.visited_links:
+        playwright, context = start_playwright()
+        restart_playwright = False
+        while to_visit:
+            current_url = to_visit.pop()
+            if current_url in visited_links:
                 continue
-            session_ctx.visited_links.add(initial_url)
+            visited_links.add(current_url)
 
             try:
-                protected_url_check(initial_url)
+                protected_url_check(current_url)
             except Exception as e:
-                session_ctx.last_error = f"Invalid URL {initial_url} due to {e}"
-                logger.warning(session_ctx.last_error)
+                last_error = f"Invalid URL {current_url} due to {e}"
+                logger.warning(last_error)
                 continue
 
-            index = len(session_ctx.visited_links)
-            logger.info(f"{index}: Visiting {initial_url}")
+            logger.info(f"Visiting {current_url}")
 
-            # Add retry mechanism with exponential backoff
-            retry_count = 0
+            try:
+                check_internet_connection(current_url)
+                if restart_playwright:
+                    playwright, context = start_playwright()
+                    restart_playwright = False
 
-            while retry_count < self.MAX_RETRIES:
-                if retry_count > 0:
-                    # Add a random delay between retries (exponential backoff)
-                    delay = min(2**retry_count + random.uniform(0, 1), 10)
-                    logger.info(
-                        f"Retry {retry_count}/{self.MAX_RETRIES} for {initial_url} after {delay:.2f}s delay"
+                file_extension = current_url.split(".")[-1].lower()
+                
+                if file_extension == "pdf":
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (compatible) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Referer': current_url  # Some CDNs require referer
+                    }
+                    # PDF files are processed with PDF reader
+                    response = requests.get(current_url, headers=headers)
+                    page_text, metadata = read_pdf_file(
+                        file=io.BytesIO(response.content)
                     )
-                    time.sleep(delay)
+                    last_modified = response.headers.get("Last-Modified")
 
-                try:
-                    result = self._do_scrape(index, initial_url, session_ctx)
-                    if result.retry:
-                        continue
-
-                    if result.doc:
-                        session_ctx.doc_batch.append(result.doc)
-                except Exception as e:
-                    session_ctx.last_error = f"Failed to fetch '{initial_url}': {e}"
-                    logger.exception(session_ctx.last_error)
-                    session_ctx.initialize()
+                    doc_batch.append(
+                        Document(
+                            id=current_url,
+                            sections=[Section(link=current_url, text=page_text)],
+                            source=DocumentSource.WEB,
+                            semantic_identifier=current_url.split("/")[-1],
+                            metadata=metadata,
+                            doc_updated_at=_get_datetime_from_last_modified_header(
+                                last_modified
+                            )
+                            if last_modified
+                            else None,
+                        )
+                    )
                     continue
-                finally:
-                    retry_count += 1
+                
+                elif is_image_file_extension(f"dummy.{file_extension}"):
+                    # Check if image processing is enabled before processing direct image files
+                    if not is_image_processing_enabled():
+                        logger.info(f"Image processing is disabled, skipping image file {current_url}")
+                        continue
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (compatible) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Referer': current_url  # Some CDNs require referer
+                    }
+                    # Image files are processed with comprehensive image processing (Claude Sonnet 4)
+                    response = requests.get(current_url, headers=headers)
+                    last_modified = response.headers.get("Last-Modified")
+                    
+                    try:
+                        # Use comprehensive image processing (includes Claude Sonnet 4 vision)
+                        image_result = process_image_for_indexing(
+                            io.BytesIO(response.content), 
+                            current_url.split("/")[-1]
+                        )
+                        page_text = image_result["text"]
+                        raw_metadata = image_result["metadata"]
+                        
+                        # Convert metadata to Document-compatible format (str | list[str] only)
+                        metadata = {}
+                        for key, value in raw_metadata.items():
+                            if isinstance(value, bool):
+                                metadata[key] = str(value).lower()
+                            elif isinstance(value, (int, float)):
+                                metadata[key] = str(value)
+                            elif isinstance(value, list):
+                                # Convert list elements to strings
+                                metadata[key] = [str(item) for item in value]
+                            elif value is None:
+                                metadata[key] = ""
+                            else:
+                                metadata[key] = str(value)
+                        
+                        # Add web-specific metadata
+                        metadata.update({
+                            "image_url": current_url,
+                            "source": "web",
+                            "file_extension": file_extension
+                        })
+                        
+                        # Store image embedding separately if available (don't put in metadata due to size)
+                        if image_result.get("has_embedding") and image_result.get("embedding"):
+                            metadata["has_image_embedding"] = "true"
+                            metadata["embedding_model"] = raw_metadata.get("embedding_model", "unknown")
+                            metadata["embedding_dim"] = str(len(image_result["embedding"]))
+                            # Note: We don't store the actual embedding in metadata due to Document model constraints
+                        
+                        logger.info(f"Successfully processed web image {current_url} with OCR: {metadata.get('has_ocr_text', 'false')}, Description: {metadata.get('has_description', 'false')}, Embedding: {image_result.get('has_embedding', False)}")
+                        
+                    except Exception as e:
+                        logger.warning(f"Comprehensive image processing failed for {current_url}, falling back to basic OCR: {str(e)}")
+                        # Fallback to basic OCR
+                        page_text = image_to_text(io.BytesIO(response.content))
+                        metadata = {
+                            "image_url": current_url,
+                            "file_type": "image",
+                            "file_extension": file_extension,
+                            "processing_fallback": "true"
+                        }
 
-                break  # success / don't retry
+                    doc_batch.append(
+                        Document(
+                            id=current_url,
+                            sections=[Section(link=current_url, text=page_text)],
+                            source=DocumentSource.WEB,
+                            semantic_identifier=current_url.split("/")[-1],
+                            metadata=metadata,
+                            doc_updated_at=_get_datetime_from_last_modified_header(
+                                last_modified
+                            )
+                            if last_modified
+                            else None,
+                        )
+                    )
+                    continue
 
-            if len(session_ctx.doc_batch) >= self.batch_size:
-                session_ctx.initialize()
-                session_ctx.at_least_one_doc = True
-                yield session_ctx.doc_batch
-                session_ctx.doc_batch = []
+                page = context.new_page()
+                page_response = page.goto(current_url)
+                last_modified = (
+                    page_response.header_value("Last-Modified")
+                    if page_response
+                    else None
+                )
+                final_page = page.url
+                if final_page != current_url:
+                    logger.info(f"Redirected to {final_page}")
+                    protected_url_check(final_page)
+                    current_url = final_page
+                    if current_url in visited_links:
+                        logger.info("Redirected page already indexed")
+                        continue
+                    visited_links.add(current_url)
 
-        if session_ctx.doc_batch:
-            session_ctx.stop()
-            session_ctx.at_least_one_doc = True
-            yield session_ctx.doc_batch
+                content = page.content()
+                soup = BeautifulSoup(content, "html.parser")
 
-        if not session_ctx.at_least_one_doc:
-            if session_ctx.last_error:
-                raise RuntimeError(session_ctx.last_error)
+                if self.recursive:
+                    internal_links = get_internal_links(base_url, current_url, soup)
+                    for link in internal_links:
+                        if link not in visited_links:
+                            to_visit.append(link)
+
+                if page_response and str(page_response.status)[0] in ("4", "5"):
+                    last_error = f"Skipped indexing {current_url} due to HTTP {page_response.status} response"
+                    logger.info(last_error)
+                    continue
+
+                parsed_html = web_html_cleanup(soup, self.mintlify_cleanup)
+
+                # create a metadata dict for the document
+                metadata_dict={
+                    "title": parsed_html.title,
+                    "url": current_url,
+                    "connector_name": self.name,
+                }
+
+                # Extract and process embedded images from the HTML page
+                images = extract_images_from_html(soup, current_url)
+                
+                # Add debug logging for image extraction
+                if images:
+                    logger.debug(f"Extracted {len(images)} images from {current_url}")
+                    for i, img in enumerate(images[:3]):  # Log first 3 images for debugging
+                        reason = img.get('extraction_reason', 'unknown')
+                        logger.debug(f"  Image {i+1}: {img['url']} (alt: {img.get('alt', 'N/A')}, reason: {reason})")
+                    if len(images) > 3:
+                        logger.debug(f"  ... and {len(images) - 3} more images")
+                else:
+                    logger.debug(f"No images found in {current_url}")
+                
+                # Process images and add their content to the main document text
+                image_content_parts = []
+                if images and is_image_processing_enabled():
+                    logger.info(f"Found {len(images)} embedded images in {current_url}, processing and embedding content")
+                    
+                    for i, image_info in enumerate(images, 1):
+                        try:
+                            image_url = image_info["url"]
+                            
+                            # Skip data URLs for now (base64 encoded images)
+                            if image_url.startswith('data:'):
+                                logger.debug(f"Skipping data URL image from {current_url}")
+                                continue
+                            
+                            # Download the image
+                            try:
+                                headers = {
+                                    'User-Agent': 'Mozilla/5.0 (compatible) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                                    'Referer': current_url  # Some CDNs require referer
+                                }
+                                response = requests.get(image_url, timeout=15, headers=headers)
+                                response.raise_for_status()
+                            except requests.exceptions.RequestException as e:
+                                logger.debug(f"Failed to download image {image_url}: {e}")
+                                continue
+                            
+                            # Check if the response is actually an image
+                            content_type = response.headers.get('content-type', '').lower()
+                            if not content_type.startswith('image/'):
+                                logger.debug(f"Skipping non-image content: {image_url} (content-type: {content_type})")
+                                continue
+                            
+                            # Get file extension and filename - improved to handle images without extensions
+                            file_extension = "jpg"  # default fallback
+                            
+                            # Try to get extension from URL first
+                            if "." in image_url:
+                                url_extension = image_url.split(".")[-1].lower()
+                                if "?" in url_extension:
+                                    url_extension = url_extension.split("?")[0]
+                                # Check if it's a valid image extension
+                                if url_extension in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp', 'svg']:
+                                    file_extension = url_extension
+            
+                            # If no valid extension in URL, try to determine from content-type
+                            if file_extension == "jpg":  # still default
+                                if 'jpeg' in content_type or 'jpg' in content_type:
+                                    file_extension = 'jpg'
+                                elif 'png' in content_type:
+                                    file_extension = 'png'
+                                elif 'gif' in content_type:
+                                    file_extension = 'gif'
+                                elif 'webp' in content_type:
+                                    file_extension = 'webp'
+                                elif 'svg' in content_type:
+                                    file_extension = 'svg'
+                                elif 'bmp' in content_type:
+                                    file_extension = 'bmp'
+                                elif 'tiff' in content_type:
+                                    file_extension = 'tiff'
+                            
+                            # Generate filename
+                            filename = image_url.split("/")[-1] if "/" in image_url else f"image.{file_extension}"
+                            if "?" in filename:
+                                filename = filename.split("?")[0]
+                            
+                            # If filename doesn't have an extension, add one
+                            if "." not in filename:
+                                filename = f"{filename}.{file_extension}"
+                            
+                            logger.debug(f"Processing image {image_url} as {filename} (content-type: {content_type})")
+                            
+                            try:
+                                # Use comprehensive image processing (includes Claude Sonnet 4 vision)
+                                image_result = process_image_for_indexing(
+                                    io.BytesIO(response.content), 
+                                    filename
+                                )
+                                image_text = image_result["text"]
+                                image_metadata = image_result["metadata"]
+                                image_embedding = image_result.get("embedding")
+                                
+                                # Store image embedding for semantic search
+                                if image_embedding is not None:
+                                    # Image embedding will be handled by the standard embedding pipeline
+                                    logger.debug(f"Image embedding available for {image_url}")
+                                
+                                # Create a formatted section for this image
+                                image_section = []
+                                image_section.append(f"\n--- Image {i}: {filename} ---")
+                                image_section.append(f"Image URL: {image_url}")
+                                
+                                # Add HTML context if available
+                                if image_info.get("alt"):
+                                    image_section.append(f"Alt text: {image_info['alt']}")
+                                if image_info.get("title"):
+                                    image_section.append(f"Title: {image_info['title']}")
+                                
+                                # Add the processed image content
+                                if image_text and image_text.strip():
+                                    image_section.append(f"Image content: {image_text}")
+                                
+                                # Add processing metadata info
+                                if image_metadata.get("has_ocr_text") == "true":
+                                    image_section.append("[Contains OCR text]")
+                                if image_metadata.get("has_description") == "true":
+                                    image_section.append("[Contains AI-generated description]")
+                                if image_embedding is not None:
+                                    image_section.append("[Contains image embedding for semantic search]")
+                                
+                                image_section.append("--- End Image ---\n")
+                                
+                                image_content_parts.append("\n".join(image_section))
+                                
+                                # Create separate image document with source document relationship
+                                image_doc_metadata = {
+                                    "image_url": image_url,
+                                    "source": "web_embedded",
+                                    "source_document_id": current_url,  # Key: Link to source document
+                                    "source_document_title": parsed_html.title or current_url,
+                                    "file_extension": file_extension,
+                                    "html_alt": image_info.get("alt", ""),
+                                    "html_title": image_info.get("title", ""),
+                                    "connector_name": self.name,
+                                }
+                                
+                                # Add image processing metadata
+                                for key, value in image_metadata.items():
+                                    if isinstance(value, bool):
+                                        image_doc_metadata[key] = str(value).lower()
+                                    elif isinstance(value, (int, float)):
+                                        image_doc_metadata[key] = str(value)
+                                    elif isinstance(value, list):
+                                        image_doc_metadata[key] = [str(item) for item in value]
+                                    elif value is None:
+                                        image_doc_metadata[key] = ""
+                                    else:
+                                        image_doc_metadata[key] = str(value)
+                                
+                                # Create separate image document for vector search
+                                image_doc = Document(
+                                    id=f"{current_url}#{image_url}",  # Unique ID for image
+                                    sections=[Section(link=image_url, text=image_text)],
+                                    source=DocumentSource.WEB,
+                                    semantic_identifier=f"Image from {parsed_html.title or current_url}: {image_info.get('alt', filename)}",
+                                    metadata=image_doc_metadata,
+                                )
+                                
+                                doc_batch.append(image_doc)
+                                logger.debug(f"Created separate image document: {image_url}")
+                                
+                                logger.debug(f"Successfully processed and embedded image {i}: {image_url}")
+                                
+                            except Exception as e:
+                                logger.warning(f"Comprehensive image processing failed for {image_url}, falling back to basic OCR: {str(e)}")
+                                # Fallback to basic OCR
+                                try:
+                                    image_text = image_to_text(io.BytesIO(response.content))
+                                    if image_text and image_text.strip():
+                                        image_section = []
+                                        image_section.append(f"\n--- Image {i}: {filename} (OCR only) ---")
+                                        image_section.append(f"Image URL: {image_url}")
+                                        if image_info.get("alt"):
+                                            image_section.append(f"Alt text: {image_info['alt']}")
+                                        image_section.append(f"Image content: {image_text}")
+                                        image_section.append("--- End Image ---\n")
+                                        image_content_parts.append("\n".join(image_section))
+                                        logger.debug(f"Added OCR content for image {i}: {image_url}")
+                                except Exception as ocr_e:
+                                    logger.error(f"Basic OCR also failed for {image_url}: {ocr_e}")
+                                    continue
+                                    
+                        except Exception as e:
+                            logger.warning(f"Failed to process embedded image {image_info.get('url', 'unknown')}: {str(e)}")
+                            continue
+                    
+                    if image_content_parts:
+                        logger.info(f"Successfully processed {len(image_content_parts)} images from {current_url}")
+                        # Add image processing info to metadata
+                        metadata_dict["embedded_images_count"] = str(len(image_content_parts))
+                        metadata_dict["contains_image_content"] = "true"
+                elif images and not is_image_processing_enabled():
+                    logger.info(f"Image processing is disabled, skipping {len(images)} embedded images from {current_url}")
+                    metadata_dict["embedded_images_count"] = str(len(images))
+                    metadata_dict["contains_image_content"] = "false"
+                else:
+                    logger.debug(f"No embedded images found in {current_url}")
+
+                # Combine the main page text with image content
+                combined_text = parsed_html.cleaned_text
+                if image_content_parts:
+                    combined_text += "\n\n=== EMBEDDED IMAGES ===\n" + "\n".join(image_content_parts)
+
+                # Add the main HTML document with embedded image content
+                doc_batch.append(
+                    Document(
+                        id=current_url,
+                        sections=[
+                            Section(link=current_url, text=combined_text)
+                        ],
+                        source=DocumentSource.WEB,
+                        semantic_identifier=parsed_html.title or current_url,
+                        metadata=metadata_dict,
+                        doc_updated_at=_get_datetime_from_last_modified_header(
+                            last_modified
+                        )
+                        if last_modified
+                        else None,
+                    )
+                )
+
+                page.close()
+            except Exception as e:
+                last_error = f"Failed to fetch '{current_url}': {e}"
+                logger.exception(last_error)
+                playwright.stop()
+                restart_playwright = True
+                continue
+
+            if len(doc_batch) >= self.batch_size:
+                playwright.stop()
+                restart_playwright = True
+                at_least_one_doc = True
+                yield doc_batch
+                doc_batch = []
+
+        if doc_batch:
+            playwright.stop()
+            at_least_one_doc = True
+            yield doc_batch
+
+        if not at_least_one_doc:
+            if last_error:
+                raise RuntimeError(last_error)
             raise RuntimeError("No valid pages found.")
-
-        session_ctx.stop()
-
-    def validate_connector_settings(self) -> None:
-        # Make sure we have at least one valid URL to check
-        if not self.to_visit_list:
-            raise ConnectorValidationError(
-                "No URL configured. Please provide at least one valid URL."
-            )
-
-        if (
-            self.web_connector_type == WEB_CONNECTOR_VALID_SETTINGS.SITEMAP.value
-            or self.web_connector_type == WEB_CONNECTOR_VALID_SETTINGS.RECURSIVE.value
-        ):
-            return None
-
-        # We'll just test the first URL for connectivity and correctness
-        test_url = self.to_visit_list[0]
-
-        # Check that the URL is allowed and well-formed
-        try:
-            protected_url_check(test_url)
-        except ValueError as e:
-            raise ConnectorValidationError(
-                f"Protected URL check failed for '{test_url}': {e}"
-            )
-        except ConnectionError as e:
-            # Typically DNS or other network issues
-            raise ConnectorValidationError(str(e))
-
-        # Make a quick request to see if we get a valid response
-        try:
-            check_internet_connection(test_url)
-        except Exception as e:
-            err_str = str(e)
-            if "401" in err_str:
-                raise CredentialExpiredError(
-                    f"Unauthorized access to '{test_url}': {e}"
-                )
-            elif "403" in err_str:
-                raise InsufficientPermissionsError(
-                    f"Forbidden access to '{test_url}': {e}"
-                )
-            elif "404" in err_str:
-                raise ConnectorValidationError(f"Page not found for '{test_url}': {e}")
-            elif "Max retries exceeded" in err_str and "NameResolutionError" in err_str:
-                raise ConnectorValidationError(
-                    f"Unable to resolve hostname for '{test_url}'. Please check the URL and your internet connection."
-                )
-            else:
-                # Could be a 5xx or another error, treat as unexpected
-                raise UnexpectedValidationError(
-                    f"Unexpected error validating '{test_url}': {e}"
-                )
 
 
 if __name__ == "__main__":
     connector = WebConnector("https://docs.onyx.app/")
-    document_batches = connector.load_from_state()
+    document_batches = connector.load_from_state(connector.name)
     print(next(document_batches))

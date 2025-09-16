@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from datetime import datetime
 from datetime import timezone
 from typing import Any
-from typing import TypeVar
 
 import gitlab
 import pytz
@@ -22,10 +21,8 @@ from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.models import BasicExpertInfo
 from onyx.connectors.models import ConnectorMissingCredentialError
 from onyx.connectors.models import Document
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.utils.logger import setup_logger
-
-T = TypeVar("T")
 
 
 logger = setup_logger()
@@ -39,7 +36,9 @@ exclude_patterns = [
 ]
 
 
-def _batch_gitlab_objects(git_objs: Iterable[T], batch_size: int) -> Iterator[list[T]]:
+def _batch_gitlab_objects(
+    git_objs: Iterable[Any], batch_size: int
+) -> Iterator[list[Any]]:
     it = iter(git_objs)
     while True:
         batch = list(itertools.islice(it, batch_size))
@@ -57,7 +56,7 @@ def get_author(author: Any) -> BasicExpertInfo:
 def _convert_merge_request_to_document(mr: Any) -> Document:
     doc = Document(
         id=mr.web_url,
-        sections=[TextSection(link=mr.web_url, text=mr.description or "")],
+        sections=[Section(link=mr.web_url, text=mr.description or "")],
         source=DocumentSource.GITLAB,
         semantic_identifier=mr.title,
         # updated_at is UTC time but is timezone unaware, explicitly add UTC
@@ -73,7 +72,7 @@ def _convert_merge_request_to_document(mr: Any) -> Document:
 def _convert_issue_to_document(issue: Any) -> Document:
     doc = Document(
         id=issue.web_url,
-        sections=[TextSection(link=issue.web_url, text=issue.description or "")],
+        sections=[Section(link=issue.web_url, text=issue.description or "")],
         source=DocumentSource.GITLAB,
         semantic_identifier=issue.title,
         # updated_at is UTC time but is timezone unaware, explicitly add UTC
@@ -89,31 +88,24 @@ def _convert_issue_to_document(issue: Any) -> Document:
 def _convert_code_to_document(
     project: Project, file: Any, url: str, projectName: str, projectOwner: str
 ) -> Document:
-    # Dynamically get the default branch from the project object
-    default_branch = project.default_branch
-
-    # Fetch the file content using the correct branch
     file_content_obj = project.files.get(
-        file_path=file["path"], ref=default_branch  # Use the default branch
-    )
+        file_path=file["path"], ref="master"
+    )  # Replace 'master' with your branch name if needed
     try:
         file_content = file_content_obj.decode().decode("utf-8")
     except UnicodeDecodeError:
         file_content = file_content_obj.decode().decode("latin-1")
 
-    # Construct the file URL dynamically using the default branch
-    file_url = (
-        f"{url}/{projectOwner}/{projectName}/-/blob/{default_branch}/{file['path']}"
-    )
-
-    # Create and return a Document object
+    file_url = f"{url}/{projectOwner}/{projectName}/-/blob/master/{file['path']}"  # Construct the file URL
     doc = Document(
         id=file["id"],
-        sections=[TextSection(link=file_url, text=file_content)],
+        sections=[Section(link=file_url, text=file_content)],
         source=DocumentSource.GITLAB,
         semantic_identifier=file["name"],
-        doc_updated_at=datetime.now().replace(tzinfo=timezone.utc),
-        primary_owners=[],  # Add owners if needed
+        doc_updated_at=datetime.now().replace(
+            tzinfo=timezone.utc
+        ),  # Use current time as updated_at
+        primary_owners=[],  # Fill this as needed
         metadata={"type": "CodeFile"},
     )
     return doc
@@ -155,7 +147,7 @@ class GitlabConnector(LoadConnector, PollConnector):
     ) -> GenerateDocumentsOutput:
         if self.gitlab_client is None:
             raise ConnectorMissingCredentialError("Gitlab")
-        project: Project = self.gitlab_client.projects.get(
+        project: gitlab.Project = self.gitlab_client.projects.get(
             f"{self.project_owner}/{self.project_name}"
         )
 
@@ -190,10 +182,7 @@ class GitlabConnector(LoadConnector, PollConnector):
 
         if self.include_mrs:
             merge_requests = project.mergerequests.list(
-                state=self.state_filter,
-                order_by="updated_at",
-                sort="desc",
-                iterator=True,
+                state=self.state_filter, order_by="updated_at", sort="desc"
             )
 
             for mr_batch in _batch_gitlab_objects(merge_requests, self.batch_size):
@@ -213,7 +202,7 @@ class GitlabConnector(LoadConnector, PollConnector):
                 yield mr_doc_batch
 
         if self.include_issues:
-            issues = project.issues.list(state=self.state_filter, iterator=True)
+            issues = project.issues.list(state=self.state_filter)
 
             for issue_batch in _batch_gitlab_objects(issues, self.batch_size):
                 issue_doc_batch: list[Document] = []
@@ -239,8 +228,8 @@ class GitlabConnector(LoadConnector, PollConnector):
     def poll_source(
         self, start: SecondsSinceUnixEpoch, end: SecondsSinceUnixEpoch
     ) -> GenerateDocumentsOutput:
-        start_datetime = datetime.fromtimestamp(start, tz=timezone.utc)
-        end_datetime = datetime.fromtimestamp(end, tz=timezone.utc)
+        start_datetime = datetime.utcfromtimestamp(start)
+        end_datetime = datetime.utcfromtimestamp(end)
         return self._fetch_from_gitlab(start_datetime, end_datetime)
 
 

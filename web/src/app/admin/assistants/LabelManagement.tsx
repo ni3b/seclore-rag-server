@@ -1,8 +1,9 @@
 "use client";
 
 import React from "react";
+import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { SubLabel, TextFormField } from "@/components/Field";
+import { SubLabel, TextFormField } from "@/components/admin/connectors/Field";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { useLabels } from "@/lib/hooks";
 import { PersonaLabel } from "./interfaces";
@@ -99,6 +100,11 @@ export default function LabelManagement() {
                       width="w-full max-w-xs"
                       name={`editLabelName_${label.id}`}
                       label="Label Name"
+                      value={
+                        values.editLabelId === label.id
+                          ? values.editLabelName
+                          : label.name
+                      }
                       onChange={(e) => {
                         setFieldValue("editLabelId", label.id);
                         setFieldValue("editLabelName", e.target.value);

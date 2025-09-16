@@ -4,7 +4,7 @@ import { Callout } from "@/components/ui/callout";
 import { Button } from "@/components/ui/button";
 import { Formik, Form } from "formik";
 import * as Yup from "yup";
-import { Label, TextFormField } from "@/components/Field";
+import { Label, TextFormField } from "@/components/admin/connectors/Field";
 import { LoadingAnimation } from "@/components/Loading";
 import {
   CloudEmbeddingProvider,
@@ -33,8 +33,7 @@ export function ProviderCreationModal({
   isProxy?: boolean;
   isAzure?: boolean;
 }) {
-  const useFileUpload =
-    selectedProvider.provider_type == EmbeddingProvider.GOOGLE;
+  const useFileUpload = selectedProvider.provider_type == "Google";
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>("");

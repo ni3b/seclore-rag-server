@@ -54,21 +54,20 @@ const PageLink = ({
   <div
     className={`
     select-none
-    inline-block
-    text-sm
-    border
-    px-3
-    py-1
-    leading-5
-    -ml-px
+    inline-block 
+    text-sm 
+    border 
+    px-3 
+    py-1 
+    leading-5 
+    -ml-px 
     border-border
-    ${unclickable ? "text-text-200" : ""}
-    ${!unclickable ? "hover:bg-accent-background-hovered" : ""}
+    ${!unclickable ? "hover:bg-hover" : ""}
     ${!unclickable ? "cursor-pointer" : ""}
-    first:ml-0
-    first:rounded-l-md
+    first:ml-0 
+    first:rounded-l-md 
     last:rounded-r-md
-    ${active ? "bg-background-200" : ""}
+    ${active ? "bg-background-strong" : ""}
   `}
     onClick={() => {
       if (pageChangeHandler) {
@@ -104,7 +103,6 @@ export const PageSelector = ({
     <div style={{ display: "inline-block" }}>
       <PageLink
         linkText="‹"
-        unclickable={currentPage === 1}
         pageChangeHandler={() => {
           onPageChange(Math.max(currentPage - 1, 1));
           modifiedScrollUp();
@@ -141,7 +139,6 @@ export const PageSelector = ({
       })}
       <PageLink
         linkText="›"
-        unclickable={currentPage === totalPages}
         pageChangeHandler={() => {
           onPageChange(Math.min(currentPage + 1, totalPages));
           modifiedScrollUp();

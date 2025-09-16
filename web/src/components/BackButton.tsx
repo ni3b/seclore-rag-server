@@ -19,7 +19,7 @@ export function BackButton({
         my-auto 
         flex 
         mb-1 
-        hover:bg-accent-background 
+        hover:bg-hover-light 
         w-fit 
         p-1
         pr-2 

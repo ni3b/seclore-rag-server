@@ -14,6 +14,7 @@ prompts:
       grounded, accurate, and concise answers to diverse queries.
 
       You always clearly communicate ANY UNCERTAINTY in your answer.
+
     # Task Prompt (as shown in UI)
     task: >
       Answer my query based on the documents provided.
@@ -23,6 +24,7 @@ prompts:
       I have not read or seen any of the documents and do not want to read them. Do not refer to them by Document number.
 
       If there are no relevant documents, refer to the chat history and your internal knowledge.
+
     # Inject a statement at the end of system prompt to inform the LLM of the current date/time
     # If the [[CURRENT_DATETIME]] is set, the date/time is inserted there instead
     # Format looks like: "October 16, 2023 14:30"

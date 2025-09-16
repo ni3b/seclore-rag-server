@@ -1,4 +1,4 @@
-import { SubLabel } from "@/components/Field";
+import { SubLabel } from "@/components/admin/connectors/Field";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { useEffect, useState } from "react";
 import Dropzone from "react-dropzone";
@@ -33,20 +33,10 @@ export function ImageUpload({
               type: "error",
               message: "Only one file can be uploaded at a time",
             });
-            return;
           }
 
-          const acceptedFile = acceptedFiles[0];
-          if (acceptedFile === undefined) {
-            setPopup({
-              type: "error",
-              message: "acceptedFile cannot be undefined",
-            });
-            return;
-          }
-
-          setTmpImageUrl(URL.createObjectURL(acceptedFile));
-          setSelectedFile(acceptedFile);
+          setTmpImageUrl(URL.createObjectURL(acceptedFiles[0]));
+          setSelectedFile(acceptedFiles[0]);
           setDragActive(false);
         }}
         onDragLeave={() => setDragActive(false)}
@@ -63,7 +53,7 @@ export function ImageUpload({
               }
             >
               <input {...getInputProps()} />
-              <b className="text-text-darker">
+              <b className="text-emphasis">
                 Drag and drop a .png or .jpg file, or click to select a file!
               </b>
             </div>

@@ -2,13 +2,14 @@
 import React, { useState } from "react";
 import { forgotPassword } from "./utils";
 import AuthFlowContainer from "@/components/auth/AuthFlowContainer";
+import CardSection from "@/components/admin/CardSection";
 import Title from "@/components/ui/title";
 import Text from "@/components/ui/text";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Form, Formik } from "formik";
 import * as Yup from "yup";
-import { TextFormField } from "@/components/Field";
+import { TextFormField } from "@/components/admin/connectors/Field";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { Spinner } from "@/components/Spinner";
 import { redirect } from "next/navigation";

@@ -3,6 +3,7 @@ import {
   Connector,
   GithubConfig,
   GitlabConfig,
+  GoogleDriveConfig,
   JiraConfig,
   SlackConfig,
   ZulipConfig,
@@ -19,7 +20,6 @@ interface ConnectorTitleProps {
   owner?: string;
   isLink?: boolean;
   showMetadata?: boolean;
-  className?: string;
 }
 
 export const ConnectorTitle = ({
@@ -30,7 +30,6 @@ export const ConnectorTitle = ({
   isPublic = true,
   isLink = true,
   showMetadata = true,
-  className = "",
 }: ConnectorTitleProps) => {
   const sourceMetadata = getSourceMetadata(connector.source);
 
@@ -39,13 +38,7 @@ export const ConnectorTitle = ({
     const typedConnector = connector as Connector<GithubConfig>;
     additionalMetadata.set(
       "Repo",
-      typedConnector.connector_specific_config.repositories
-        ? `${typedConnector.connector_specific_config.repo_owner}/${
-            typedConnector.connector_specific_config.repositories.includes(",")
-              ? "multiple repos"
-              : typedConnector.connector_specific_config.repositories
-          }`
-        : `${typedConnector.connector_specific_config.repo_owner}/*`
+      `${typedConnector.connector_specific_config.repo_owner}/${typedConnector.connector_specific_config.repo_name}`
     );
   } else if (connector.source === "gitlab") {
     const typedConnector = connector as Connector<GitlabConfig>;
@@ -93,17 +86,17 @@ export const ConnectorTitle = ({
     );
   }
 
-  const mainSectionClassName = `text-blue-500 dark:text-blue-100 flex w-fit ${className}`;
+  const mainSectionClassName = "text-blue-500 flex w-fit";
   const mainDisplay = (
     <>
-      {sourceMetadata.icon({ size: 16 })}
-      <div className="ml-1 my-auto text-xs font-medium truncate">
+      {sourceMetadata.icon({ size: 20 })}
+      <div className="ml-1 my-auto">
         {ccPairName || sourceMetadata.displayName}
       </div>
     </>
   );
   return (
-    <div className="my-auto max-w-full">
+    <div className="my-auto">
       {isLink ? (
         <Link
           className={mainSectionClassName}
@@ -115,10 +108,10 @@ export const ConnectorTitle = ({
         <div className={mainSectionClassName}>{mainDisplay}</div>
       )}
       {showMetadata && additionalMetadata.size > 0 && (
-        <div className="text-[10px] mt-0.5 text-gray-600 dark:text-gray-400">
+        <div className="text-xs mt-1">
           {Array.from(additionalMetadata.entries()).map(([key, value]) => {
             return (
-              <div key={key} className="truncate">
+              <div key={key}>
                 <i>{key}:</i> {value}
               </div>
             );

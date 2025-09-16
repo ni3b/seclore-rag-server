@@ -3,7 +3,6 @@ from collections.abc import Generator
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from onyx.main import fetch_versioned_implementation
@@ -18,7 +17,7 @@ def client() -> Generator[TestClient, Any, None]:
     os.environ["ENABLE_PAID_ENTERPRISE_EDITION_FEATURES"] = "True"
 
     # Initialize TestClient with the FastAPI app
-    app: FastAPI = fetch_versioned_implementation(
+    app = fetch_versioned_implementation(
         module="onyx.main", attribute="get_application"
     )()
     client = TestClient(app)

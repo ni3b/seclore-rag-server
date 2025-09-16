@@ -36,6 +36,7 @@ def _get_agent_eval_messages(
 def evaluate_inference_section(
     document: InferenceSection, query: str, llm: LLM
 ) -> SectionRelevancePiece:
+    logger.info("review of evaluate_inference_section1")
     def _get_metadata_str(metadata: dict[str, str | list[str]]) -> str:
         metadata_str = "\n\nMetadata:\n"
         for key, value in metadata.items():
@@ -50,13 +51,14 @@ def evaluate_inference_section(
     contents = document.combined_content
     center_metadata = document.center_chunk.metadata
     center_metadata_str = _get_metadata_str(center_metadata) if center_metadata else ""
-
+    logger.info("review of evaluate_inference_section")
     messages = _get_agent_eval_messages(
         title=semantic_id,
         content=contents,
         query=query,
         center_metadata=center_metadata_str,
     )
+    logger.info("review of evaluate_inference_section 2")
     filled_llm_prompt = dict_based_prompt_to_langchain_prompt(messages)
     try:
         model_output = message_to_string(llm.invoke(filled_llm_prompt))
@@ -78,6 +80,7 @@ def evaluate_inference_section(
             (line for line in reversed(model_output.split("\n")) if line.strip()), ""
         )
         relevant = last_line.strip().lower().startswith("true")
+        logger.info(f"review of evaluate_inference_section 2 {relevant}")
     except Exception as e:
         logger.exception(f"An issue occured during the agentic evaluation process. {e}")
         relevant = False

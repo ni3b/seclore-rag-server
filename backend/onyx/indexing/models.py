@@ -5,7 +5,6 @@ from pydantic import Field
 
 from onyx.access.models import DocumentAccess
 from onyx.connectors.models import Document
-from onyx.db.enums import EmbeddingPrecision
 from onyx.utils.logger import setup_logger
 from shared_configs.enums import EmbeddingProvider
 from shared_configs.model_server_models import Embedding
@@ -29,7 +28,6 @@ class BaseChunk(BaseModel):
     content: str
     # Holds the link and the offsets into the raw Chunk text
     source_links: dict[int, str] | None
-    image_file_id: str | None
     # True if this Chunk's start is not at the start of a Section
     section_continuation: bool
 
@@ -49,15 +47,6 @@ class DocAwareChunk(BaseChunk):
     metadata_suffix_semantic: str
     metadata_suffix_keyword: str
 
-    # This is the number of tokens reserved for contextual RAG
-    # in the chunk. doc_summary and chunk_context conbined should
-    # contain at most this many tokens.
-    contextual_rag_reserved_tokens: int
-    # This is the summary for the document generated for contextual RAG
-    doc_summary: str
-    # This is the context for this chunk generated for contextual RAG
-    chunk_context: str
-
     mini_chunk_texts: list[str] | None
 
     large_chunk_id: int | None
@@ -66,13 +55,8 @@ class DocAwareChunk(BaseChunk):
 
     def to_short_descriptor(self) -> str:
         """Used when logging the identity of a chunk"""
-        return f"{self.source_document.to_short_descriptor()} Chunk ID: {self.chunk_id}"
-
-    def get_link(self) -> str | None:
         return (
-            self.source_document.sections[0].link
-            if self.source_document.sections
-            else None
+            f"Chunk ID: '{self.chunk_id}'; {self.source_document.to_short_descriptor()}"
         )
 
 
@@ -92,18 +76,13 @@ class DocMetadataAwareIndexChunk(IndexChunk):
     document_sets: all document sets the source document for this chunk is a part
                    of. This is used for filtering / personas.
     boost: influences the ranking of this chunk at query time. Positive -> ranked higher,
-           negative -> ranked lower. Not included in aggregated boost calculation
-           for legacy reasons.
-    aggregated_chunk_boost_factor: represents the aggregated chunk-level boost (currently: information content)
+           negative -> ranked lower.
     """
 
-    tenant_id: str
+    tenant_id: str | None = None
     access: "DocumentAccess"
     document_sets: set[str]
-    user_file: int | None
-    user_folder: int | None
     boost: int
-    aggregated_chunk_boost_factor: float
 
     @classmethod
     def from_index_chunk(
@@ -111,21 +90,15 @@ class DocMetadataAwareIndexChunk(IndexChunk):
         index_chunk: IndexChunk,
         access: "DocumentAccess",
         document_sets: set[str],
-        user_file: int | None,
-        user_folder: int | None,
         boost: int,
-        aggregated_chunk_boost_factor: float,
-        tenant_id: str,
+        tenant_id: str | None,
     ) -> "DocMetadataAwareIndexChunk":
         index_chunk_data = index_chunk.model_dump()
         return cls(
             **index_chunk_data,
             access=access,
             document_sets=document_sets,
-            user_file=user_file,
-            user_folder=user_folder,
             boost=boost,
-            aggregated_chunk_boost_factor=aggregated_chunk_boost_factor,
             tenant_id=tenant_id,
         )
 
@@ -165,22 +138,9 @@ class IndexingSetting(EmbeddingModelDetail):
     model_dim: int
     index_name: str | None
     multipass_indexing: bool
-    embedding_precision: EmbeddingPrecision
-    reduced_dimension: int | None = None
-
-    background_reindex_enabled: bool = True
-    enable_contextual_rag: bool
-    contextual_rag_llm_name: str | None = None
-    contextual_rag_llm_provider: str | None = None
 
     # This disables the "model_" protected namespace for pydantic
     model_config = {"protected_namespaces": ()}
-
-    @property
-    def final_embedding_dim(self) -> int:
-        if self.reduced_dimension:
-            return self.reduced_dimension
-        return self.model_dim
 
     @classmethod
     def from_db_model(cls, search_settings: "SearchSettings") -> "IndexingSetting":
@@ -193,19 +153,9 @@ class IndexingSetting(EmbeddingModelDetail):
             provider_type=search_settings.provider_type,
             index_name=search_settings.index_name,
             multipass_indexing=search_settings.multipass_indexing,
-            embedding_precision=search_settings.embedding_precision,
-            reduced_dimension=search_settings.reduced_dimension,
-            background_reindex_enabled=search_settings.background_reindex_enabled,
-            enable_contextual_rag=search_settings.enable_contextual_rag,
         )
 
 
 class MultipassConfig(BaseModel):
     multipass_indexing: bool
     enable_large_chunks: bool
-
-
-class UpdatableChunkData(BaseModel):
-    chunk_id: int
-    document_id: str
-    boost_score: float

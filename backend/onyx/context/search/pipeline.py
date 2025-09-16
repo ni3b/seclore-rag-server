@@ -5,13 +5,11 @@ from typing import cast
 
 from sqlalchemy.orm import Session
 
-from onyx.chat.models import ContextualPruningConfig
 from onyx.chat.models import PromptConfig
 from onyx.chat.models import SectionRelevancePiece
 from onyx.chat.prune_and_merge import _merge_sections
 from onyx.chat.prune_and_merge import ChunkRange
 from onyx.chat.prune_and_merge import merge_chunk_intervals
-from onyx.chat.prune_and_merge import prune_and_merge_sections
 from onyx.configs.chat_configs import DISABLE_LLM_DOC_RELEVANCE
 from onyx.context.search.enums import LLMEvaluationType
 from onyx.context.search.enums import QueryFlow
@@ -25,10 +23,9 @@ from onyx.context.search.models import SearchQuery
 from onyx.context.search.models import SearchRequest
 from onyx.context.search.postprocessing.postprocessing import cleanup_chunks
 from onyx.context.search.postprocessing.postprocessing import search_postprocessing
+from onyx.secondary_llm_flows.chunk_usefulness import llm_batch_eval_sections
 from onyx.context.search.preprocessing.preprocessing import retrieval_preprocessing
-from onyx.context.search.retrieval.search_runner import (
-    retrieve_chunks,
-)
+from onyx.context.search.retrieval.search_runner import retrieve_chunks
 from onyx.context.search.utils import inference_section_from_chunks
 from onyx.context.search.utils import relevant_sections_to_indices
 from onyx.db.models import User
@@ -53,37 +50,29 @@ class SearchPipeline:
         user: User | None,
         llm: LLM,
         fast_llm: LLM,
-        skip_query_analysis: bool,
         db_session: Session,
         bypass_acl: bool = False,  # NOTE: VERY DANGEROUS, USE WITH CAUTION
         retrieval_metrics_callback: (
             Callable[[RetrievalMetricsContainer], None] | None
         ) = None,
-        retrieved_sections_callback: (
-            Callable[[list[InferenceSection]], None] | None
-        ) = None,
         rerank_metrics_callback: Callable[[RerankMetricsContainer], None] | None = None,
         prompt_config: PromptConfig | None = None,
-        contextual_pruning_config: ContextualPruningConfig | None = None,
     ):
-        # NOTE: The Search Request contains a lot of fields that are overrides, many of them can be None
-        # and typically are None. The preprocessing will fetch default values to replace these empty overrides.
         self.search_request = search_request
         self.user = user
         self.llm = llm
         self.fast_llm = fast_llm
-        self.skip_query_analysis = skip_query_analysis
         self.db_session = db_session
         self.bypass_acl = bypass_acl
         self.retrieval_metrics_callback = retrieval_metrics_callback
         self.rerank_metrics_callback = rerank_metrics_callback
 
         self.search_settings = get_current_search_settings(db_session)
-        self.document_index = get_default_document_index(self.search_settings, None)
-        self.prompt_config: PromptConfig | None = prompt_config
-        self.contextual_pruning_config: ContextualPruningConfig | None = (
-            contextual_pruning_config
+        self.document_index = get_default_document_index(
+            primary_index_name=self.search_settings.index_name,
+            secondary_index_name=None,
         )
+        self.prompt_config: PromptConfig | None = prompt_config
 
         # Preprocessing steps generate this
         self._search_query: SearchQuery | None = None
@@ -93,8 +82,6 @@ class SearchPipeline:
         self._retrieved_chunks: list[InferenceChunk] | None = None
         # Another call made to the document index to get surrounding sections
         self._retrieved_sections: list[InferenceSection] | None = None
-
-        self.retrieved_sections_callback = retrieved_sections_callback
         # Reranking and LLM section selection can be run together
         # If only LLM selection is on, the reranked chunks are yielded immediatly
         self._reranked_sections: list[InferenceSection] | None = None
@@ -117,12 +104,17 @@ class SearchPipeline:
             search_request=self.search_request,
             user=self.user,
             llm=self.llm,
-            skip_query_analysis=self.skip_query_analysis,
             db_session=self.db_session,
             bypass_acl=self.bypass_acl,
         )
+        
+        # Set the search query and type
         self._search_query = final_search_query
         self._predicted_search_type = final_search_query.search_type
+        
+        # For single query, let the property accessors handle caching
+        self._retrieved_sections = None
+        self._section_relevance = None
 
     @property
     def search_query(self) -> SearchQuery:
@@ -173,12 +165,6 @@ class SearchPipeline:
         that have a corresponding chunk.
 
         This step should be fast for any document index implementation.
-
-        Current implementation timing is approximately broken down in timing as:
-        - 200 ms to get the embedding of the query
-        - 15 ms to get chunks from the document index
-        - possibly more to get additional surrounding chunks
-        - possibly more for query expansion (multilingual)
         """
         if self._retrieved_sections is not None:
             return self._retrieved_sections
@@ -188,7 +174,7 @@ class SearchPipeline:
 
         # If ee is enabled, censor the chunk sections based on user access
         # Otherwise, return the retrieved chunks
-        censored_chunks: list[InferenceChunk] = fetch_ee_implementation_or_noop(
+        censored_chunks = fetch_ee_implementation_or_noop(
             "onyx.external_permissions.post_query_censoring",
             "_post_query_chunk_censoring",
             retrieved_chunks,
@@ -340,20 +326,6 @@ class SearchPipeline:
         return expanded_inference_sections
 
     @property
-    def retrieved_sections(self) -> list[InferenceSection]:
-        if self._retrieved_sections is not None:
-            return self._retrieved_sections
-
-        self._retrieved_sections = self._get_sections()
-        return self._retrieved_sections
-
-    @property
-    def merged_retrieved_sections(self) -> list[InferenceSection]:
-        """Should be used to display in the UI in order to prevent displaying
-        multiple sections for the same document as separate "documents"."""
-        return _merge_sections(sections=self.retrieved_sections)
-
-    @property
     def reranked_sections(self) -> list[InferenceSection]:
         """Reranking is always done at the chunk level since section merging could create arbitrarily
         long sections which could be:
@@ -365,13 +337,9 @@ class SearchPipeline:
         if self._reranked_sections is not None:
             return self._reranked_sections
 
-        retrieved_sections = self.retrieved_sections
-        if self.retrieved_sections_callback is not None:
-            self.retrieved_sections_callback(retrieved_sections)
-
         self._postprocessing_generator = search_postprocessing(
             search_query=self.search_query,
-            retrieved_sections=retrieved_sections,
+            retrieved_sections=self._get_sections(),
             llm=self.fast_llm,
             rerank_metrics_callback=self.rerank_metrics_callback,
         )
@@ -387,31 +355,13 @@ class SearchPipeline:
         if self._final_context_sections is not None:
             return self._final_context_sections
 
-        if (
-            self.contextual_pruning_config is not None
-            and self.prompt_config is not None
-        ):
-            self._final_context_sections = prune_and_merge_sections(
-                sections=self.reranked_sections,
-                section_relevance_list=None,
-                prompt_config=self.prompt_config,
-                llm_config=self.llm.config,
-                question=self.search_query.query,
-                contextual_pruning_config=self.contextual_pruning_config,
-            )
-
-        else:
-            logger.error(
-                "Contextual pruning or prompt config not set, using default merge"
-            )
-            self._final_context_sections = _merge_sections(
-                sections=self.reranked_sections
-            )
+        self._final_context_sections = _merge_sections(sections=self.reranked_sections)
         return self._final_context_sections
 
     @property
     def section_relevance(self) -> list[SectionRelevancePiece] | None:
         if self._section_relevance is not None:
+            logger.info(f"llm doc relevance 2.5 {self._section_relevance}")
             return self._section_relevance
 
         if (
@@ -419,7 +369,7 @@ class SearchPipeline:
             or DISABLE_LLM_DOC_RELEVANCE
         ):
             return None
-
+        logger.info("llm doc relevance 3")
         if self.search_query.evaluation_type == LLMEvaluationType.UNSPECIFIED:
             raise ValueError(
                 "Attempted to access section relevance scores on search query with evaluation type `UNSPECIFIED`."
@@ -448,10 +398,6 @@ class SearchPipeline:
                 raise ValueError(
                     "Basic search evaluation operation called while DISABLE_LLM_DOC_RELEVANCE is enabled."
                 )
-            # NOTE: final_context_sections must be accessed before accessing self._postprocessing_generator
-            # since the property sets the generator. DO NOT REMOVE.
-            _ = self.final_context_sections
-
             self._section_relevance = next(
                 cast(
                     Iterator[list[SectionRelevancePiece]],
@@ -469,18 +415,82 @@ class SearchPipeline:
 
     @property
     def section_relevance_list(self) -> list[bool]:
-        return section_relevance_list_impl(
-            section_relevance=self.section_relevance,
-            final_context_sections=self.final_context_sections,
+        # When LLM relevance filtering is disabled, section_relevance is None
+        # In this case, we want all sections to be considered relevant
+        if self.section_relevance is None:
+            return [True] * len(self.final_context_sections)
+        
+        llm_indices = relevant_sections_to_indices(
+            relevance_sections=self.section_relevance,
+            items=self.final_context_sections,
         )
+        return [ind in llm_indices for ind in range(len(self.final_context_sections))]
 
+    def _get_section_relevance(self, sections: list[InferenceSection]) -> list[SectionRelevancePiece]:
+        """Get relevance scores for sections"""
+        if not sections:
+            return []
+            
+        # Check if LLM doc relevance is disabled
+        if DISABLE_LLM_DOC_RELEVANCE:
+            logger.info("LLM doc relevance is disabled, returning all sections as relevant")
+            return [
+                SectionRelevancePiece(
+                    relevant=True,
+                    document_id=section.center_chunk.document_id,
+                    chunk_id=section.center_chunk.chunk_id,
+                )
+                for section in sections
+            ]
+            
+        # Limit sections based on max_llm_filter_sections
+        sections_to_evaluate = sections[:self.search_query.max_llm_filter_sections]
+        
+        # Get contents and metadata for evaluation
+        contents = [section.combined_content for section in sections_to_evaluate]
+        metadata_list = [section.center_chunk.metadata for section in sections_to_evaluate]
+        titles = [section.center_chunk.semantic_identifier for section in sections_to_evaluate]
 
-def section_relevance_list_impl(
-    section_relevance: list[SectionRelevancePiece] | None,
-    final_context_sections: list[InferenceSection],
-) -> list[bool]:
-    llm_indices = relevant_sections_to_indices(
-        relevance_sections=section_relevance,
-        items=final_context_sections,
-    )
-    return [ind in llm_indices for ind in range(len(final_context_sections))]
+        try:
+            # Get relevance scores from LLM
+            relevance_scores = llm_batch_eval_sections(
+                query=self.search_query.query,
+                section_contents=contents,
+                llm=self.llm,
+                titles=titles,
+                metadata_list=metadata_list,
+            )
+            
+            # Create SectionRelevancePiece for evaluated sections
+            evaluated_sections = [
+                SectionRelevancePiece(
+                    relevant=score,  # score is already a boolean from llm_batch_eval_sections
+                    document_id=section.center_chunk.document_id,
+                    chunk_id=section.center_chunk.chunk_id,
+                )
+                for section, score in zip(sections_to_evaluate, relevance_scores)
+            ]
+            
+            # Add remaining sections as not relevant
+            remaining_sections = [
+                SectionRelevancePiece(
+                    relevant=False,
+                    document_id=section.center_chunk.document_id,
+                    chunk_id=section.center_chunk.chunk_id,
+                )
+                for section in sections[len(sections_to_evaluate):]
+            ]
+            
+            return evaluated_sections + remaining_sections
+            
+        except Exception as e:
+            logger.error(f"Error during LLM evaluation: {str(e)}")
+            # In case of error, return all sections as relevant
+            return [
+                SectionRelevancePiece(
+                    relevant=True,
+                    document_id=section.center_chunk.document_id,
+                    chunk_id=section.center_chunk.chunk_id,
+                )
+                for section in sections
+            ]

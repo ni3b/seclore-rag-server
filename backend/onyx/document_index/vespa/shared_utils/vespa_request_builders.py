@@ -3,7 +3,7 @@ from datetime import timedelta
 from datetime import timezone
 
 from onyx.configs.constants import INDEX_SEPARATOR
-from onyx.context.search.models import IndexFilters
+from onyx.context.search.models import IndexFilters, TimeRange
 from onyx.document_index.interfaces import VespaChunkRequest
 from onyx.document_index.vespa_constants import ACCESS_CONTROL_LIST
 from onyx.document_index.vespa_constants import CHUNK_ID
@@ -14,20 +14,10 @@ from onyx.document_index.vespa_constants import HIDDEN
 from onyx.document_index.vespa_constants import METADATA_LIST
 from onyx.document_index.vespa_constants import SOURCE_TYPE
 from onyx.document_index.vespa_constants import TENANT_ID
-from onyx.document_index.vespa_constants import USER_FILE
-from onyx.document_index.vespa_constants import USER_FOLDER
-from onyx.kg.utils.formatting_utils import split_relationship_id
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import MULTI_TENANT
 
 logger = setup_logger()
-
-
-def build_tenant_id_filter(tenant_id: str, include_trailing_and: bool = False) -> str:
-    filter_str = f'({TENANT_ID} contains "{tenant_id}")'
-    if include_trailing_and:
-        filter_str += " and "
-    return filter_str
 
 
 def build_vespa_filters(
@@ -36,167 +26,115 @@ def build_vespa_filters(
     include_hidden: bool = False,
     remove_trailing_and: bool = False,  # Set to True when using as a complete Vespa query
 ) -> str:
+    logger.info(f"Building Vespa filters with input filters: {filters}")
+    
     def _build_or_filters(key: str, vals: list[str] | None) -> str:
-        """For string-based 'contains' filters, e.g. WSET fields or array<string> fields."""
-        if not key or not vals:
+        if vals is None:
             return ""
-        eq_elems = [f'{key} contains "{val}"' for val in vals if val]
-        if not eq_elems:
+
+        valid_vals = [val for val in vals if val]
+        if not key or not valid_vals:
             return ""
+
+        eq_elems = [f'{key} contains "{elem}"' for elem in valid_vals]
         or_clause = " or ".join(eq_elems)
         return f"({or_clause}) and "
 
-    def _build_int_or_filters(key: str, vals: list[int] | None) -> str:
-        """
-        For an integer field filter.
-        If vals is not None, we want *only* docs whose key matches one of vals.
-        """
-        # If `vals` is None => skip the filter entirely
-        if vals is None or not vals:
-            return ""
-
-        # Otherwise build the OR filter
-        eq_elems = [f"{key} = {val}" for val in vals]
-        or_clause = " or ".join(eq_elems)
-        result = f"({or_clause}) and "
-
-        return result
-
-    def _build_kg_filter(
-        kg_entities: list[str] | None,
-        kg_relationships: list[str] | None,
-        kg_terms: list[str] | None,
-    ) -> str:
-        if not kg_entities and not kg_relationships and not kg_terms:
-            return ""
-
-        combined_filter_parts = []
-
-        def _build_kge(entity: str) -> str:
-            # TYPE-SUBTYPE::ID -> "TYPE-SUBTYPE::ID"
-            # TYPE-SUBTYPE::*  -> ({prefix: true}"TYPE-SUBTYPE")
-            # TYPE::*          -> ({prefix: true}"TYPE")
-            GENERAL = "::*"
-            if entity.endswith(GENERAL):
-                return f'({{prefix: true}}"{entity.split(GENERAL, 1)[0]}")'
-            else:
-                return f'"{entity}"'
-
-        # OR the entities (give new design)
-        if kg_entities:
-            filter_parts = []
-            for kg_entity in kg_entities:
-                filter_parts.append(f"(kg_entities contains {_build_kge(kg_entity)})")
-            combined_filter_parts.append(f"({' or '.join(filter_parts)})")
-
-        # TODO: handle complex nested relationship logic (e.g., A participated, and B or C participated)
-        if kg_relationships:
-            filter_parts = []
-            for kg_relationship in kg_relationships:
-                source, rel_type, target = split_relationship_id(kg_relationship)
-                filter_parts.append(
-                    "(kg_relationships contains sameElement("
-                    f"source contains {_build_kge(source)},"
-                    f'rel_type contains "{rel_type}",'
-                    f"target contains {_build_kge(target)}))"
-                )
-            combined_filter_parts.append(f"{' and '.join(filter_parts)}")
-
-        # TODO: remove kg terms entirely from prompts and codebase
-
-        # AND the combined filter parts
-        return f"({' and '.join(combined_filter_parts)}) and "
-
-    def _build_kg_source_filters(
-        kg_sources: list[str] | None,
-    ) -> str:
-        if not kg_sources:
-            return ""
-
-        source_phrases = [f'{DOCUMENT_ID} contains "{source}"' for source in kg_sources]
-
-        return f"({' or '.join(source_phrases)}) and "
-
-    def _build_kg_chunk_id_zero_only_filter(
-        kg_chunk_id_zero_only: bool,
-    ) -> str:
-        if not kg_chunk_id_zero_only:
-            return ""
-
-        return "(chunk_id = 0 ) and "
-
     def _build_time_filter(
-        cutoff: datetime | None,
+        time_range: TimeRange | None,
         untimed_doc_cutoff: timedelta = timedelta(days=92),
     ) -> str:
-        if not cutoff:
+        if not time_range or (not time_range.start_date and not time_range.end_date):
             return ""
-        include_untimed = datetime.now(timezone.utc) - untimed_doc_cutoff > cutoff
-        cutoff_secs = int(cutoff.timestamp())
 
-        if include_untimed:
-            return f"!({DOC_UPDATED_AT} < {cutoff_secs}) and "
-        return f"({DOC_UPDATED_AT} >= {cutoff_secs}) and "
+        conditions = []
+        
+        if time_range.start_date:
+            start_secs = int(time_range.start_date.timestamp())
+            conditions.append(f"({DOC_UPDATED_AT} >= {start_secs})")
+            
+        if time_range.end_date:
+            end_secs = int(time_range.end_date.timestamp())
+            conditions.append(f"({DOC_UPDATED_AT} <= {end_secs})")
+            
+        if not conditions:
+            return ""
+            
+        return " and ".join(conditions) + " and "
 
-    # Start building the filter string
     filter_str = f"!({HIDDEN}=true) and " if not include_hidden else ""
 
-    # TODO: add error condition if MULTI_TENANT and no tenant_id filter is set
-    # If running in multi-tenant mode
+    # If running in multi-tenant mode, we may want to filter by tenant_id
     if filters.tenant_id and MULTI_TENANT:
-        filter_str += build_tenant_id_filter(
-            filters.tenant_id, include_trailing_and=True
-        )
+        filter_str += f'({TENANT_ID} contains "{filters.tenant_id}") and '
 
-    # ACL filters
+    # CAREFUL touching this one, currently there is no second ACL double-check post retrieval
     if filters.access_control_list is not None:
-        filter_str += _build_or_filters(
-            ACCESS_CONTROL_LIST, filters.access_control_list
-        )
+        filter_str += _build_or_filters(ACCESS_CONTROL_LIST, filters.access_control_list)
 
-    # Source type filters
     source_strs = (
         [s.value for s in filters.source_type] if filters.source_type else None
     )
-    filter_str += _build_or_filters(SOURCE_TYPE, source_strs)
+    source_filter = _build_or_filters(SOURCE_TYPE, source_strs)
+    if source_filter:
+        filter_str += source_filter
 
-    # Tag filters
+    # Add connector name filter to metadata list
+    if filters.connector_name:
+        if isinstance(filters.connector_name, list):
+            # Handle multiple connector names with OR condition
+            connector_filters = []
+            for connector in filters.connector_name:
+                connector_filter = f'connector_name{INDEX_SEPARATOR}{connector}'
+                connector_filters.append(f'({METADATA_LIST} contains "{connector_filter}")')
+            # Join all connector filters with OR
+            connector_or_clause = " or ".join(connector_filters)
+            filter_str += f"({connector_or_clause}) and "
+        else:
+            # Handle single connector name (backward compatibility)
+            connector_filter = f'connector_name{INDEX_SEPARATOR}{filters.connector_name}'
+            filter_str += f'({METADATA_LIST} contains "{connector_filter}") and '
+
+    # Add status filter to metadata list
+    if filters.status:
+        if "," in filters.status:
+            # Handle multiple statuses with OR condition
+            statuses = [s.strip() for s in filters.status.split(",")]
+            status_filters = []
+            for status in statuses:
+                status_filter = f'status{INDEX_SEPARATOR}{status}'
+                status_filters.append(f'({METADATA_LIST} contains "{status_filter}")')
+            filter_str += f"({' or '.join(status_filters)}) and "
+        else:
+            # Handle single status
+            status_filter = f'status{INDEX_SEPARATOR}{filters.status}'
+            filter_str += f'({METADATA_LIST} contains "{status_filter}") and '
+
+    # Add ticket_id filter to metadata list
+    if filters.ticket_id:
+        ticket_filter = f'id{INDEX_SEPARATOR}{filters.ticket_id}'
+        filter_str += f'({METADATA_LIST} contains "{ticket_filter}") and '
+
     tag_attributes = None
-    if filters.tags:
-        # build e.g. "tag_key|tag_value"
-        tag_attributes = [
-            f"{tag.tag_key}{INDEX_SEPARATOR}{tag.tag_value}" for tag in filters.tags
-        ]
-    filter_str += _build_or_filters(METADATA_LIST, tag_attributes)
+    tags = filters.tags
+    if tags:
+        tag_attributes = [tag.tag_key + INDEX_SEPARATOR + tag.tag_value for tag in tags]
+    tag_filter = _build_or_filters(METADATA_LIST, tag_attributes)
+    if tag_filter:
+        filter_str += tag_filter
 
-    # Document sets
-    filter_str += _build_or_filters(DOCUMENT_SETS, filters.document_set)
+    doc_set_filter = _build_or_filters(DOCUMENT_SETS, filters.document_set)
+    if doc_set_filter:
+        filter_str += doc_set_filter
 
-    # New: user_file_ids as integer filters
-    filter_str += _build_int_or_filters(USER_FILE, filters.user_file_ids)
+    time_filter = _build_time_filter(filters.time_range)
+    if time_filter:
+        filter_str += time_filter
 
-    filter_str += _build_int_or_filters(USER_FOLDER, filters.user_folder_ids)
-
-    # Time filter
-    filter_str += _build_time_filter(filters.time_cutoff)
-
-    # Knowledge Graph Filters
-    filter_str += _build_kg_filter(
-        kg_entities=filters.kg_entities,
-        kg_relationships=filters.kg_relationships,
-        kg_terms=filters.kg_terms,
-    )
-
-    filter_str += _build_kg_source_filters(filters.kg_sources)
-
-    filter_str += _build_kg_chunk_id_zero_only_filter(
-        filters.kg_chunk_id_zero_only or False
-    )
-
-    # Trim trailing " and "
     if remove_trailing_and and filter_str.endswith(" and "):
         filter_str = filter_str[:-5]
 
+    logger.info(f"Final filter string: {filter_str}")
     return filter_str
 
 

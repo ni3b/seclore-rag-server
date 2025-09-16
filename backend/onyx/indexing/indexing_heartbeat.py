@@ -12,7 +12,4 @@ class IndexingHeartbeatInterface(ABC):
 
     @abstractmethod
     def progress(self, tag: str, amount: int) -> None:
-        """Send progress updates to the caller.
-        Amount can be a positive number to indicate progress or <= 0
-        just to act as a keep-alive.
-        """
+        """Send progress updates to the caller."""

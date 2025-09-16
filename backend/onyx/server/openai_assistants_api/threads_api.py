@@ -13,7 +13,7 @@ from onyx.db.chat import delete_chat_session
 from onyx.db.chat import get_chat_session_by_id
 from onyx.db.chat import get_chat_sessions_by_user
 from onyx.db.chat import update_chat_session
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.models import User
 from onyx.server.query_and_chat.models import ChatSessionDetails
 from onyx.server.query_and_chat.models import ChatSessionsResponse
@@ -147,11 +147,9 @@ def list_threads(
                 name=chat.description,
                 persona_id=chat.persona_id,
                 time_created=chat.time_created.isoformat(),
-                time_updated=chat.time_updated.isoformat(),
                 shared_status=chat.shared_status,
                 folder_id=chat.folder_id,
                 current_alternate_model=chat.current_alternate_model,
-                current_temperature_override=chat.temperature_override,
             )
             for chat in chat_sessions
         ]

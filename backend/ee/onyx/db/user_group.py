@@ -231,14 +231,14 @@ def fetch_user_groups_for_user(
     return db_session.scalars(stmt).all()
 
 
-def construct_document_id_select_by_usergroup(
+def construct_document_select_by_usergroup(
     user_group_id: int,
 ) -> Select:
     """This returns a statement that should be executed using
     .yield_per() to minimize overhead. The primary consumers of this function
     are background processing task generators."""
     stmt = (
-        select(Document.id)
+        select(Document)
         .join(
             DocumentByConnectorCredentialPair,
             Document.id == DocumentByConnectorCredentialPair.id,
@@ -437,7 +437,7 @@ def _validate_curator_status__no_commit(
         )
 
         # if the user is a curator in any of their groups, set their role to CURATOR
-        # otherwise, set their role to BASIC only if they were previously a CURATOR
+        # otherwise, set their role to BASIC
         if curator_relationships:
             user.role = UserRole.CURATOR
         elif user.role == UserRole.CURATOR:
@@ -644,16 +644,7 @@ def update_user_group(
     removed_users = db_session.scalars(
         select(User).where(User.id.in_(removed_user_ids))  # type: ignore
     ).unique()
-
-    # Filter out admin and global curator users before validating curator status
-    users_to_validate = [
-        user
-        for user in removed_users
-        if user.role not in [UserRole.ADMIN, UserRole.GLOBAL_CURATOR]
-    ]
-
-    if users_to_validate:
-        _validate_curator_status__no_commit(db_session, users_to_validate)
+    _validate_curator_status__no_commit(db_session, list(removed_users))
 
     # update "time_updated" to now
     db_user_group.time_last_modified_by_user = func.now()

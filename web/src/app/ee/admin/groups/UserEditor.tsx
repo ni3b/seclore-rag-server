@@ -2,7 +2,7 @@ import { User } from "@/lib/types";
 import { FiPlus, FiX } from "react-icons/fi";
 import { SearchMultiSelectDropdown } from "@/components/Dropdown";
 import { UsersIcon } from "@/components/icons/icons";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/Button";
 
 interface UserEditorProps {
   selectedUserIds: string[];
@@ -42,7 +42,7 @@ export const UserEditor = ({
                   py-1 
                   border 
                   border-border 
-                  hover:bg-accent-background 
+                  hover:bg-hover-light 
                   cursor-pointer`}
             >
               {selectedUser.email} <FiX className="ml-1 my-auto" />
@@ -72,7 +72,7 @@ export const UserEditor = ({
             ]);
           }}
           itemComponent={({ option }) => (
-            <div className="flex px-4 py-2.5 cursor-pointer hover:bg-accent-background-hovered">
+            <div className="flex px-4 py-2.5 cursor-pointer hover:bg-hover">
               <UsersIcon className="mr-2 my-auto" />
               {option.name}
               <div className="ml-auto my-auto">

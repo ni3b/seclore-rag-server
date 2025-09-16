@@ -1,3 +1,870 @@
+import React, { useEffect, useRef, useState } from "react";
+import { FiPlusCircle, FiPlus, FiInfo, FiX, FiFilter, FiLoader, FiSettings } from "react-icons/fi";
+import { ChatInputOption } from "./ChatInputOption";
+import { Persona } from "@/app/admin/assistants/interfaces";
+import LLMPopover from "./LLMPopover";
+import { InputPrompt } from "@/app/chat/interfaces";
+
+import { FilterManager, LlmOverrideManager } from "@/lib/hooks";
+import { useChatContext } from "@/components/context/ChatContext";
+import { ChatFileType, FileDescriptor } from "../interfaces";
+import {
+  DocumentIcon2,
+  FileIcon,
+  BookIcon,
+  SendIcon,
+  StopGeneratingIcon,
+} from "@/components/icons/icons";
+import { OnyxDocument, SourceMetadata } from "@/lib/search/interfaces";
+import { AssistantIcon } from "@/components/assistants/AssistantIcon";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Hoverable } from "@/components/Hoverable";
+import { ChatState } from "../types";
+import UnconfiguredProviderText from "@/components/chat_search/UnconfiguredProviderText";
+import { useAssistants } from "@/components/context/AssistantsContext";
+import { CalendarIcon, TagIcon, XIcon } from "lucide-react";
+import { FilterPopup } from "@/components/search/filtering/FilterPopup";
+import { DocumentSet, Tag } from "@/lib/types";
+import { SourceIcon } from "@/components/SourceIcon";
+import { getFormattedDateRangeString } from "@/lib/dateUtils";
+import { truncateString } from "@/lib/utils";
+import { buildImgUrl } from "../files/images/utils";
+import { useUser } from "@/components/user/UserProvider";
+import { ToolSnapshot } from "@/lib/tools/interfaces";
+
+const MAX_INPUT_HEIGHT = 200;
+
+export const SourceChip = ({
+  icon,
+  title,
+  onRemove,
+  onClick,
+  truncateTitle = true,
+}: {
+  icon?: React.ReactNode;
+  title: string;
+  onRemove?: () => void;
+  onClick?: () => void;
+  truncateTitle?: boolean;
+}) => (
+  <div
+    onClick={onClick ? onClick : undefined}
+    className={`
+      flex-none
+        flex
+        items-center
+        px-1
+        bg-gray-background
+        text-xs
+        text-text-darker
+        border
+        gap-x-1.5
+        border-border
+        rounded-md
+        box-border
+        gap-x-1
+        h-6
+        ${onClick ? "cursor-pointer" : ""}
+      `}
+  >
+    {icon}
+    {truncateTitle ? truncateString(title, 20) : title}
+    {onRemove && (
+      <XIcon
+        size={12}
+        className="text-text-900 ml-auto cursor-pointer"
+        onClick={(e: React.MouseEvent<SVGSVGElement>) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+      />
+    )}
+  </div>
+);
+
+interface ChatInputBarProps {
+  removeDocs: () => void;
+  showConfigureAPIKey: () => void;
+  selectedDocuments: OnyxDocument[];
+  message: string;
+  setMessage: (message: string) => void;
+  stopGenerating: () => void;
+  onSubmit: () => void;
+  llmOverrideManager: LlmOverrideManager;
+  chatState: ChatState;
+  alternativeAssistant: Persona | null;
+  // assistants
+  selectedAssistant: Persona;
+  setAlternativeAssistant: (alternativeAssistant: Persona | null) => void;
+  toggleDocumentSidebar: () => void;
+  files: FileDescriptor[];
+  setFiles: (files: FileDescriptor[]) => void;
+  handleFileUpload: (files: File[]) => void;
+  textAreaRef: React.RefObject<HTMLTextAreaElement>;
+  filterManager: FilterManager;
+  availableSources: SourceMetadata[];
+  availableDocumentSets: DocumentSet[];
+  availableTags: Tag[];
+  retrievalEnabled: boolean;
+  isAdmin: boolean;
+  onOpenKnowledgeBase: () => void;
+  // tool selection props
+  assistantTools?: ToolSnapshot[];
+  selectedToolIds: number[];
+  onCustomToolSelectionChange: (ids: number[]) => void;
+}
+
+export function ChatInputBar({
+  retrievalEnabled,
+  removeDocs,
+  toggleDocumentSidebar,
+  filterManager,
+  showConfigureAPIKey,
+  selectedDocuments,
+  message,
+  setMessage,
+  stopGenerating,
+  onSubmit,
+  chatState,
+  isAdmin,
+
+  // assistants
+  selectedAssistant,
+  setAlternativeAssistant,
+
+  files,
+  setFiles,
+  handleFileUpload,
+  textAreaRef,
+  alternativeAssistant,
+  availableSources,
+  availableDocumentSets,
+  availableTags,
+  llmOverrideManager,
+  onOpenKnowledgeBase,
+  // tool selection props
+  assistantTools,
+  selectedToolIds,
+  onCustomToolSelectionChange,
+}: ChatInputBarProps) {
+  const { user } = useUser();
+  useEffect(() => {
+    const textarea = textAreaRef.current;
+    if (textarea) {
+      textarea.style.height = "0px";
+      textarea.style.height = `${Math.min(
+        textarea.scrollHeight,
+        MAX_INPUT_HEIGHT
+      )}px`;
+    }
+  }, [message, textAreaRef]);
+
+  const handlePaste = (event: React.ClipboardEvent) => {
+    const items = event.clipboardData?.items;
+    if (items) {
+      const pastedFiles = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === "file") {
+          const file = items[i].getAsFile();
+          if (file) pastedFiles.push(file);
+        }
+      }
+      if (pastedFiles.length > 0) {
+        event.preventDefault();
+        handleFileUpload(pastedFiles);
+      }
+    }
+  };
+
+  const { assistants: allAvailableAssistants } = useAssistants();
+
+  const { llmProviders, inputPrompts, refreshInputPrompts } = useChatContext();
+
+  const suggestionsRef = useRef<HTMLDivElement | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Add loading state for prompts
+  const [isLoadingPrompts, setIsLoadingPrompts] = useState(false);
+  const promptsRefreshedRef = useRef(false);
+
+  const interactionsRef = useRef<HTMLDivElement | null>(null);
+
+  const hideSuggestions = () => {
+    setShowSuggestions(false);
+    setTabbingIconIndex(0);
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        suggestionsRef.current &&
+        !suggestionsRef.current.contains(event.target as Node) &&
+        (!interactionsRef.current ||
+          !interactionsRef.current.contains(event.target as Node))
+      ) {
+        hideSuggestions();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  const updatedTaggedAssistant = (assistant: Persona) => {
+    setAlternativeAssistant(
+      assistant.id == selectedAssistant.id ? null : assistant
+    );
+    hideSuggestions();
+    setMessage("");
+  };
+
+  const handleAssistantInput = (text: string) => {
+    if (!text.startsWith("@")) {
+      hideSuggestions();
+    } else {
+      const match = text.match(/(?:\s|^)@(\w*)$/);
+      if (match) {
+        setShowSuggestions(true);
+      } else {
+        hideSuggestions();
+      }
+    }
+  };
+
+  const [showPrompts, setShowPrompts] = useState(false);
+
+  const hidePrompts = () => {
+    setTimeout(() => {
+      setShowPrompts(false);
+    }, 50);
+    setTabbingIconIndex(0);
+  };
+
+  // Get available custom tools
+  const availableTools = assistantTools || [];
+  const customTools = availableTools.filter(tool => tool && tool.definition); // Custom tools have definition
+
+  // Handle tool selection
+  const handleToolToggle = (toolId: number) => {
+    const currentSelectedToolIds = selectedToolIds || [];
+    const newSelectedToolIds = currentSelectedToolIds.includes(toolId)
+      ? currentSelectedToolIds.filter(id => id !== toolId)
+      : [...currentSelectedToolIds, toolId];
+    onCustomToolSelectionChange(newSelectedToolIds);
+  };
+
+  const updateInputPrompt = (prompt: InputPrompt) => {
+    hidePrompts();
+    setMessage(`${prompt.content}`);
+  };
+
+  const handlePromptInput = (text: string) => {
+    if (!text.startsWith("/")) {
+      hidePrompts();
+      // Reset the refresh flag when user stops typing /
+      promptsRefreshedRef.current = false;
+    } else {
+      const promptMatch = text.match(/(?:\s|^)\/(\w*)$/);
+      if (promptMatch) {
+        setShowPrompts(true);
+        // Fetch fresh prompts from API when user starts typing / (only once per session)
+        if (!isLoadingPrompts && !promptsRefreshedRef.current) {
+          setIsLoadingPrompts(true);
+          promptsRefreshedRef.current = true;
+          refreshInputPrompts().finally(() => {
+            setIsLoadingPrompts(false);
+          });
+        }
+      } else {
+        hidePrompts();
+      }
+    }
+  };
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = event.target.value;
+    setMessage(text);
+    handleAssistantInput(text);
+    handlePromptInput(text);
+  };
+
+  // Get all available assistants and filter out the current one
+  const otherAssistants = allAvailableAssistants.filter(
+    (assistant) => assistant.id !== selectedAssistant.id
+  );
+  
+  const assistantTagOptions = otherAssistants.filter((assistant) => {
+    const searchText = message
+      .slice(message.lastIndexOf("@") + 1)
+      .split(/\s/)[0]
+      .toLowerCase();
+    // If just "@" is typed, show all other assistants
+    if (searchText === "") {
+      return true;
+    }
+    return assistant.name.toLowerCase().startsWith(searchText);
+  });
+
+
+  const [tabbingIconIndex, setTabbingIconIndex] = useState(0);
+
+  // Determine which assistant to use for filtering
+  const currentAssistant = alternativeAssistant || selectedAssistant;
+
+  const filteredPrompts = inputPrompts.filter(
+    (prompt) =>
+      prompt.active &&
+      prompt.prompt.toLowerCase().startsWith(
+        message
+          .slice(message.lastIndexOf("/") + 1)
+          .split(/\s/)[0]
+          .toLowerCase()
+      ) &&
+      // Filter by assistant_id: show prompts that are either:
+      // 1. Not assigned to any specific assistant (assistant_id is null)
+      // 2. Assigned to the current assistant (selected or alternative)
+      (prompt.assistant_id === null || prompt.assistant_id === currentAssistant.id)
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      ((showSuggestions && assistantTagOptions.length > 0) || showPrompts) &&
+      (e.key === "Tab" || e.key == "Enter")
+    ) {
+      e.preventDefault();
+
+      if (
+        (tabbingIconIndex == assistantTagOptions.length && showSuggestions) ||
+        (tabbingIconIndex == filteredPrompts.length && showPrompts)
+      ) {
+        if (showPrompts) {
+          window.open("/chat/input-prompts", "_self");
+        } else {
+          window.open("/assistants/new", "_self");
+        }
+      } else {
+        if (showPrompts) {
+          const selectedPrompt =
+            filteredPrompts[tabbingIconIndex >= 0 ? tabbingIconIndex : 0];
+          updateInputPrompt(selectedPrompt);
+        } else {
+          const option =
+            assistantTagOptions[tabbingIconIndex >= 0 ? tabbingIconIndex : 0];
+          updatedTaggedAssistant(option);
+        }
+      }
+    }
+    if (!showPrompts && !showSuggestions) {
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setTabbingIconIndex((tabbingIconIndex) =>
+        Math.min(
+          tabbingIconIndex + 1,
+          showPrompts ? filteredPrompts.length : assistantTagOptions.length
+        )
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setTabbingIconIndex((tabbingIconIndex) =>
+        Math.max(tabbingIconIndex - 1, 0)
+      );
+    }
+  };
+
+  return (
+    <div id="onyx-chat-input">
+      <div className="flex  justify-center mx-auto">
+        <div
+          className="
+            max-w-full
+            w-[800px]
+            relative
+            desktop:px-4
+            mx-auto
+          "
+        >
+          {showSuggestions && assistantTagOptions.length > 0 && (
+            <div
+              ref={suggestionsRef}
+              className="text-sm absolute w-[calc(100%-2rem)] top-0 transform -translate-y-full"
+            >
+              <div className="rounded-lg py-1 sm-1.5 bg-background border border-border shadow-lg px-1.5 mt-2 z-10">
+                {assistantTagOptions.map((currentAssistant, index) => (
+                  <button
+                    key={index}
+                    className={`px-2 ${tabbingIconIndex == index && "bg-background-dark/75"
+                      } rounded items-center rounded-lg content-start flex gap-x-1 py-2 w-full hover:bg-background-dark/90 cursor-pointer`}
+                    onClick={() => {
+                      updatedTaggedAssistant(currentAssistant);
+                    }}
+                  >
+                    <AssistantIcon size={16} assistant={currentAssistant} />
+                    <p className="text-text-darker font-semibold">
+                      {currentAssistant.name}
+                    </p>
+                    <p className="text-text-dark font-light line-clamp-1">
+                      {currentAssistant.id == selectedAssistant.id &&
+                        "(default) "}
+                      {currentAssistant.description}
+                    </p>
+                  </button>
+                ))}
+
+                {isAdmin && (
+                  <a
+                    key={assistantTagOptions.length}
+                    target="_self"
+                    className={`${
+                      tabbingIconIndex == assistantTagOptions.length &&
+                      "bg-background-dark/75"
+                    } rounded rounded-lg px-3 flex gap-x-1 py-2 w-full items-center hover:bg-background-dark/90 cursor-pointer`}
+                    href="/assistants/new"
+                  >
+                    <FiPlus size={17} />
+                    <p>Create a new assistant</p>
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {showPrompts && user?.preferences?.shortcut_enabled && (
+            <div
+              ref={suggestionsRef}
+              className="text-sm absolute inset-x-0 top-0 w-full transform -translate-y-full"
+            >
+              <div className="rounded-lg py-1.5 bg-background border border-border shadow-lg mx-2 px-1.5 mt-2 rounded z-10 max-h-60 overflow-y-auto">
+                {isLoadingPrompts ? (
+                  <div className="flex items-center justify-center py-4">
+                    <FiLoader className="animate-spin mr-2" size={16} />
+                    <span className="text-text-dark">Loading prompts...</span>
+                  </div>
+                ) : (
+                  <>
+                    {filteredPrompts.map(
+                      (currentPrompt: InputPrompt, index: number) => (
+                        <button
+                          key={index}
+                          className={`px-2 ${tabbingIconIndex == index && "bg-background-dark/75"
+                            } rounded content-start flex gap-x-1 py-1.5 w-full hover:bg-background-dark/90 cursor-pointer`}
+                          onClick={() => {
+                            updateInputPrompt(currentPrompt);
+                          }}
+                        >
+                          <p className="font-bold">{currentPrompt.prompt}:</p>
+                          <p className="text-left flex-grow mr-auto line-clamp-1">
+                            {currentPrompt.content?.trim()}
+                          </p>
+                        </button>
+                      )
+                    )}
+
+                    <a
+                      key={filteredPrompts.length}
+                      target="_self"
+                      className={`${tabbingIconIndex == filteredPrompts.length &&
+                        "bg-background-dark/75"
+                        } px-3 flex gap-x-1 py-2 w-full rounded-lg items-center hover:bg-background-dark/90 cursor-pointer`}
+                      href="/chat/input-prompts"
+                    >
+                      <FiPlus size={17} />
+                      <p>Create a new prompt</p>
+                    </a>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          <UnconfiguredProviderText showConfigureAPIKey={showConfigureAPIKey} />
+          <div className="w-full h-[10px]"></div>
+          <div
+            className="
+              opacity-100
+              w-full
+              h-fit
+              flex
+              flex-col
+              border
+              shadow
+              border-[#DCDAD4]/60
+              rounded-lg
+              text-text-chatbar
+              [&:has(textarea:focus)]::ring-1
+              [&:has(textarea:focus)]::ring-black
+            "
+          >
+            {alternativeAssistant && (
+              <div className="flex bg-background flex-wrap gap-x-2 px-2 pt-1.5 w-full">
+                <div
+                  ref={interactionsRef}
+                  className="p-2 rounded-t-lg items-center flex w-full"
+                >
+                  <AssistantIcon assistant={alternativeAssistant} />
+                  <p className="ml-3 text-strong my-auto">
+                    {alternativeAssistant.name}
+                  </p>
+                  <div className="flex gap-x-1 ml-auto">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button>
+                            <Hoverable icon={FiInfo} />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="max-w-xs flex flex-wrap">
+                            {alternativeAssistant.description}
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+
+                    <Hoverable
+                      icon={FiX}
+                      onClick={() => setAlternativeAssistant(null)}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <textarea
+              onPaste={handlePaste}
+              onKeyDownCapture={handleKeyDown}
+              onChange={handleInputChange}
+              ref={textAreaRef}
+              className={`
+                m-0
+                w-full
+                shrink
+                resize-none
+                rounded-lg
+                border-0
+                bg-background
+                placeholder:text-text-muted
+                ${textAreaRef.current &&
+                  textAreaRef.current.scrollHeight > MAX_INPUT_HEIGHT
+                  ? "overflow-y-auto mt-2"
+                  : ""
+                }
+                whitespace-normal
+                break-word
+                overscroll-contain
+                outline-none
+                placeholder-subtle
+                resize-none
+                px-5
+                py-4
+              `}
+              autoFocus
+              style={{ scrollbarWidth: "thin" }}
+              role="textarea"
+              aria-multiline
+              placeholder={`Message ${truncateString(
+                selectedAssistant.name,
+                70
+              )} assistant...`}
+              value={message}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  !showPrompts &&
+                  !showSuggestions &&
+                  !event.shiftKey &&
+                  !(event.nativeEvent as any).isComposing
+                ) {
+                  event.preventDefault();
+                  if (message.trim()) {
+                    onSubmit();
+                  }
+                }
+              }}
+              suppressContentEditableWarning={true}
+            />
+
+            {(selectedDocuments.length > 0 ||
+              files.length > 0 ||
+              filterManager.timeRange ||
+              filterManager.selectedDocumentSets.length > 0 ||
+              filterManager.selectedTags.length > 0 ||
+              filterManager.selectedSources.length > 0 ||
+              (selectedToolIds && selectedToolIds.length > 0)) && (
+                <div className="flex bg-background gap-x-.5 px-2">
+                  <div className="flex gap-x-1 px-2 overflow-visible overflow-x-scroll items-end miniscroll">
+                    {filterManager.selectedTags &&
+                      filterManager.selectedTags.map((tag, index) => (
+                        <SourceChip
+                          key={index}
+                          icon={<TagIcon size={12} />}
+                          title={`#${tag.tag_key}_${tag.tag_value}`}
+                          onRemove={() => {
+                            filterManager.setSelectedTags(
+                              filterManager.selectedTags.filter(
+                                (t) => t.tag_key !== tag.tag_key
+                              )
+                            );
+                          }}
+                        />
+                      ))}
+
+                    {filterManager.timeRange && (
+                      <SourceChip
+                        truncateTitle={false}
+                        key="time-range"
+                        icon={<CalendarIcon size={12} />}
+                        title={`${getFormattedDateRangeString(
+                          filterManager.timeRange.from,
+                          filterManager.timeRange.to
+                        )}`}
+                        onRemove={() => {
+                          filterManager.setTimeRange(null);
+                        }}
+                      />
+                    )}
+
+                    {filterManager.selectedDocumentSets.length > 0 &&
+                      filterManager.selectedDocumentSets.map((docSetId, index) => {
+                        const docSet = availableDocumentSets.find(ds => ds.id.toString() === docSetId);
+                        return (
+                          <SourceChip
+                            key={`doc-set-${index}`}
+                            icon={<DocumentIcon2 size={16} />}
+                            title={docSet?.name || docSetId}
+                            onRemove={() => {
+                              filterManager.setSelectedDocumentSets(
+                                filterManager.selectedDocumentSets.filter(
+                                  (ds) => ds !== docSetId
+                                )
+                              );
+                            }}
+                          />
+                        );
+                      })
+                    }
+
+                    {filterManager.selectedSources.length > 0 &&
+                      filterManager.selectedSources.map((source, index) => (
+                        <SourceChip
+                          key={`source-${index}`}
+                          icon={
+                            <SourceIcon
+                              sourceType={source.internalName}
+                              iconSize={16}
+                            />
+                          }
+                          title={source.displayName}
+                          onRemove={() => {
+                            filterManager.setSelectedSources(
+                              filterManager.selectedSources.filter(
+                                (s) => s.internalName !== source.internalName
+                              )
+                            );
+                          }}
+                        />
+                      ))}
+
+                    {selectedDocuments.length > 0 && (
+                      <SourceChip
+                        key="selected-documents"
+                        onClick={() => {
+                          toggleDocumentSidebar();
+                        }}
+                        icon={<FileIcon size={16} />}
+                        title={`${selectedDocuments.length} selected`}
+                        onRemove={removeDocs}
+                      />
+                    )}
+
+                    {files.map((file, index) =>
+                      file.type === ChatFileType.IMAGE ? (
+                        <SourceChip
+                          key={`file-${index}`}
+                          icon={
+                            <img
+                              className="h-full py-.5 object-cover rounded-lg bg-background cursor-pointer"
+                              src={buildImgUrl(file.id)}
+                            />
+                          }
+                          title={file.name || "File"}
+                          onRemove={() => {
+                            setFiles(
+                              files.filter(
+                                (fileInFilter) => fileInFilter.id !== file.id
+                              )
+                            );
+                          }}
+                        />
+                      ) : (
+                        <SourceChip
+                          key={`file-${index}`}
+                          icon={<FileIcon className="text-red-500" size={16} />}
+                          title={file.name || "File"}
+                          onRemove={() => {
+                            setFiles(
+                              files.filter(
+                                (fileInFilter) => fileInFilter.id !== file.id
+                              )
+                            );
+                          }}
+                        />
+                      )
+                    )}
+                    {/* Upload indicator chip - positioned side by side with files */}
+                    {chatState === "uploading" && (
+                      <div className="flex items-center gap-x-1 px-2 bg-gray-100 border border-gray-300 rounded-md h-6">
+                        <FiLoader className="animate-spin text-gray-600" size={12} />
+                        <span className="text-xs text-black font-medium">
+                          Uploading...
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Selected tool chips */}
+                    {selectedToolIds && selectedToolIds.map((toolId) => {
+                      const tool = customTools && customTools.find(t => t.id === toolId);
+                      if (!tool) return null;
+                      return (
+                        <SourceChip
+                          key={`tool-${toolId}`}
+                          icon={<FiSettings size={12} />}
+                          title={tool.display_name}
+                          onRemove={() => {
+                            handleToolToggle(toolId);
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+            <div className="flex justify-between items-center overflow-hidden px-4 mb-2">
+              <div className="flex gap-x-1">
+                <ChatInputOption
+                  flexPriority="stiff"
+                  name="File"
+                  Icon={FiPlusCircle}
+                  onClick={() => {
+                    const input = document.createElement("input");
+                    input.type = "file";
+                    input.multiple = true;
+                    input.onchange = (event: any) => {
+                      const files = Array.from(
+                        event?.target?.files || []
+                      ) as File[];
+                      if (files.length > 0) {
+                        handleFileUpload(files);
+                      }
+                    };
+                    input.click();
+                  }}
+                  tooltipContent={"Upload files"}
+                />
+
+                <LLMPopover
+                  llmProviders={llmProviders}
+                  llmOverrideManager={llmOverrideManager}
+                  requiresImageGeneration={false}
+                  currentAssistant={selectedAssistant}
+                />
+
+                {retrievalEnabled && (
+                  <FilterPopup
+                    availableSources={availableSources}
+                    availableDocumentSets={availableDocumentSets}
+                    availableTags={availableTags}
+                    filterManager={filterManager}
+                    currentAssistant={currentAssistant}
+                    assistantTools={assistantTools}
+                    selectedToolIds={selectedToolIds}
+                    onCustomToolSelectionChange={onCustomToolSelectionChange}
+                    trigger={
+                      <ChatInputOption
+                        flexPriority="stiff"
+                        name="Filters"
+                        Icon={FiFilter}
+                        toggle
+                        tooltipContent="Filter your search"
+                      />
+                    }
+                  />
+                )}
+
+                <ChatInputOption
+                  minimize={true}
+                  flexPriority="stiff"
+                  name="Data Sources"
+                  Icon={BookIcon}
+                  onClick={onOpenKnowledgeBase}
+                  tooltipContent="List Of Data Sources Connected To The Assistant"
+                />
+
+              </div>
+              <div className="flex my-auto flex-shrink-0">
+                <button
+                  className={`cursor-pointer ${chatState == "streaming" ||
+                      chatState == "toolBuilding" ||
+                      chatState == "loading"
+                      ? chatState != "streaming"
+                        ? "bg-background-400"
+                        : "bg-background-800"
+                      : ""
+                    } h-[28px] w-[28px] rounded-full`}
+                  onClick={() => {
+                    if (
+                      chatState == "streaming" ||
+                      chatState == "toolBuilding" ||
+                      chatState == "loading"
+                    ) {
+                      stopGenerating();
+                    } else if (message.trim()) {
+                      onSubmit();
+                    } 
+                  }}
+                  disabled={
+                    (chatState == "streaming" ||
+                      chatState == "toolBuilding" ||
+                      chatState == "loading") &&
+                    chatState != "streaming"
+                  }
+                >
+                  {chatState == "streaming" ||
+                    chatState == "toolBuilding" ||
+                    chatState == "loading" ? (
+                    <StopGeneratingIcon
+                      size={10}
+                      className="text-emphasis m-auto text-white flex-none"
+                    />
+                  ) : (
+                    <SendIcon
+                      size={26}
+                                              className={`text-emphasis text-white p-1 my-auto rounded-full ${
+                          chatState == "input" && message.trim()
+                            ? "bg-submit-background"
+                            : "bg-disabled-submit-background"
+                          }`}
+                    />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 import React, {
   useCallback,
   useContext,

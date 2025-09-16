@@ -1,3 +1,14 @@
+import WrappedChat from "./WrappedChat";
+
+export default async function Page(props: {
+  searchParams: Promise<{ [key: string]: string }>;
+}) {
+  const searchParams = await props.searchParams;
+  const firstMessage = searchParams.firstMessage;
+
+  return <WrappedChat firstMessage={firstMessage} />;
+}
+
 import { DocumentsProvider } from "./my-documents/DocumentsContext";
 import { SEARCH_PARAMS } from "@/lib/extension/constants";
 import ChatLayout from "./WrappedChat";

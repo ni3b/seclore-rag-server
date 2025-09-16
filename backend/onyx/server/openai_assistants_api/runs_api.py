@@ -18,7 +18,7 @@ from onyx.db.chat import get_chat_message
 from onyx.db.chat import get_chat_messages_by_session
 from onyx.db.chat import get_chat_session_by_id
 from onyx.db.chat import get_or_create_root_message
-from onyx.db.engine.sql_engine import get_session
+from onyx.db.engine import get_session
 from onyx.db.models import ChatMessage
 from onyx.db.models import User
 from onyx.server.query_and_chat.models import ChatMessageDetail
@@ -329,7 +329,6 @@ def list_runs(
 
 @router.get("/threads/{thread_id}/runs/{run_id}/steps")
 def list_run_steps(
-    thread_id: UUID,
     run_id: str,
     limit: int = 20,
     order: Literal["asc", "desc"] = "desc",

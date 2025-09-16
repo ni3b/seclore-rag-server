@@ -22,13 +22,13 @@ import { cookies, headers } from "next/headers";
 import {
   SIDEBAR_TOGGLED_COOKIE_NAME,
   DOCUMENT_SIDEBAR_WIDTH_COOKIE_NAME,
-  PRO_SEARCH_TOGGLED_COOKIE_NAME,
 } from "@/components/resizable/constants";
 import { hasCompletedWelcomeFlowSS } from "@/components/initialSetup/welcome/WelcomeModalWrapper";
 import {
   NEXT_PUBLIC_DEFAULT_SIDEBAR_OPEN,
   NEXT_PUBLIC_ENABLE_CHROME_EXTENSION,
 } from "../constants";
+import { redirect } from "next/navigation";
 
 interface FetchChatDataResult {
   user: User | null;
@@ -41,11 +41,10 @@ interface FetchChatDataResult {
   folders: Folder[];
   openedFolders: Record<string, boolean>;
   defaultAssistantId?: number;
-  sidebarInitiallyVisible: boolean;
+  toggleSidebar: boolean;
   finalDocumentSidebarInitialWidth?: number;
   shouldShowWelcomeModal: boolean;
   inputPrompts: InputPrompt[];
-  proSearchToggled: boolean;
 }
 
 export async function fetchChatData(searchParams: {
@@ -112,24 +111,7 @@ export async function fetchChatData(searchParams: {
       ? `${fullUrl}?${searchParamsString}`
       : fullUrl;
 
-    // Check the referrer to prevent redirect loops
-    const referrer = headersList.get("referer") || "";
-    const isComingFromLogin = referrer.includes("/auth/login");
-
-    // Also check for the from=login query parameter
-    const isRedirectedFromLogin = searchParams["from"] === "login";
-
-    console.log(
-      `Auth check: authDisabled=${authDisabled}, user=${!!user}, referrer=${referrer}, fromLogin=${isRedirectedFromLogin}`
-    );
-
-    // Only redirect if we're not already coming from the login page
-    if (
-      !NEXT_PUBLIC_ENABLE_CHROME_EXTENSION &&
-      !isComingFromLogin &&
-      !isRedirectedFromLogin
-    ) {
-      console.log("Redirecting to login from chat page");
+    if (!NEXT_PUBLIC_ENABLE_CHROME_EXTENSION) {
       return {
         redirect: `/auth/login?next=${encodeURIComponent(redirectUrl)}`,
       };
@@ -193,12 +175,8 @@ export async function fetchChatData(searchParams: {
   );
   const sidebarToggled = requestCookies.get(SIDEBAR_TOGGLED_COOKIE_NAME);
 
-  const proSearchToggled =
-    requestCookies.get(PRO_SEARCH_TOGGLED_COOKIE_NAME)?.value.toLowerCase() ===
-    "true";
-
   // IF user is an anoymous user, we don't want to show the sidebar (they have no access to chat history)
-  const sidebarInitiallyVisible =
+  const toggleSidebar =
     !user?.is_anonymous_user &&
     (sidebarToggled
       ? sidebarToggled.value.toLocaleLowerCase() == "true" || false
@@ -246,9 +224,8 @@ export async function fetchChatData(searchParams: {
     openedFolders,
     defaultAssistantId,
     finalDocumentSidebarInitialWidth,
-    sidebarInitiallyVisible,
+    toggleSidebar,
     shouldShowWelcomeModal,
     inputPrompts,
-    proSearchToggled,
   };
 }

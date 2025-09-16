@@ -8,16 +8,14 @@ launch:
 Run this script to seed the database with dummy documents.
 Then run test_query_times.py to test query times.
 """
-
 import random
 from datetime import datetime
 
 from onyx.access.models import DocumentAccess
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.models import Document
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.engine import get_session_context_manager
 from onyx.db.search_settings import get_current_search_settings
-from onyx.document_index.document_index_utils import get_multipass_config
 from onyx.document_index.vespa.index import VespaIndex
 from onyx.indexing.indexing_pipeline import IndexBatchParams
 from onyx.indexing.models import ChunkEmbedding
@@ -64,10 +62,7 @@ def generate_dummy_chunk(
         title_prefix=f"Title prefix for doc {doc_id}",
         metadata_suffix_semantic="",
         metadata_suffix_keyword="",
-        doc_summary="",
-        chunk_context="",
         mini_chunk_texts=None,
-        contextual_rag_reserved_tokens=0,
         embeddings=ChunkEmbedding(
             full_embedding=generate_random_embedding(embedding_dim),
             mini_chunk_embeddings=[],
@@ -75,28 +70,25 @@ def generate_dummy_chunk(
         title_embedding=generate_random_embedding(embedding_dim),
         large_chunk_id=None,
         large_chunk_reference_ids=[],
-        image_file_id=None,
     )
 
     document_set_names = []
     for i in range(number_of_document_sets):
         document_set_names.append(f"Document Set {i}")
 
-    user_emails: list[str | None] = []
-    user_groups: list[str] = []
-    external_user_emails: list[str] = []
-    external_user_group_ids: list[str] = []
+    user_emails: set[str | None] = set()
+    user_groups: set[str] = set()
+    external_user_emails: set[str] = set()
+    external_user_group_ids: set[str] = set()
     for i in range(number_of_acl_entries):
-        user_emails.append(f"user_{i}@example.com")
-        user_groups.append(f"group_{i}")
-        external_user_emails.append(f"external_user_{i}@example.com")
-        external_user_group_ids.append(f"external_group_{i}")
+        user_emails.add(f"user_{i}@example.com")
+        user_groups.add(f"group_{i}")
+        external_user_emails.add(f"external_user_{i}@example.com")
+        external_user_group_ids.add(f"external_group_{i}")
 
     return DocMetadataAwareIndexChunk.from_index_chunk(
         index_chunk=chunk,
-        user_file=None,
-        user_folder=None,
-        access=DocumentAccess.build(
+        access=DocumentAccess(
             user_emails=user_emails,
             user_groups=user_groups,
             external_user_emails=external_user_emails,
@@ -105,7 +97,6 @@ def generate_dummy_chunk(
         ),
         document_sets={document_set for document_set in document_set_names},
         boost=random.randint(-1, 1),
-        aggregated_chunk_boost_factor=random.random(),
         tenant_id=POSTGRES_DEFAULT_SCHEMA,
     )
 
@@ -140,18 +131,12 @@ def seed_dummy_docs(
     chunks_per_doc: int = 5,
     batch_size: int = 100,
 ) -> None:
-    with get_session_with_current_tenant() as db_session:
+    with get_session_context_manager() as db_session:
         search_settings = get_current_search_settings(db_session)
-        multipass_config = get_multipass_config(search_settings)
         index_name = search_settings.index_name
-        embedding_dim = search_settings.final_embedding_dim
+        embedding_dim = search_settings.model_dim
 
-    vespa_index = VespaIndex(
-        index_name=index_name,
-        secondary_index_name=None,
-        large_chunks_enabled=multipass_config.enable_large_chunks,
-        secondary_large_chunks_enabled=None,
-    )
+    vespa_index = VespaIndex(index_name=index_name, secondary_index_name=None)
     print(index_name)
 
     all_chunks = []

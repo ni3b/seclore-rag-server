@@ -1,7 +1,7 @@
 import os
 
 #####
-# Onyx Slack Bot Configs
+# Seclore Slack Bot Configs
 #####
 DANSWER_BOT_NUM_RETRIES = int(os.environ.get("DANSWER_BOT_NUM_RETRIES", "5"))
 # How much of the available input context can be used for thread context
@@ -10,11 +10,11 @@ MAX_THREAD_CONTEXT_PERCENTAGE = 512 * 2 / 3072
 DANSWER_BOT_NUM_DOCS_TO_DISPLAY = int(
     os.environ.get("DANSWER_BOT_NUM_DOCS_TO_DISPLAY", "5")
 )
-# If the LLM fails to answer, Onyx can still show the "Reference Documents"
+# If the LLM fails to answer, Seclore can still show the "Reference Documents"
 DANSWER_BOT_DISABLE_DOCS_ONLY_ANSWER = os.environ.get(
     "DANSWER_BOT_DISABLE_DOCS_ONLY_ANSWER", ""
 ).lower() not in ["false", ""]
-# When Onyx is considering a message, what emoji does it react with
+# When Seclore is considering a message, what emoji does it react with
 DANSWER_REACT_EMOJI = os.environ.get("DANSWER_REACT_EMOJI") or "eyes"
 # When User needs more help, what should the emoji be
 DANSWER_FOLLOWUP_EMOJI = os.environ.get("DANSWER_FOLLOWUP_EMOJI") or "sos"

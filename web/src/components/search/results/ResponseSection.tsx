@@ -1,4 +1,10 @@
-import { AlertIcon, TriangleAlertIcon } from "@/components/icons/icons";
+import {
+  AlertIcon,
+  CheckmarkIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  TriangleAlertIcon,
+} from "@/components/icons/icons";
 import { useState } from "react";
 
 export type StatusOptions = "in-progress" | "failed" | "warning" | "success";
@@ -48,7 +54,7 @@ export const ResponseSection = ({
         p-1 
         rounded  
         select-none 
-        ${isNotControllable ? "" : "hover:bg-background-800 cursor-pointer"}`}
+        ${isNotControllable ? "" : "hover:bg-gray-800 cursor-pointer"}`}
         onClick={() => {
           if (!isNotControllable) {
             if (isOpen === null) {
@@ -63,7 +69,7 @@ export const ResponseSection = ({
         }}
       >
         <div className="my-auto">{icon}</div>
-        <div className="my-auto text-sm text-text-200">{header}</div>
+        <div className="my-auto text-sm text-gray-200">{header}</div>
       </div>
       {finalIsOpen && <div className="pb-1 mx-2 text-sm mb-1">{body}</div>}
     </div>

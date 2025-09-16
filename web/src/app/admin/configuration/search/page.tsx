@@ -97,7 +97,7 @@ function Main() {
           <Title className="mb-6 mt-8 !text-2xl">Embedding Model</Title>
 
           {currentEmeddingModel ? (
-            <ModelPreview model={currentEmeddingModel} display showDetails />
+            <ModelPreview model={currentEmeddingModel} display />
           ) : (
             <Title className="mt-8 mb-4">Choose your Embedding Model</Title>
           )}
@@ -111,14 +111,14 @@ function Main() {
                   <div className="space-y-4">
                     <div>
                       <Text className="font-semibold">Reranking Model</Text>
-                      <Text className="text-text-700">
+                      <Text className="text-gray-700">
                         {searchSettings.rerank_model_name || "Not set"}
                       </Text>
                     </div>
 
                     <div>
                       <Text className="font-semibold">Results to Rerank</Text>
-                      <Text className="text-text-700">
+                      <Text className="text-gray-700">
                         {searchSettings.num_rerank}
                       </Text>
                     </div>
@@ -127,7 +127,7 @@ function Main() {
                       <Text className="font-semibold">
                         Multilingual Expansion
                       </Text>
-                      <Text className="text-text-700">
+                      <Text className="text-gray-700">
                         {searchSettings.multilingual_expansion.length > 0
                           ? searchSettings.multilingual_expansion.join(", ")
                           : "None"}
@@ -136,17 +136,8 @@ function Main() {
 
                     <div>
                       <Text className="font-semibold">Multipass Indexing</Text>
-                      <Text className="text-text-700">
+                      <Text className="text-gray-700">
                         {searchSettings.multipass_indexing
-                          ? "Enabled"
-                          : "Disabled"}
-                      </Text>
-                    </div>
-
-                    <div>
-                      <Text className="font-semibold">Contextual RAG</Text>
-                      <Text className="text-text-700">
-                        {searchSettings.enable_contextual_rag
                           ? "Enabled"
                           : "Disabled"}
                       </Text>
@@ -156,7 +147,7 @@ function Main() {
                       <Text className="font-semibold">
                         Disable Reranking for Streaming
                       </Text>
-                      <Text className="text-text-700">
+                      <Text className="text-gray-700">
                         {searchSettings.disable_rerank_for_streaming
                           ? "Yes"
                           : "No"}

@@ -3,9 +3,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from typing import Literal
 from typing import TYPE_CHECKING
-from typing import Union
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -20,6 +18,7 @@ from onyx.context.search.models import RetrievalDocs
 from onyx.context.search.models import SavedSearchDoc
 from onyx.db.models import SearchDoc as DbSearchDoc
 from onyx.file_store.models import FileDescriptor
+from onyx.context.search.models import RetrievalDocs, TimeRange
 from onyx.llm.override_models import PromptOverride
 from onyx.server.query_and_chat.streaming_models import CitationInfo
 from onyx.server.query_and_chat.streaming_models import Packet
@@ -49,19 +48,23 @@ class LlmDoc(BaseModel):
 
 
 # First chunk of info for streaming QA
-class QADocsResponse(RetrievalDocs, SubQuestionIdentifier):
+class QADocsResponse(RetrievalDocs):
     rephrased_query: str | None = None
     predicted_flow: QueryFlow | None
     predicted_search: SearchType | None
     applied_source_filters: list[DocumentSource] | None
-    applied_time_cutoff: datetime | None
+    applied_time_range: TimeRange | None = None
     recency_bias_multiplier: float
 
     def model_dump(self, *args: list, **kwargs: dict[str, Any]) -> dict[str, Any]:  # type: ignore
         initial_dict = super().model_dump(mode="json", *args, **kwargs)  # type: ignore
-        initial_dict["applied_time_cutoff"] = (
-            self.applied_time_cutoff.isoformat() if self.applied_time_cutoff else None
-        )
+        if self.applied_time_range:
+            initial_dict["applied_time_range"] = {
+                "start_date": self.applied_time_range.start_date.isoformat() if self.applied_time_range.start_date else None,
+                "end_date": self.applied_time_range.end_date.isoformat() if self.applied_time_range.end_date else None
+            }
+        else:
+            initial_dict["applied_time_range"] = None
 
         return initial_dict
 
@@ -69,28 +72,15 @@ class QADocsResponse(RetrievalDocs, SubQuestionIdentifier):
 class StreamStopReason(Enum):
     CONTEXT_LENGTH = "context_length"
     CANCELLED = "cancelled"
-    FINISHED = "finished"
 
 
-class StreamType(Enum):
-    SUB_QUESTIONS = "sub_questions"
-    SUB_ANSWER = "sub_answer"
-    MAIN_ANSWER = "main_answer"
-
-
-class StreamStopInfo(SubQuestionIdentifier):
+class StreamStopInfo(BaseModel):
     stop_reason: StreamStopReason
-
-    stream_type: StreamType = StreamType.MAIN_ANSWER
 
     def model_dump(self, *args: list, **kwargs: dict[str, Any]) -> dict[str, Any]:  # type: ignore
         data = super().model_dump(mode="json", *args, **kwargs)  # type: ignore
         data["stop_reason"] = self.stop_reason.name
         return data
-
-
-class UserKnowledgeFilePacket(BaseModel):
-    user_files: list[FileDescriptor]
 
 
 class LLMRelevanceFilterResponse(BaseModel):
@@ -140,6 +130,17 @@ class MessageResponseIDInfo(BaseModel):
 class StreamingError(BaseModel):
     error: str
     stack_trace: str | None = None
+
+
+class OnyxContext(BaseModel):
+    content: str
+    document_id: str
+    semantic_identifier: str
+    blurb: str
+
+
+class OnyxContexts(BaseModel):
+    contexts: list[OnyxContext]
 
 
 class OnyxAnswer(BaseModel):
@@ -197,6 +198,7 @@ class PersonaOverrideConfig(BaseModel):
 AnswerQuestionPossibleReturn = (
     OnyxAnswerPiece
     | CitationInfo
+    | OnyxContexts
     | FileChatDisplay
     | CustomToolResponse
     | StreamingError
@@ -263,9 +265,14 @@ class AnswerStyleConfig(BaseModel):
 
 class PromptConfig(BaseModel):
     """Final representation of the Prompt configuration passed
-    into the `PromptBuilder` object."""
+    into the `Answer` object."""
 
     system_prompt: str
+    search_tool_description: str
+    history_query_rephrase: str
+    custom_tool_argument_system_prompt: str
+    search_query_prompt: str
+    search_data_source_selector_prompt: str
     task_prompt: str
     datetime_aware: bool
     include_citations: bool
@@ -277,10 +284,30 @@ class PromptConfig(BaseModel):
         override_system_prompt = (
             prompt_override.system_prompt if prompt_override else None
         )
+        override_search_tool_description = (
+            prompt_override.search_tool_description if prompt_override else None
+        )
+        override_history_query_rephrase = (
+            prompt_override.history_query_rephrase if prompt_override else None
+        )
+        override_custom_tool_argument_system_prompt = (
+            prompt_override.custom_tool_argument_system_prompt if prompt_override else None
+        )
+        override_search_query_prompt = (
+            prompt_override.search_query_prompt if prompt_override else None
+        )
+        override_search_data_source_selector_prompt = (
+            prompt_override.search_data_source_selector_prompt if prompt_override else None
+        )
         override_task_prompt = prompt_override.task_prompt if prompt_override else None
 
         return cls(
             system_prompt=override_system_prompt or model.system_prompt,
+            search_tool_description=override_search_tool_description or model.search_tool_description,
+            history_query_rephrase=override_history_query_rephrase or model.history_query_rephrase,
+            custom_tool_argument_system_prompt=override_custom_tool_argument_system_prompt or model.custom_tool_argument_system_prompt,
+            search_query_prompt=override_search_query_prompt or model.search_query_prompt,
+            search_data_source_selector_prompt=override_search_data_source_selector_prompt or model.search_data_source_selector_prompt,
             task_prompt=override_task_prompt or model.task_prompt,
             datetime_aware=model.datetime_aware,
             include_citations=model.include_citations,
@@ -329,40 +356,4 @@ ResponsePart = (
     | ToolResponse
     | ToolCallFinalResult
     | StreamStopInfo
-    | AgentSearchPacket
 )
-
-AnswerStreamPart = (
-    Packet
-    | StreamStopInfo
-    | MessageResponseIDInfo
-    | StreamingError
-    | UserKnowledgeFilePacket
-)
-
-AnswerStream = Iterator[AnswerStreamPart]
-
-
-class AnswerPostInfo(BaseModel):
-    ai_message_files: list[FileDescriptor]
-    rephrased_query: str | None = None
-    reference_db_search_docs: list[DbSearchDoc] | None = None
-    dropped_indices: list[int] | None = None
-    tool_result: ToolCallFinalResult | None = None
-    message_specific_citations: MessageSpecificCitations | None = None
-
-    class Config:
-        arbitrary_types_allowed = True
-
-
-class ChatBasicResponse(BaseModel):
-    # This is built piece by piece, any of these can be None as the flow could break
-    answer: str
-    answer_citationless: str
-
-    top_documents: list[SavedSearchDoc]
-
-    error_msg: str | None
-    message_id: int
-    # this is a map of the citation number to the document id
-    cited_documents: dict[int, str]

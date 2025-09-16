@@ -6,7 +6,6 @@ import tempfile
 from collections.abc import Generator
 from collections.abc import Iterator
 from typing import Any
-from typing import cast
 from typing import ClassVar
 
 import pywikibot.time  # type: ignore[import-untyped]
@@ -21,8 +20,7 @@ from onyx.connectors.interfaces import PollConnector
 from onyx.connectors.interfaces import SecondsSinceUnixEpoch
 from onyx.connectors.mediawiki.family import family_class_dispatch
 from onyx.connectors.models import Document
-from onyx.connectors.models import ImageSection
-from onyx.connectors.models import TextSection
+from onyx.connectors.models import Section
 from onyx.utils.logger import setup_logger
 
 
@@ -48,7 +46,7 @@ def pywikibot_timestamp_to_utc_datetime(
 def get_doc_from_page(
     page: pywikibot.Page, site: pywikibot.Site | None, source_type: DocumentSource
 ) -> Document:
-    """Generate Onyx Document from a MediaWiki page object.
+    """Generate Seclore Document from a MediaWiki page object.
 
     Args:
         page: Page from a MediaWiki site.
@@ -62,14 +60,14 @@ def get_doc_from_page(
     sections_extracted: textlib.Content = textlib.extract_sections(page_text, site)
 
     sections = [
-        TextSection(
+        Section(
             link=f"{page.full_url()}#" + section.heading.replace(" ", "_"),
             text=section.title + section.content,
         )
         for section in sections_extracted.sections
     ]
     sections.append(
-        TextSection(
+        Section(
             link=page.full_url(),
             text=sections_extracted.header,
         )
@@ -81,7 +79,7 @@ def get_doc_from_page(
         doc_updated_at=pywikibot_timestamp_to_utc_datetime(
             page.latest_revision.timestamp
         ),
-        sections=cast(list[TextSection | ImageSection], sections),
+        sections=sections,
         semantic_identifier=page.title(),
         metadata={"categories": [category.title() for category in page.categories()]},
         id=f"MEDIAWIKI_{page.pageid}_{page.full_url()}",
@@ -129,14 +127,7 @@ class MediaWikiConnector(LoadConnector, PollConnector):
         self.family = family_class_dispatch(hostname, "WikipediaConnector")()
         self.site = pywikibot.Site(fam=self.family, code=language_code)
         self.categories = [
-            pywikibot.Category(
-                self.site,
-                (
-                    f"{category.replace(' ', '_')}"
-                    if category.startswith("Category:")
-                    else f"Category:{category.replace(' ', '_')}"
-                ),
-            )
+            pywikibot.Category(self.site, f"Category:{category.replace(' ', '_')}")
             for category in categories
         ]
 
@@ -179,9 +170,9 @@ class MediaWikiConnector(LoadConnector, PollConnector):
                     pagegenerators.CategorizedPageGenerator(
                         category, recurse=self.recurse_depth
                     ),
-                    last_edit_start=(
-                        datetime.datetime.fromtimestamp(start) if start else None
-                    ),
+                    last_edit_start=datetime.datetime.fromtimestamp(start)
+                    if start
+                    else None,
                     last_edit_end=datetime.datetime.fromtimestamp(end) if end else None,
                 ),
                 groupsize=self.batch_size,

@@ -53,9 +53,9 @@ def create_tool__no_commit(
         description=description,
         in_code_tool_id=None,
         openapi_schema=openapi_schema,
-        custom_headers=(
-            [header.model_dump() for header in custom_headers] if custom_headers else []
-        ),
+        custom_headers=[header.model_dump() for header in custom_headers]
+        if custom_headers
+        else [],
         user_id=user_id,
         passthrough_auth=passthrough_auth,
     )

@@ -13,11 +13,7 @@ export function DeleteButton({
         my-auto 
         flex 
         mb-1 
-        ${
-          disabled
-            ? "cursor-default"
-            : "hover:bg-accent-background-hovered cursor-pointer"
-        } 
+        ${disabled ? "cursor-default" : "hover:bg-hover cursor-pointer"} 
         w-fit 
         p-2 
         rounded-lg

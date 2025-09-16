@@ -3,6 +3,7 @@ from onyx.chat.models import AllCitations
 from onyx.chat.models import AnswerStream
 from onyx.chat.models import LLMRelevanceFilterResponse
 from onyx.chat.models import OnyxAnswerPiece
+from onyx.chat.models import OnyxContexts
 from onyx.chat.models import QADocsResponse
 from onyx.chat.models import StreamingError
 from onyx.server.query_and_chat.models import ChatMessageDetail
@@ -31,6 +32,8 @@ def gather_stream_for_answer_api(
             response.llm_selected_doc_indices = packet.llm_selected_doc_indices
         elif isinstance(packet, AllCitations):
             response.citations = packet.citations
+        elif isinstance(packet, OnyxContexts):
+            response.contexts = packet
 
     if answer:
         response.answer = answer

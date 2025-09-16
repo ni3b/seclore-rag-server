@@ -1,8 +1,4 @@
-from collections.abc import Generator
-from typing import Optional
-from typing import TYPE_CHECKING
-
-from pydantic import BaseModel
+from collections.abc import Callable
 
 from ee.onyx.configs.app_configs import CONFLUENCE_PERMISSION_DOC_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import CONFLUENCE_PERMISSION_GROUP_SYNC_FREQUENCY
@@ -15,6 +11,7 @@ from ee.onyx.configs.app_configs import SHAREPOINT_PERMISSION_DOC_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import SHAREPOINT_PERMISSION_GROUP_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import SLACK_PERMISSION_DOC_SYNC_FREQUENCY
 from ee.onyx.configs.app_configs import TEAMS_PERMISSION_DOC_SYNC_FREQUENCY
+from ee.onyx.db.external_perm import ExternalUserGroup
 from ee.onyx.external_permissions.confluence.doc_sync import confluence_doc_sync
 from ee.onyx.external_permissions.confluence.group_sync import confluence_group_sync
 from ee.onyx.external_permissions.github.doc_sync import github_doc_sync
@@ -30,11 +27,13 @@ from ee.onyx.external_permissions.perm_sync_types import FetchAllDocumentsIdsFun
 from ee.onyx.external_permissions.perm_sync_types import GroupSyncFuncType
 from ee.onyx.external_permissions.salesforce.postprocessing import (
     censor_salesforce_chunks,
+from ee.onyx.external_permissions.post_query_censoring import (
+    DOC_SOURCE_TO_CHUNK_CENSORING_FUNCTION,
 )
 from ee.onyx.external_permissions.sharepoint.doc_sync import sharepoint_doc_sync
 from ee.onyx.external_permissions.sharepoint.group_sync import sharepoint_group_sync
 from ee.onyx.external_permissions.slack.doc_sync import slack_doc_sync
-from ee.onyx.external_permissions.teams.doc_sync import teams_doc_sync
+from onyx.access.models import DocExternalAccess
 from onyx.configs.constants import DocumentSource
 
 if TYPE_CHECKING:
@@ -174,68 +173,16 @@ _SOURCE_TO_SYNC_CONFIG: dict[DocumentSource, SyncConfig] = {
     ),
 }
 
-
-def source_requires_doc_sync(source: DocumentSource) -> bool:
-    """Checks if the given DocumentSource requires doc syncing."""
-    if source not in _SOURCE_TO_SYNC_CONFIG:
-        return False
-    return _SOURCE_TO_SYNC_CONFIG[source].doc_sync_config is not None
-
-
-def source_requires_external_group_sync(source: DocumentSource) -> bool:
-    """Checks if the given DocumentSource requires external group syncing."""
-    if source not in _SOURCE_TO_SYNC_CONFIG:
-        return False
-    return _SOURCE_TO_SYNC_CONFIG[source].group_sync_config is not None
-
-
-def get_source_perm_sync_config(source: DocumentSource) -> SyncConfig | None:
-    """Returns the frequency of the external group sync for the given DocumentSource."""
-    return _SOURCE_TO_SYNC_CONFIG.get(source)
-
-
-def source_group_sync_is_cc_pair_agnostic(source: DocumentSource) -> bool:
-    """Checks if the given DocumentSource requires external group syncing."""
-    if source not in _SOURCE_TO_SYNC_CONFIG:
-        return False
-
-    group_sync_config = _SOURCE_TO_SYNC_CONFIG[source].group_sync_config
-    if group_sync_config is None:
-        return False
-
-    return group_sync_config.group_sync_is_cc_pair_agnostic
-
-
-def get_all_cc_pair_agnostic_group_sync_sources() -> set[DocumentSource]:
-    """Returns the set of sources that have external group syncing that is cc_pair agnostic."""
-    return {
-        source
-        for source, sync_config in _SOURCE_TO_SYNC_CONFIG.items()
-        if sync_config.group_sync_config is not None
-        and sync_config.group_sync_config.group_sync_is_cc_pair_agnostic
-    }
+# If nothing is specified here, we run the doc_sync every time the celery beat runs
+EXTERNAL_GROUP_SYNC_PERIODS: dict[DocumentSource, int] = {
+    # Polling is not supported so we fetch all group permissions every 30 minutes
+    DocumentSource.GOOGLE_DRIVE: 5 * 60,
+    DocumentSource.CONFLUENCE: CONFLUENCE_PERMISSION_GROUP_SYNC_FREQUENCY,
+}
 
 
 def check_if_valid_sync_source(source_type: DocumentSource) -> bool:
-    return source_type in _SOURCE_TO_SYNC_CONFIG
-
-
-def get_all_censoring_enabled_sources() -> set[DocumentSource]:
-    """Returns the set of sources that have censoring enabled."""
-    return {
-        source
-        for source, sync_config in _SOURCE_TO_SYNC_CONFIG.items()
-        if sync_config.censoring_config is not None
-    }
-
-
-def source_should_fetch_permissions_during_indexing(source: DocumentSource) -> bool:
-    """Returns True if the given DocumentSource requires permissions to be fetched during indexing."""
-    if source not in _SOURCE_TO_SYNC_CONFIG:
-        return False
-
-    doc_sync_config = _SOURCE_TO_SYNC_CONFIG[source].doc_sync_config
-    if doc_sync_config is None:
-        return False
-
-    return doc_sync_config.initial_index_should_sync
+    return (
+        source_type in DOC_PERMISSIONS_FUNC_MAP
+        or source_type in DOC_SOURCE_TO_CHUNK_CENSORING_FUNCTION
+    )

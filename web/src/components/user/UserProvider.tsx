@@ -4,10 +4,6 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { User, UserRole } from "@/lib/types";
 import { getCurrentUser } from "@/lib/user";
 import { usePostHog } from "posthog-js/react";
-import { CombinedSettings } from "@/app/admin/settings/interfaces";
-import { SettingsContext } from "../settings/SettingsProvider";
-import { useTokenRefresh } from "@/hooks/useTokenRefresh";
-import { AuthTypeMetadata } from "@/lib/userSS";
 
 interface UserContextType {
   user: User | null;
@@ -15,63 +11,28 @@ interface UserContextType {
   isCurator: boolean;
   refreshUser: () => Promise<void>;
   isCloudSuperuser: boolean;
-  updateUserAutoScroll: (autoScroll: boolean) => Promise<void>;
+  updateUserAutoScroll: (autoScroll: boolean | null) => Promise<void>;
   updateUserShortcuts: (enabled: boolean) => Promise<void>;
+  setUserDefaultAssistant: (assistantId: number | null) => Promise<void>;
   toggleAssistantPinnedStatus: (
     currentPinnedAssistantIDs: number[],
     assistantId: number,
     isPinned: boolean
   ) => Promise<boolean>;
-  updateUserTemperatureOverrideEnabled: (enabled: boolean) => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({
-  authTypeMetadata,
   children,
   user,
-  settings,
 }: {
-  authTypeMetadata: AuthTypeMetadata;
   children: React.ReactNode;
   user: User | null;
-  settings: CombinedSettings;
 }) {
-  const updatedSettings = useContext(SettingsContext);
+  const [upToDateUser, setUpToDateUser] = useState<User | null>(user);
+
   const posthog = usePostHog();
-
-  // For auto_scroll and temperature_override_enabled:
-  // - If user has a preference set, use that
-  // - Otherwise, use the workspace setting if available
-  function mergeUserPreferences(
-    currentUser: User | null,
-    currentSettings: CombinedSettings | null
-  ): User | null {
-    if (!currentUser) return null;
-    return {
-      ...currentUser,
-      preferences: {
-        ...currentUser.preferences,
-        auto_scroll:
-          currentUser.preferences?.auto_scroll ??
-          currentSettings?.settings?.auto_scroll ??
-          false,
-        temperature_override_enabled:
-          currentUser.preferences?.temperature_override_enabled ??
-          currentSettings?.settings?.temperature_override_enabled ??
-          false,
-      },
-    };
-  }
-
-  const [upToDateUser, setUpToDateUser] = useState<User | null>(
-    mergeUserPreferences(user, settings)
-  );
-
-  useEffect(() => {
-    setUpToDateUser(mergeUserPreferences(user, updatedSettings));
-  }, [user, updatedSettings]);
 
   useEffect(() => {
     if (!posthog) return;
@@ -80,8 +41,8 @@ export function UserProvider({
       const identifyData: Record<string, any> = {
         email: user.email,
       };
-      if (user.team_name) {
-        identifyData.team_name = user.team_name;
+      if (user.organization_name) {
+        identifyData.organization_name = user.organization_name;
       }
       posthog.identify(user.id, identifyData);
     } else {
@@ -97,45 +58,6 @@ export function UserProvider({
       console.error("Error fetching current user:", error);
     }
   };
-
-  // Use the custom token refresh hook
-  useTokenRefresh(upToDateUser, authTypeMetadata, fetchUser);
-
-  const updateUserTemperatureOverrideEnabled = async (enabled: boolean) => {
-    try {
-      setUpToDateUser((prevUser) => {
-        if (prevUser) {
-          return {
-            ...prevUser,
-            preferences: {
-              ...prevUser.preferences,
-              temperature_override_enabled: enabled,
-            },
-          };
-        }
-        return prevUser;
-      });
-
-      const response = await fetch(
-        `/api/temperature-override-enabled?temperature_override_enabled=${enabled}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (!response.ok) {
-        await refreshUser();
-        throw new Error("Failed to update user temperature override setting");
-      }
-    } catch (error) {
-      console.error("Error updating user temperature override setting:", error);
-      throw error;
-    }
-  };
-
   const updateUserShortcuts = async (enabled: boolean) => {
     try {
       setUpToDateUser((prevUser) => {
@@ -171,7 +93,7 @@ export function UserProvider({
     }
   };
 
-  const updateUserAutoScroll = async (autoScroll: boolean) => {
+  const updateUserAutoScroll = async (autoScroll: boolean | null) => {
     try {
       const response = await fetch("/api/auto-scroll", {
         method: "PATCH",
@@ -198,6 +120,40 @@ export function UserProvider({
       }
     } catch (error) {
       console.error("Error updating auto-scroll setting:", error);
+      throw error;
+    }
+  };
+
+  const setUserDefaultAssistant = async (assistantId: number | null) => {
+    try {
+      // Optimistically update the user state
+      setUpToDateUser((prevUser) => {
+        if (prevUser) {
+          return {
+            ...prevUser,
+            preferences: {
+              ...prevUser.preferences,
+              default_assistant_id: assistantId,
+            },
+          };
+        }
+        return prevUser;
+      });
+
+      const response = await fetch("/api/user/default-assistant", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ default_assistant_id: assistantId }),
+      });
+
+      if (!response.ok) {
+        // Revert the optimistic update if the API call fails
+        await refreshUser();
+        throw new Error("Failed to update default assistant");
+      }
+    } catch (error) {
       throw error;
     }
   };
@@ -263,7 +219,7 @@ export function UserProvider({
         refreshUser,
         updateUserAutoScroll,
         updateUserShortcuts,
-        updateUserTemperatureOverrideEnabled,
+        setUserDefaultAssistant,
         toggleAssistantPinnedStatus,
         isAdmin: upToDateUser?.role === UserRole.ADMIN,
         // Curator status applies for either global or basic curator

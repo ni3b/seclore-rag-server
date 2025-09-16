@@ -1,6 +1,6 @@
 import { FC } from "react";
 import { StandardAnswerCategoryResponse } from "./getStandardAnswerCategoriesIfEE";
-import { Label } from "@/components/Field";
+import { Label } from "../admin/connectors/Field";
 import MultiSelectDropdown from "../MultiSelectDropdown";
 import { StandardAnswerCategory } from "@/lib/types";
 import { ErrorCallout } from "../ErrorCallout";

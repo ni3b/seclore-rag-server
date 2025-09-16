@@ -86,9 +86,9 @@ def test_slim_docs_retrieval(
     assert len(retrieved_slim_docs) == 4
 
     for doc in retrieved_slim_docs:
-        assert doc.external_access is not None
-        assert len(doc.external_access.external_user_emails) == 1
-        user_email = next(iter(doc.external_access.external_user_emails))
+        permission_info = doc.perm_sync_data
+        assert isinstance(permission_info, dict)
+        user_email = permission_info["user_email"]
         assert _THREAD_1_BY_ID[doc.id]["email"] == user_email
 
 
@@ -110,8 +110,6 @@ def test_docs_retrieval(
 
     for doc in retrieved_docs:
         id = doc.id
-        retrieved_primary_owner_emails: set[str | None] = set()
-        retrieved_secondary_owner_emails: set[str | None] = set()
         if doc.primary_owners:
             retrieved_primary_owner_emails = set(
                 [owner.email for owner in doc.primary_owners]

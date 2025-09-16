@@ -3,9 +3,10 @@ import React, { useState, useEffect } from "react";
 import { FormikProps, FieldArray, ArrayHelpers, ErrorMessage } from "formik";
 import Text from "@/components/ui/text";
 import { FiUsers } from "react-icons/fi";
+import { Separator } from "@/components/ui/separator";
 import { UserGroup, UserRole } from "@/lib/types";
 import { useUserGroups } from "@/lib/hooks";
-import { BooleanFormField } from "@/components/Field";
+import { BooleanFormField } from "@/components/admin/connectors/Field";
 import { useUser } from "./user/UserProvider";
 
 export type IsPublicGroupSelectorFormType = {
@@ -39,11 +40,7 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
       if (!isUserAdmin && userGroups.length > 0) {
         formikProps.setFieldValue("is_public", false);
       }
-      if (
-        userGroups.length === 1 &&
-        userGroups[0] !== undefined &&
-        !isUserAdmin
-      ) {
+      if (userGroups.length === 1 && !isUserAdmin) {
         formikProps.setFieldValue("groups", [userGroups[0].id]);
         setShouldHideContent(true);
       } else if (formikProps.values.is_public) {
@@ -62,21 +59,13 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
     return null;
   }
 
-  let firstUserGroupName = "Unknown";
-  if (userGroups) {
-    const userGroup = userGroups[0];
-    if (userGroup) {
-      firstUserGroupName = userGroup.name;
-    }
-  }
-
   if (shouldHideContent && enforceGroupSelection) {
     return (
       <>
         {userGroups && (
           <div className="mb-1 font-medium text-base">
             This {objectName} will be assigned to group{" "}
-            <b>{firstUserGroupName}</b>.
+            <b>{userGroups[0].name}</b>.
           </div>
         )}
       </>
@@ -85,6 +74,7 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
 
   return (
     <div>
+      <Separator />
       {isAdmin && (
         <>
           <BooleanFormField
@@ -97,7 +87,7 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
             }
             disabled={!isAdmin}
             subtext={
-              <span className="block mt-2 text-sm text-text-600 dark:text-neutral-400">
+              <span className="block mt-2 text-sm text-gray-500">
                 If set, then this {objectName} will be usable by{" "}
                 <b>All {publicToWhom}</b>. Otherwise, only <b>Admins</b> and{" "}
                 <b>{publicToWhom}</b> who have explicitly been given access to
@@ -118,7 +108,7 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
               </div>
             </div>
             {userGroupsIsLoading ? (
-              <div className="animate-pulse bg-background-200 h-8 w-32 rounded"></div>
+              <div className="animate-pulse bg-gray-200 h-8 w-32 rounded"></div>
             ) : (
               <Text className="mb-3">
                 {isAdmin || !enforceGroupSelection ? (
@@ -139,7 +129,7 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
               render={(arrayHelpers: ArrayHelpers) => (
                 <div className="flex gap-2 flex-wrap mb-4">
                   {userGroupsIsLoading ? (
-                    <div className="animate-pulse bg-background-200 h-8 w-32 rounded"></div>
+                    <div className="animate-pulse bg-gray-200 h-8 w-32 rounded"></div>
                   ) : (
                     userGroups &&
                     userGroups.map((userGroup: UserGroup) => {
@@ -160,9 +150,7 @@ export const IsPublicGroupSelector = <T extends IsPublicGroupSelectorFormType>({
                         flex 
                         cursor-pointer 
                         ${
-                          isSelected
-                            ? "bg-background-200"
-                            : "hover:bg-accent-background-hovered"
+                          isSelected ? "bg-background-strong" : "hover:bg-hover"
                         }
                       `}
                           onClick={() => {

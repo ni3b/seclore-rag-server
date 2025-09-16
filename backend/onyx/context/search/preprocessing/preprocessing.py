@@ -20,9 +20,10 @@ from onyx.context.search.models import SearchRequest
 from onyx.context.search.preprocessing.access_filters import (
     build_access_filters_for_user,
 )
-from onyx.context.search.utils import (
+from onyx.context.search.retrieval.search_runner import (
     remove_stop_words_and_punctuation,
 )
+from onyx.db.engine import CURRENT_TENANT_ID_CONTEXTVAR
 from onyx.db.models import User
 from onyx.db.search_settings import get_current_search_settings
 from onyx.llm.interfaces import LLM
@@ -34,7 +35,8 @@ from onyx.utils.threadpool_concurrency import FunctionCall
 from onyx.utils.threadpool_concurrency import run_functions_in_parallel
 from onyx.utils.timing import log_function_time
 from shared_configs.configs import MULTI_TENANT
-from shared_configs.contextvars import get_current_tenant_id
+from onyx.context.search.models import TimeRange
+
 
 logger = setup_logger()
 
@@ -49,11 +51,11 @@ def retrieval_preprocessing(
     search_request: SearchRequest,
     user: User | None,
     llm: LLM,
-    skip_query_analysis: bool,
     db_session: Session,
-    favor_recent_decay_multiplier: float = FAVOR_RECENT_DECAY_MULTIPLIER,
-    base_recency_decay: float = BASE_RECENCY_DECAY,
     bypass_acl: bool = False,
+    skip_query_analysis: bool = False,
+    base_recency_decay: float = BASE_RECENCY_DECAY,
+    favor_recent_decay_multiplier: float = FAVOR_RECENT_DECAY_MULTIPLIER,
 ) -> SearchQuery:
     """Logic is as follows:
     Any global disables apply first
@@ -71,9 +73,16 @@ def retrieval_preprocessing(
             document_set.name for document_set in persona.document_sets
         ]
 
-    time_filter = preset_filters.time_cutoff
-    if time_filter is None and persona:
-        time_filter = persona.search_start_date
+    # Handle time range from retrieval options
+    time_range = preset_filters.time_range
+    if time_range is None and persona and persona.search_start_date:
+        time_range = TimeRange(start_date=persona.search_start_date)
+    elif time_range is not None:
+        # Ensure time_range has proper start_date and end_date
+        if time_range.start_date:
+            time_range.start_date = time_range.start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        if time_range.end_date:
+            time_range.end_date = time_range.end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     source_filter = preset_filters.source_type
 
@@ -91,7 +100,7 @@ def retrieval_preprocessing(
         logger.debug("Auto detect filters enabled")
 
     if (
-        time_filter is not None
+        time_range is not None
         and persona
         and persona.recency_bias != RecencyBiasSetting.AUTO
     ):
@@ -116,12 +125,8 @@ def retrieval_preprocessing(
         else None
     )
 
-    # Sometimes this is pre-computed in parallel with other heavy tasks to improve
-    # latency, and in that case we don't need to run the model again
     run_query_analysis = (
-        None
-        if (skip_query_analysis or search_request.precomputed_is_keyword is not None)
-        else FunctionCall(query_analysis, (query,), {})
+        None if skip_query_analysis else FunctionCall(query_analysis, (query,), {})
     )
 
     functions_to_run = [
@@ -135,23 +140,30 @@ def retrieval_preprocessing(
     ]
     parallel_results = run_functions_in_parallel(functions_to_run)
 
-    predicted_time_cutoff, predicted_favor_recent = (
+    # Previous implementation used a single cutoff date
+    # predicted_time_cutoff, predicted_favor_recent = (
+    #     parallel_results[run_time_filters.result_id]
+    #     if run_time_filters
+    #     else (None, None)
+    # )
+    # New implementation uses a date range
+    predicted_time_range, predicted_favor_recent = (
         parallel_results[run_time_filters.result_id]
         if run_time_filters
         else (None, None)
     )
+
     predicted_source_filters = (
         parallel_results[run_source_filters.result_id] if run_source_filters else None
     )
 
     # The extracted keywords right now are not very reliable, not using for now
     # Can maybe use for highlighting
-    is_keyword, _extracted_keywords = False, None
-    if search_request.precomputed_is_keyword is not None:
-        is_keyword = search_request.precomputed_is_keyword
-        _extracted_keywords = search_request.precomputed_keywords
-    elif run_query_analysis:
-        is_keyword, _extracted_keywords = parallel_results[run_query_analysis.result_id]
+    is_keyword, extracted_keywords = (
+        parallel_results[run_query_analysis.result_id]
+        if run_query_analysis
+        else (None, None)
+    )
 
     all_query_terms = query.split()
     processed_keywords = (
@@ -164,36 +176,23 @@ def retrieval_preprocessing(
     user_acl_filters = (
         None if bypass_acl else build_access_filters_for_user(user, db_session)
     )
-    user_file_filters = search_request.user_file_filters
-    user_file_ids = (user_file_filters.user_file_ids or []) if user_file_filters else []
-    user_folder_ids = (
-        (user_file_filters.user_folder_ids or []) if user_file_filters else []
-    )
-    if persona and persona.user_files:
-        user_file_ids = list(
-            set(user_file_ids) | set([file.id for file in persona.user_files])
-        )
 
+    # Create a single search query with all KBs
     final_filters = IndexFilters(
-        user_file_ids=user_file_ids,
-        user_folder_ids=user_folder_ids,
         source_type=preset_filters.source_type or predicted_source_filters,
         document_set=preset_filters.document_set,
-        time_cutoff=time_filter or predicted_time_cutoff,
-        tags=preset_filters.tags,  # Tags are never auto-extracted
+        time_range=time_range or predicted_time_range,
+        tags=preset_filters.tags,
         access_control_list=user_acl_filters,
-        tenant_id=get_current_tenant_id() if MULTI_TENANT else None,
-        kg_entities=preset_filters.kg_entities,
-        kg_relationships=preset_filters.kg_relationships,
-        kg_terms=preset_filters.kg_terms,
-        kg_sources=preset_filters.kg_sources,
-        kg_chunk_id_zero_only=preset_filters.kg_chunk_id_zero_only,
+        tenant_id=CURRENT_TENANT_ID_CONTEXTVAR.get() if MULTI_TENANT else None,
+        connector_name=preset_filters.connector_name,  # Keep the list of KBs
+        status=preset_filters.status,
+        ticket_id=preset_filters.ticket_id
     )
 
     llm_evaluation_type = LLMEvaluationType.BASIC
     if search_request.evaluation_type is not LLMEvaluationType.UNSPECIFIED:
         llm_evaluation_type = search_request.evaluation_type
-
     elif persona:
         llm_evaluation_type = (
             LLMEvaluationType.BASIC
@@ -207,7 +206,7 @@ def retrieval_preprocessing(
                 "LLM chunk filtering would have run but has been globally disabled"
             )
         llm_evaluation_type = LLMEvaluationType.SKIP
-
+    logger.info(f"llm doc relevance 1 {query}")
     rerank_settings = search_request.rerank_settings
     # If not explicitly specified by the query, use the current settings
     if rerank_settings is None:
@@ -247,7 +246,7 @@ def retrieval_preprocessing(
         if search_request.chunks_below is not None
         else (persona.chunks_below if persona else CONTEXT_CHUNKS_BELOW)
     )
-
+    logger.info("llm doc relevance 2")
     return SearchQuery(
         query=query,
         original_query=search_request.original_query,
@@ -263,12 +262,10 @@ def retrieval_preprocessing(
         # Should match the LLM filtering to the same as the reranked, it's understood as this is the number of results
         # the user wants to do heavier processing on, so do the same for the LLM if reranking is on
         # if no reranking settings are set, then use the global default
-        max_llm_filter_sections=(
-            rerank_settings.num_rerank if rerank_settings else NUM_POSTPROCESSED_RESULTS
-        ),
+        max_llm_filter_sections=rerank_settings.num_rerank
+        if rerank_settings
+        else NUM_POSTPROCESSED_RESULTS,
         chunks_above=chunks_above,
         chunks_below=chunks_below,
         full_doc=search_request.full_doc,
-        precomputed_query_embedding=search_request.precomputed_query_embedding,
-        expanded_queries=search_request.expanded_queries,
     )

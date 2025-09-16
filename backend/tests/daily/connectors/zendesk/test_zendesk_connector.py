@@ -2,14 +2,12 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import cast
 
 import pytest
 
 from onyx.configs.constants import DocumentSource
 from onyx.connectors.models import Document
 from onyx.connectors.zendesk.connector import ZendeskConnector
-from tests.daily.connectors.utils import load_all_docs_from_checkpoint_connector
 
 
 def load_test_data(file_name: str = "test_zendesk_data.json") -> dict[str, dict]:
@@ -52,7 +50,7 @@ def get_credentials() -> dict[str, str]:
 def test_zendesk_connector_basic(
     request: pytest.FixtureRequest, connector_fixture: str
 ) -> None:
-    connector = cast(ZendeskConnector, request.getfixturevalue(connector_fixture))
+    connector = request.getfixturevalue(connector_fixture)
     test_data = load_test_data()
     all_docs: list[Document] = []
     target_test_doc_id: str
@@ -63,11 +61,12 @@ def test_zendesk_connector_basic(
 
     target_doc: Document | None = None
 
-    for doc in load_all_docs_from_checkpoint_connector(connector, 0, time.time()):
-        all_docs.append(doc)
-        if doc.id == target_test_doc_id:
-            target_doc = doc
-            print(f"target_doc {target_doc}")
+    for doc_batch in connector.poll_source(0, time.time()):
+        for doc in doc_batch:
+            all_docs.append(doc)
+            if doc.id == target_test_doc_id:
+                target_doc = doc
+                print(f"target_doc {target_doc}")
 
     assert len(all_docs) > 0, "No documents were retrieved from the connector"
     assert (
@@ -112,10 +111,8 @@ def test_zendesk_connector_basic(
 def test_zendesk_connector_slim(zendesk_article_connector: ZendeskConnector) -> None:
     # Get full doc IDs
     all_full_doc_ids = set()
-    for doc in load_all_docs_from_checkpoint_connector(
-        zendesk_article_connector, 0, time.time()
-    ):
-        all_full_doc_ids.add(doc.id)
+    for doc_batch in zendesk_article_connector.load_from_state():
+        all_full_doc_ids.update([doc.id for doc in doc_batch])
 
     # Get slim doc IDs
     all_slim_doc_ids = set()

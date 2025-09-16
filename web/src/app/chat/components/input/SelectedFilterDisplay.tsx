@@ -2,7 +2,7 @@ import { SourceIcon } from "@/components/SourceIcon";
 import React from "react";
 import { FiBookmark, FiTag, FiX } from "react-icons/fi";
 import { FilterManager } from "@/lib/hooks";
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
 
 const displayTimeRange = (timeRange: DateRangePickerValue) => {
   if (timeRange.selectValue) {
@@ -40,7 +40,7 @@ const SelectedFilter = ({
       px-2 
       w-fit 
       select-none 
-      hover:bg-accent-background-hovered 
+      hover:bg-hover 
       bg-background 
       shadow-md 
     "

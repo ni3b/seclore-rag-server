@@ -8,8 +8,8 @@ from sqlalchemy.schema import CreateSchema
 
 from alembic import command
 from alembic.config import Config
-from onyx.db.engine.sql_engine import build_connection_string
-from onyx.db.engine.sql_engine import get_sqlalchemy_engine
+from onyx.db.engine import build_connection_string
+from onyx.db.engine import get_sqlalchemy_engine
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def run_alembic_migrations(schema_name: str) -> None:
 
         # Mimic command-line options by adding 'cmd_opts' to the config
         alembic_cfg.cmd_opts = SimpleNamespace()  # type: ignore
-        alembic_cfg.cmd_opts.x = [f"schemas={schema_name}"]  # type: ignore
+        alembic_cfg.cmd_opts.x = [f"schema={schema_name}"]  # type: ignore
 
         # Run migrations programmatically
         command.upgrade(alembic_cfg, "head")
@@ -74,21 +74,3 @@ def drop_schema(tenant_id: str) -> None:
             text("DROP SCHEMA IF EXISTS %(schema_name)s CASCADE"),
             {"schema_name": tenant_id},
         )
-
-
-def get_current_alembic_version(tenant_id: str) -> str:
-    """Get the current Alembic version for a tenant."""
-    from alembic.runtime.migration import MigrationContext
-    from sqlalchemy import text
-
-    engine = get_sqlalchemy_engine()
-
-    # Set the search path to the tenant's schema
-    with engine.connect() as connection:
-        connection.execute(text(f'SET search_path TO "{tenant_id}"'))
-
-        # Get the current version from the alembic_version table
-        context = MigrationContext.configure(connection)
-        current_rev = context.get_current_revision()
-
-    return current_rev or "head"

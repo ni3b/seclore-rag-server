@@ -9,6 +9,11 @@ import { redirect } from "next/navigation";
 import { BackendChatSession } from "../../interfaces";
 import { SharedChatDisplay } from "./SharedChatDisplay";
 import { Persona } from "@/app/admin/assistants/interfaces";
+import {
+  FetchAssistantsResponse,
+  fetchAssistantsSS,
+} from "@/lib/assistants/fetchAssistantsSS";
+import { defaultPersona } from "@/app/admin/assistants/lib";
 import { constructMiniFiedPersona } from "@/lib/assistantIconUtils";
 
 async function getSharedChat(chatId: string) {
@@ -58,7 +63,8 @@ export default async function Page(props: {
     chatSession?.persona_icon_color ?? null,
     chatSession?.persona_icon_shape ?? null,
     chatSession?.persona_name ?? "",
-    chatSession?.persona_id ?? 0
+    chatSession?.persona_id ?? 0,
+    chatSession?.persona_uploaded_image_id ?? null
   );
 
   return <SharedChatDisplay chatSession={chatSession} persona={persona} />;

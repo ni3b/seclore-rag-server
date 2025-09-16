@@ -8,9 +8,6 @@ from typing import Any
 from typing import cast
 from typing import TypeVar
 
-import torch
-
-from model_server.constants import GPUStatus
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()

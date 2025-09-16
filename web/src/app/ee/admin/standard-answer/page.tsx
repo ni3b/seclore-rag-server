@@ -6,6 +6,7 @@ import { PopupSpec, usePopup } from "@/components/admin/connectors/Popup";
 import { useStandardAnswers, useStandardAnswerCategories } from "./hooks";
 import { ThreeDotsLoader } from "@/components/Loading";
 import { ErrorCallout } from "@/components/ErrorCallout";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -27,7 +28,6 @@ import { FiTag } from "react-icons/fi";
 import { PageSelector } from "@/components/PageSelector";
 import Text from "@/components/ui/text";
 import { TableHeader } from "@/components/ui/table";
-import CreateButton from "@/components/ui/createButton";
 
 const NUM_RESULTS_PER_PAGE = 10;
 
@@ -76,7 +76,7 @@ const CategoryBubble = ({
       text-xs
       font-semibold
       text-emphasis
-      bg-accent-background-hovered
+      bg-hover
       rounded-full
       items-center
       w-fit
@@ -123,19 +123,13 @@ const StandardAnswersTableRow = ({
             ? `\`${standardAnswer.keyword}\``
             : standardAnswer.keyword}
         </ReactMarkdown>,
-        <div
+        <CustomCheckbox
           key={`match_regex-${standardAnswer.id}`}
-          className="flex items-center"
-        >
-          {standardAnswer.match_regex ? (
-            <span className="text-green-500 font-medium">Yes</span>
-          ) : (
-            <span className="text-gray-500">No</span>
-          )}
-        </div>,
+          checked={standardAnswer.match_regex}
+        />,
         <ReactMarkdown
           key={`answer-${standardAnswer.id}`}
-          className="prose dark:prose-invert"
+          className="prose"
           remarkPlugins={[remarkGfm]}
         >
           {standardAnswer.answer}
@@ -295,8 +289,8 @@ const StandardAnswersTable = ({
           ))}
         </div>
       </div>
-      <div className="flex flex-col w-full mx-auto">
-        <Table className="w-full">
+      <div className="mx-auto">
+        <Table className="w-full flex items-stretch">
           <TableHeader>
             <TableRow>
               {columns.map((column) => (
@@ -319,13 +313,11 @@ const StandardAnswersTable = ({
             )}
           </TableBody>
         </Table>
-        <div>
-          {paginatedStandardAnswers.length === 0 && (
-            <div className="flex justify-center">
-              <Text>No matching standard answers found...</Text>
-            </div>
-          )}
-        </div>
+        {paginatedStandardAnswers.length === 0 && (
+          <div className="flex justify-center">
+            <Text>No matching standard answers found...</Text>
+          </div>
+        )}
         {paginatedStandardAnswers.length > 0 && (
           <>
             <div className="mt-4">
@@ -409,10 +401,11 @@ const Main = () => {
       )}
       <div className="mb-2"></div>
 
-      <CreateButton
-        href="/admin/standard-answer/new"
-        text="New Standard Answer"
-      />
+      <Link className="flex mb-3 mt-2 w-fit" href="/admin/standard-answer/new">
+        <Button className="my-auto" variant="submit" size="sm">
+          New Standard Answer
+        </Button>
+      </Link>
 
       <Separator />
 

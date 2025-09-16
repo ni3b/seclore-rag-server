@@ -1,51 +1,52 @@
-import re
-import time
 import traceback
 from collections.abc import Callable
 from collections.abc import Iterator
+from functools import partial
 from typing import cast
-from typing import Protocol
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from onyx.agents.agent_search.orchestration.nodes.call_tool import ToolCallException
 from onyx.chat.answer import Answer
 from onyx.chat.chat_utils import create_chat_chain
 from onyx.chat.chat_utils import create_temporary_persona
-from onyx.chat.chat_utils import process_kg_commands
-from onyx.chat.models import AnswerStream
+from onyx.chat.models import AllCitations
 from onyx.chat.models import AnswerStyleConfig
-from onyx.chat.models import ChatBasicResponse
+from onyx.chat.models import ChatOnyxBotResponse
 from onyx.chat.models import CitationConfig
+from onyx.chat.models import CitationInfo
+from onyx.chat.models import CustomToolResponse
 from onyx.chat.models import DocumentPruningConfig
+from onyx.chat.models import FileChatDisplay
+from onyx.chat.models import FinalUsedContextDocsResponse
+from onyx.chat.models import LLMRelevanceFilterResponse
 from onyx.chat.models import MessageResponseIDInfo
 from onyx.chat.models import MessageSpecificCitations
+from onyx.chat.models import OnyxAnswerPiece
+from onyx.chat.models import OnyxContexts
 from onyx.chat.models import PromptConfig
 from onyx.chat.models import QADocsResponse
 from onyx.chat.models import StreamingError
-from onyx.chat.models import UserKnowledgeFilePacket
-from onyx.chat.packet_proccessing.process_streamed_packets import (
-    process_streamed_packets,
-)
-from onyx.chat.prompt_builder.answer_prompt_builder import AnswerPromptBuilder
-from onyx.chat.prompt_builder.answer_prompt_builder import default_build_system_message
-from onyx.chat.prompt_builder.answer_prompt_builder import default_build_user_message
-from onyx.chat.user_files.parse_user_files import parse_user_files
+from onyx.chat.models import StreamStopInfo
 from onyx.configs.chat_configs import CHAT_TARGET_CHUNK_PERCENTAGE
 from onyx.configs.chat_configs import DISABLE_LLM_CHOOSE_SEARCH
 from onyx.configs.chat_configs import MAX_CHUNKS_FED_TO_CHAT
-from onyx.configs.chat_configs import SELECTED_SECTIONS_MAX_WINDOW_PERCENTAGE
+
 from onyx.configs.constants import MessageType
 from onyx.configs.constants import MilestoneRecordType
 from onyx.configs.constants import NO_AUTH_USER_ID
 from onyx.context.search.enums import OptionalSearchSetting
+from onyx.context.search.enums import QueryFlow
+from onyx.context.search.enums import SearchType
 from onyx.context.search.models import InferenceSection
 from onyx.context.search.models import RetrievalDetails
-from onyx.context.search.models import SavedSearchDoc
-from onyx.context.search.retrieval.search_runner import (
-    inference_sections_from_ids,
-)
+from onyx.context.search.retrieval.search_runner import inference_sections_from_ids
+from onyx.context.search.utils import chunks_or_sections_to_search_docs
+from onyx.context.search.utils import dedupe_documents
+from onyx.context.search.utils import drop_llm_indices
+from onyx.context.search.utils import relevant_sections_to_indices
 from onyx.db.chat import attach_files_to_chat_message
+from onyx.db.chat import create_db_search_doc
 from onyx.db.chat import create_new_chat_message
 from onyx.db.chat import get_chat_message
 from onyx.db.chat import get_chat_session_by_id
@@ -53,70 +54,86 @@ from onyx.db.chat import get_db_search_doc_by_id
 from onyx.db.chat import get_doc_query_identifiers_from_model
 from onyx.db.chat import get_or_create_root_message
 from onyx.db.chat import reserve_message_id
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.chat import translate_db_message_to_chat_message_detail
+from onyx.db.chat import translate_db_search_doc_to_server_search_doc
+from onyx.db.engine import get_session_context_manager
 from onyx.db.milestone import check_multi_assistant_milestone
 from onyx.db.milestone import create_milestone_if_not_exists
 from onyx.db.milestone import update_user_assistant_milestone
-from onyx.db.models import ChatMessage
-from onyx.db.models import Persona
-from onyx.db.models import SearchDoc as DbSearchDoc
+from onyx.db.models import ChatMessage, SearchDoc as DbSearchDoc
 from onyx.db.models import ToolCall
 from onyx.db.models import User
 from onyx.db.persona import get_persona_by_id
 from onyx.db.search_settings import get_current_search_settings
-from onyx.document_index.factory import get_default_document_index
+from onyx.document_index.factory import get_current_primary_default_document_index
+from onyx.file_store.models import ChatFileType
 from onyx.file_store.models import FileDescriptor
 from onyx.file_store.utils import load_all_chat_files
-from onyx.kg.models import KGException
+from onyx.file_store.utils import save_files
 from onyx.llm.exceptions import GenAIDisabledException
 from onyx.llm.factory import get_llms_for_persona
 from onyx.llm.factory import get_main_llm_from_tuple
-from onyx.llm.interfaces import LLM
 from onyx.llm.models import PreviousMessage
 from onyx.llm.utils import litellm_exception_to_error_msg
 from onyx.natural_language_processing.utils import get_tokenizer
+from onyx.server.query_and_chat.models import ChatMessageDetail
 from onyx.server.query_and_chat.models import CreateChatMessageRequest
-from onyx.server.query_and_chat.streaming_models import CitationDelta
-from onyx.server.query_and_chat.streaming_models import CitationInfo
-from onyx.server.query_and_chat.streaming_models import MessageDelta
-from onyx.server.query_and_chat.streaming_models import MessageStart
-from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.server.utils import get_json_line
 from onyx.tools.force import ForceUseTool
-from onyx.tools.models import SearchToolOverrideKwargs
+from onyx.tools.models import ToolResponse
 from onyx.tools.tool import Tool
 from onyx.tools.tool_constructor import construct_tools
 from onyx.tools.tool_constructor import CustomToolConfig
 from onyx.tools.tool_constructor import ImageGenerationToolConfig
 from onyx.tools.tool_constructor import InternetSearchToolConfig
 from onyx.tools.tool_constructor import SearchToolConfig
+from onyx.tools.tool_implementations.custom.custom_tool import (
+    CUSTOM_TOOL_RESPONSE_ID,
+)
+from onyx.tools.tool_implementations.custom.custom_tool import CustomToolCallSummary
+from onyx.tools.tool_implementations.images.image_generation_tool import (
+    IMAGE_GENERATION_RESPONSE_ID,
+)
+from onyx.tools.tool_implementations.images.image_generation_tool import (
+    ImageGenerationResponse,
+)
+from onyx.tools.tool_implementations.internet_search.internet_search_tool import (
+    INTERNET_SEARCH_RESPONSE_ID,
+)
+from onyx.tools.tool_implementations.internet_search.internet_search_tool import (
+    internet_search_response_to_search_docs,
+)
+from onyx.tools.tool_implementations.internet_search.internet_search_tool import (
+    InternetSearchResponse,
+)
 from onyx.tools.tool_implementations.internet_search.internet_search_tool import (
     InternetSearchTool,
 )
+from onyx.tools.tool_implementations.search.search_tool import (
+    FINAL_CONTEXT_DOCUMENTS_ID,
+)
+from onyx.tools.tool_implementations.search.search_tool import SEARCH_DOC_CONTENT_ID
+from onyx.tools.tool_implementations.search.search_tool import (
+    SEARCH_RESPONSE_SUMMARY_ID,
+)
+from onyx.tools.tool_implementations.search.search_tool import SearchResponseSummary
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
+from onyx.tools.tool_implementations.search.search_tool import (
+    SECTION_RELEVANCE_LIST_ID,
+)
+from onyx.tools.tool_runner import ToolCallFinalResult
 from onyx.utils.logger import setup_logger
 from onyx.utils.long_term_log import LongTermLogger
 from onyx.utils.telemetry import mt_cloud_telemetry
 from onyx.utils.timing import log_function_time
 from onyx.utils.timing import log_generator_function_time
-from shared_configs.contextvars import get_current_tenant_id
+from shared_configs.contextvars import CURRENT_TENANT_ID_CONTEXTVAR
+from onyx.chat.chat_summarization import ChatSummarizer, ChatSummary
+from onyx.document_index.vespa.index import VespaIndex
+from onyx.chat.models import LlmDoc
+
 
 logger = setup_logger()
-ERROR_TYPE_CANCELLED = "cancelled"
-
-
-class PartialResponse(Protocol):
-    def __call__(
-        self,
-        message: str,
-        rephrased_query: str | None,
-        reference_docs: list[DbSearchDoc] | None,
-        files: list[FileDescriptor],
-        token_count: int,
-        citations: dict[int, int] | None,
-        error: str | None,
-        tool_call: ToolCall | None,
-    ) -> ChatMessage: ...
 
 
 def _translate_citations(
@@ -132,33 +149,98 @@ def _translate_citations(
     citation_to_saved_doc_id_map: dict[int, int] = {}
     for citation in citations_list:
         if citation.citation_num not in citation_to_saved_doc_id_map:
-            citation_to_saved_doc_id_map[citation.citation_num] = (
-                doc_id_to_saved_doc_id_map[citation.document_id]
-            )
+            citation_to_saved_doc_id_map[
+                citation.citation_num
+            ] = doc_id_to_saved_doc_id_map[citation.document_id]
+
+    logger.debug(f"citations_list: {citations_list}")
 
     return MessageSpecificCitations(citation_map=citation_to_saved_doc_id_map)
 
 
-def _get_force_search_settings(
-    new_msg_req: CreateChatMessageRequest,
-    tools: list[Tool],
-    search_tool_override_kwargs: SearchToolOverrideKwargs | None,
-) -> ForceUseTool:
-    if new_msg_req.forced_tool_ids:
-        forced_tools = [
-            tool for tool in tools if tool.id in new_msg_req.forced_tool_ids
-        ]
-        if not forced_tools:
-            raise ValueError(
-                f"No tools found for forced tool IDs: {new_msg_req.forced_tool_ids}"
-            )
-        return ForceUseTool(
-            force_use=True,
-            tool_name=forced_tools[0].name,
-            args=None,
-            override_kwargs=search_tool_override_kwargs,
-        )
+def _handle_search_tool_response_summary(
+    packet: ToolResponse,
+    db_session: Session,
+    selected_search_docs: list[DbSearchDoc] | None,
+    dedupe_docs: bool = False,
+) -> tuple[QADocsResponse, list[DbSearchDoc], list[int] | None]:
+    response_sumary = cast(SearchResponseSummary, packet.response)
 
+    dropped_inds = None
+    if not selected_search_docs:
+        top_docs = chunks_or_sections_to_search_docs(response_sumary.top_sections)
+
+        deduped_docs = top_docs
+        if dedupe_docs:
+            deduped_docs, dropped_inds = dedupe_documents(top_docs)
+
+        reference_db_search_docs = [
+            create_db_search_doc(server_search_doc=doc, db_session=db_session)
+            for doc in deduped_docs
+        ]
+    else:
+        reference_db_search_docs = selected_search_docs
+
+    response_docs = [
+        translate_db_search_doc_to_server_search_doc(db_search_doc)
+        for db_search_doc in reference_db_search_docs
+    ]
+    
+    # Check if we have no relevant search results
+    if not response_docs and not reference_db_search_docs:
+        logger.warning("No relevant search results found - this may lead to LLM hallucination")
+        # Log this for debugging
+        logger.info(f"Empty search results: top_sections={len(response_sumary.top_sections)}, selected_docs={len(selected_search_docs) if selected_search_docs else 0}")
+    
+    return (
+        QADocsResponse(
+            rephrased_query=response_sumary.rephrased_query,
+            top_documents=response_docs,
+            predicted_flow=response_sumary.predicted_flow,
+            predicted_search=response_sumary.predicted_search,
+            applied_source_filters=response_sumary.final_filters.source_type,
+            applied_time_range=response_sumary.final_filters.time_range,
+            recency_bias_multiplier=response_sumary.recency_bias_multiplier,
+        ),
+        reference_db_search_docs,
+        dropped_inds,
+    )
+
+
+def _handle_internet_search_tool_response_summary(
+    packet: ToolResponse,
+    db_session: Session,
+) -> tuple[QADocsResponse, list[DbSearchDoc]]:
+    internet_search_response = cast(InternetSearchResponse, packet.response)
+    server_search_docs = internet_search_response_to_search_docs(
+        internet_search_response
+    )
+
+    reference_db_search_docs = [
+        create_db_search_doc(server_search_doc=doc, db_session=db_session)
+        for doc in server_search_docs
+    ]
+    response_docs = [
+        translate_db_search_doc_to_server_search_doc(db_search_doc)
+        for db_search_doc in reference_db_search_docs
+    ]
+    return (
+        QADocsResponse(
+            rephrased_query=internet_search_response.revised_query,
+            top_documents=response_docs,
+            predicted_flow=QueryFlow.QUESTION_ANSWER,
+            predicted_search=SearchType.SEMANTIC,
+            applied_source_filters=[],
+            applied_time_range=None,
+            recency_bias_multiplier=1.0,
+        ),
+        reference_db_search_docs,
+    )
+
+
+def _get_force_search_settings(
+    new_msg_req: CreateChatMessageRequest, tools: list[Tool]
+) -> ForceUseTool:
     internet_search_available = any(
         isinstance(tool, InternetSearchTool) for tool in tools
     )
@@ -167,12 +249,18 @@ def _get_force_search_settings(
     if not internet_search_available and not search_tool_available:
         # Does not matter much which tool is set here as force is false and neither tool is available
         return ForceUseTool(force_use=False, tool_name=SearchTool._NAME)
+
+    tool_name = SearchTool._NAME if search_tool_available else InternetSearchTool._NAME
     # Currently, the internet search tool does not support query override
     args = (
         {"query": new_msg_req.query_override}
-        if new_msg_req.query_override and search_tool_available
+        if new_msg_req.query_override and tool_name == SearchTool._NAME
         else None
     )
+
+    if new_msg_req.file_descriptors:
+        # If user has uploaded files they're using, don't run any of the search tools
+        return ForceUseTool(force_use=False, tool_name=tool_name)
 
     should_force_search = any(
         [
@@ -180,62 +268,36 @@ def _get_force_search_settings(
             and new_msg_req.retrieval_options.run_search
             == OptionalSearchSetting.ALWAYS,
             new_msg_req.search_doc_ids,
-            new_msg_req.query_override is not None,
             DISABLE_LLM_CHOOSE_SEARCH,
-            search_tool_override_kwargs is not None,
         ]
     )
 
     if should_force_search:
         # If we are using selected docs, just put something here so the Tool doesn't need to build its own args via an LLM call
+        #logger.info(f"New meesage : {new_msg_req.message} and args {args}")
         args = {"query": new_msg_req.message} if new_msg_req.search_doc_ids else args
+        return ForceUseTool(force_use=True, tool_name=tool_name, args=args)
 
-        return ForceUseTool(
-            force_use=True,
-            tool_name=SearchTool._NAME,
-            args=args,
-            override_kwargs=search_tool_override_kwargs,
-        )
-
-    return ForceUseTool(
-        force_use=False,
-        tool_name=(
-            SearchTool._NAME if search_tool_available else InternetSearchTool._NAME
-        ),
-        args=args,
-        override_kwargs=None,
-    )
+    return ForceUseTool(force_use=False, tool_name=tool_name, args=args)
 
 
-def _get_persona_for_chat_session(
-    new_msg_req: CreateChatMessageRequest,
-    user: User | None,
-    db_session: Session,
-    default_persona: Persona,
-) -> Persona:
-    if new_msg_req.alternate_assistant_id is not None:
-        # Allows users to specify a temporary persona (assistant) in the chat session
-        # this takes highest priority since it's user specified
-        persona = get_persona_by_id(
-            new_msg_req.alternate_assistant_id,
-            user=user,
-            db_session=db_session,
-            is_for_edit=False,
-        )
-    elif new_msg_req.persona_override_config:
-        # Certain endpoints allow users to specify arbitrary persona settings
-        # this should never conflict with the alternate_assistant_id
-        persona = create_temporary_persona(
-            db_session=db_session,
-            persona_config=new_msg_req.persona_override_config,
-            user=user,
-        )
-    else:
-        persona = default_persona
-
-    if not persona:
-        raise RuntimeError("No persona specified or found for chat session")
-    return persona
+ChatPacket = (
+    StreamingError
+    | QADocsResponse
+    | OnyxContexts
+    | LLMRelevanceFilterResponse
+    | FinalUsedContextDocsResponse
+    | ChatMessageDetail
+    | OnyxAnswerPiece
+    | AllCitations
+    | CitationInfo
+    | FileChatDisplay
+    | CustomToolResponse
+    | MessageSpecificCitations
+    | MessageResponseIDInfo
+    | StreamStopInfo
+)
+ChatPacketStream = Iterator[ChatPacket]
 
 
 def stream_chat_message_objects(
@@ -254,19 +316,20 @@ def stream_chat_message_objects(
     is_connected: Callable[[], bool] | None = None,
     enforce_chat_session_id_for_search_docs: bool = True,
     bypass_acl: bool = False,
+    include_contexts: bool = False,
     # a string which represents the history of a conversation. Used in cases like
     # Slack threads where the conversation cannot be represented by a chain of User/Assistant
     # messages.
     # NOTE: is not stored in the database at all.
     single_message_history: str | None = None,
-) -> AnswerStream:
+) -> ChatPacketStream:
     """Streams in order:
     1. [conditional] Retrieved documents if a search needs to be run
     2. [conditional] LLM selected chunk indices if LLM chunk filtering is turned on
     3. [always] A set of streamed LLM tokens or an error anywhere along the line if something fails
     4. [always] Details on the final AI response message that is created
     """
-    tenant_id = get_current_tenant_id()
+    tenant_id = CURRENT_TENANT_ID_CONTEXTVAR.get()
     use_existing_user_message = new_msg_req.use_existing_user_message
     existing_assistant_message_id = new_msg_req.existing_assistant_message_id
 
@@ -275,11 +338,8 @@ def stream_chat_message_objects(
     new_msg_req.chunks_above = 0
     new_msg_req.chunks_below = 0
 
-    llm: LLM
-    answer: Answer
-
+    llm = None  # Ensure llm is always defined
     try:
-        # Move these variables inside the try block
         user_id = user.id if user is not None else None
 
         chat_session = get_chat_session_by_id(
@@ -288,27 +348,95 @@ def stream_chat_message_objects(
             db_session=db_session,
         )
 
+        # Initialize chat summarizer
+        search_settings = get_current_search_settings(db_session)
+        document_index = get_current_primary_default_document_index(db_session)
+        chat_summarizer = ChatSummarizer(document_index)
+
+        # Get all messages for the chat session
+        messages = db_session.query(ChatMessage).filter(
+            ChatMessage.chat_session_id == chat_session.id
+        ).order_by(ChatMessage.time_sent).all()
+
+        # Get context for response generation
+        context = chat_summarizer.get_context_for_response(
+            chat_session=chat_session,
+            messages=messages,
+            system_message=(
+                chat_session.persona.prompts[0].system_prompt
+                if chat_session.persona and chat_session.persona.prompts
+                else ""
+            )
+        )
+        #logger.info(f"context in stream_chat_message_objects: {context}")
+
+        # Create or update summary if needed (based on configured threshold)
+        user_email = user.email if user and hasattr(user, "email") else None
+        updated_summary = chat_summarizer.create_or_update_summary(
+            chat_session=chat_session,
+            messages=messages,
+            user_email=user_email,
+            document_index=document_index,
+            db_session=db_session
+        )
+        
+        # Update context with the latest summary
+        if updated_summary:
+            context["summary"] = updated_summary
+
+        # Use the context for generating the response with new message structure:
+        # system message > summary > last 3 messages
+        
+        # Build message history for LLM in the new format
+        history_msgs_for_llm = []
+        
+        # Don't add summary as a separate message - it will be embedded in the system prompt
+        # Add the last 3 messages (or all if less than 3)
+        history_msgs_for_llm.extend(context["context_messages"])
+        
+        logger.info(f"[HISTORY CONSTRUCTION] history_msgs_for_llm contains {len(history_msgs_for_llm)} messages")
+        for i, msg in enumerate(history_msgs_for_llm):
+            logger.info(f"  Message {i}: {msg.message_type} - {msg.message[:100]}...")
+        
+        # We'll modify the system prompt to include the summary later
+
         message_text = new_msg_req.message
         chat_session_id = new_msg_req.chat_session_id
         parent_id = new_msg_req.parent_message_id
         reference_doc_ids = new_msg_req.search_doc_ids
+        #logger.info(f"reference_doc_ids: {reference_doc_ids}")
         retrieval_options = new_msg_req.retrieval_options
-        new_msg_req.alternate_assistant_id
+        alternate_assistant_id = new_msg_req.alternate_assistant_id
 
         # permanent "log" store, used primarily for debugging
         long_term_logger = LongTermLogger(
             metadata={"user_id": str(user_id), "chat_session_id": str(chat_session_id)}
         )
 
-        persona = _get_persona_for_chat_session(
-            new_msg_req=new_msg_req,
-            user=user,
-            db_session=db_session,
-            default_persona=chat_session.persona,
-        )
+        if alternate_assistant_id is not None:
+            # Allows users to specify a temporary persona (assistant) in the chat session
+            # this takes highest priority since it's user specified
+            persona = get_persona_by_id(
+                alternate_assistant_id,
+                user=user,
+                db_session=db_session,
+                is_for_edit=False,
+            )
+        elif new_msg_req.persona_override_config:
+            # Certain endpoints allow users to specify arbitrary persona settings
+            # this should never conflict with the alternate_assistant_id
+            persona = persona = create_temporary_persona(
+                db_session=db_session,
+                persona_config=new_msg_req.persona_override_config,
+                user=user,
+            )
+            #logger.info(f"persona new messaage {persona}")
+        else:
+            #logger.info(f"persona no assistant {persona}")
+            persona = chat_session.persona
 
-        # TODO: remove once we have an endpoint for this stuff
-        process_kg_commands(new_msg_req.message, persona.name, tenant_id, db_session)
+        if not persona:
+            raise RuntimeError("No persona specified or found for chat session")
 
         multi_assistant_milestone, _is_new = create_milestone_if_not_exists(
             user=user,
@@ -367,14 +495,10 @@ def stream_chat_message_objects(
             Callable[[str], list[int]], llm_tokenizer.encode
         )
 
-        search_settings = get_current_search_settings(db_session)
-        document_index = get_default_document_index(search_settings, None)
-
         # Every chat Session begins with an empty root message
         root_message = get_or_create_root_message(
             chat_session_id=chat_session_id, db_session=db_session
         )
-
         if parent_id is not None:
             parent_message = get_chat_message(
                 chat_message_id=parent_id,
@@ -382,12 +506,13 @@ def stream_chat_message_objects(
                 db_session=db_session,
             )
         else:
+            logger.debug(f"root_message parent: {root_message.message}")
             parent_message = root_message
 
         user_message = None
 
         if new_msg_req.regenerate:
-            final_msg, history_msgs = create_chat_chain(
+            final_msg, history_msgs_chain = create_chat_chain(
                 stop_at_message_id=parent_id,
                 chat_session_id=chat_session_id,
                 db_session=db_session,
@@ -403,14 +528,19 @@ def stream_chat_message_objects(
                 message=message_text,
                 token_count=len(llm_tokenizer_encode_func(message_text)),
                 message_type=MessageType.USER,
-                files=None,  # Need to attach later for optimization to only load files once in parallel
+                files=None,  # we Need to attach later for optimization to only load files once in parallel
                 db_session=db_session,
                 commit=False,
             )
-            # re-create linear history of messages
-            final_msg, history_msgs = create_chat_chain(
+            message = user_message.message
+            #logger.info(f"user message text {message}")
+            #logger.info(f"user message : {user_message}")
+            # re-create linear history of messages for chat chain validation
+            final_msg, history_msgs_chain = create_chat_chain(
                 chat_session_id=chat_session_id, db_session=db_session
             )
+            #logger.info(f"final message in main stream {final_msg.message}")
+            #logger.info(f"history message in main stream {history_msgs_chain}")
             if final_msg.id != user_message.id:
                 db_session.rollback()
                 raise RuntimeError(
@@ -421,8 +551,8 @@ def stream_chat_message_objects(
             # NOTE: do not commit user message - it will be committed when the
             # assistant message is successfully generated
         else:
-            # re-create linear history of messages
-            final_msg, history_msgs = create_chat_chain(
+            # re-create linear history of messages for chat chain validation
+            final_msg, history_msgs_chain = create_chat_chain(
                 chat_session_id=chat_session_id, db_session=db_session
             )
             if existing_assistant_message_id is None:
@@ -440,37 +570,26 @@ def stream_chat_message_objects(
                         f"existing assistant message id: {existing_assistant_message_id}"
                     )
 
+        # Disable Query Rephrasing for the first message
+        # This leads to a better first response since the LLM rephrasing the question
+        # leads to worst search quality
+        if not history_msgs_chain:
+            # new_msg_req.query_override = (
+            #     new_msg_req.query_override or new_msg_req.message
+            # )
+            #logger.info("appending in the history message for the persona")
+            history_msgs_chain.append(root_message)
+
         # load all files needed for this chat chain in memory
-        files = load_all_chat_files(history_msgs, new_msg_req.file_descriptors)
-        req_file_ids = [f["id"] for f in new_msg_req.file_descriptors]
-        latest_query_files = [file for file in files if file.file_id in req_file_ids]
-        user_file_ids = new_msg_req.user_file_ids or []
-        user_folder_ids = new_msg_req.user_folder_ids or []
-
-        if persona.user_files:
-            for file in persona.user_files:
-                user_file_ids.append(file.id)
-        if persona.user_folders:
-            for folder in persona.user_folders:
-                user_folder_ids.append(folder.id)
-
-        # Load in user files into memory and create search tool override kwargs if needed
-        # if we have enough tokens and no folders, we don't need to use search
-        # we can just pass them into the prompt directly
-        (
-            in_memory_user_files,
-            user_file_models,
-            search_tool_override_kwargs_for_user_files,
-        ) = parse_user_files(
-            user_file_ids=user_file_ids,
-            user_folder_ids=user_folder_ids,
-            db_session=db_session,
-            persona=persona,
-            actual_user_input=message_text,
-            user_id=user_id,
+        # Use history_msgs_chain for file loading (this is for file management, not LLM context)
+        files = load_all_chat_files(
+            history_msgs_chain, new_msg_req.file_descriptors, db_session
         )
-        if not search_tool_override_kwargs_for_user_files:
-            latest_query_files.extend(in_memory_user_files)
+        latest_query_files = [
+            file
+            for file in files
+            if file.file_id in [f["id"] for f in new_msg_req.file_descriptors]
+        ]
 
         if user_message:
             attach_files_to_chat_message(
@@ -499,13 +618,8 @@ def stream_chat_message_objects(
                 doc_identifiers=identifier_tuples,
                 document_index=document_index,
             )
-
-            # Add a maximum context size in the case of user-selected docs to prevent
-            # slight inaccuracies in context window size pruning from causing
-            # the entire query to fail
             document_pruning_config = DocumentPruningConfig(
-                is_manually_selected_docs=True,
-                max_window_percentage=SELECTED_SECTIONS_MAX_WINDOW_PERCENTAGE,
+                is_manually_selected_docs=True
             )
 
             # In case the search doc is deleted, just don't include it
@@ -536,9 +650,9 @@ def stream_chat_message_objects(
             else reserve_message_id(
                 db_session=db_session,
                 chat_session_id=chat_session_id,
-                parent_message=(
-                    user_message.id if user_message is not None else parent_message.id
-                ),
+                parent_message=user_message.id
+                if user_message is not None
+                else parent_message.id,
                 message_type=MessageType.ASSISTANT,
             )
         )
@@ -547,19 +661,43 @@ def stream_chat_message_objects(
             reserved_assistant_message_id=reserved_message_id,
         )
 
+        overridden_model = (
+            new_msg_req.llm_override.model_version if new_msg_req.llm_override else None
+        )
+
+        # Cannot determine these without the LLM step or breaking out early
+        partial_response = partial(
+            create_new_chat_message,
+            chat_session_id=chat_session_id,
+            # if we're using an existing assistant message, then this will just be an
+            # update operation, in which case the parent should be the parent of
+            # the latest. If we're creating a new assistant message, then the parent
+            # should be the latest message (latest user message)
+            parent_message=(
+                final_msg if existing_assistant_message_id is None else parent_message
+                #root_message
+            ),
+            prompt_id=prompt_id,
+            overridden_model=overridden_model,
+            # message=,
+            # rephrased_query=,
+            # token_count=,
+            message_type=MessageType.ASSISTANT,
+            alternate_assistant_id=new_msg_req.alternate_assistant_id,
+            # error=,
+            # reference_docs=,
+            db_session=db_session,
+            commit=False,
+            reserved_message_id=reserved_message_id,
+        )
+
         prompt_override = new_msg_req.prompt_override or chat_session.prompt_override
         if new_msg_req.persona_override_config:
             prompt_config = PromptConfig(
-                system_prompt=new_msg_req.persona_override_config.prompts[
-                    0
-                ].system_prompt,
+                system_prompt=new_msg_req.persona_override_config.prompts[0].system_prompt,
                 task_prompt=new_msg_req.persona_override_config.prompts[0].task_prompt,
-                datetime_aware=new_msg_req.persona_override_config.prompts[
-                    0
-                ].datetime_aware,
-                include_citations=new_msg_req.persona_override_config.prompts[
-                    0
-                ].include_citations,
+                datetime_aware=new_msg_req.persona_override_config.prompts[0].datetime_aware,
+                include_citations=new_msg_req.persona_override_config.prompts[0].include_citations,
             )
         elif prompt_override:
             if not final_msg.prompt:
@@ -571,14 +709,13 @@ def stream_chat_message_objects(
                 prompt_override=prompt_override,
             )
         else:
-            prompt_config = PromptConfig.from_model(
-                final_msg.prompt or persona.prompts[0]
-            )
-
+            prompt_config = PromptConfig.from_model(persona.prompts[0])
+        
         answer_style_config = AnswerStyleConfig(
             citation_config=CitationConfig(
                 all_docs_useful=selected_db_search_docs is not None
             ),
+            document_pruning_config=document_pruning_config,
             structured_response_format=new_msg_req.structured_response_format,
         )
 
@@ -589,11 +726,6 @@ def stream_chat_message_objects(
             user=user,
             llm=llm,
             fast_llm=fast_llm,
-            run_search_setting=(
-                retrieval_options.run_search
-                if retrieval_options
-                else OptionalSearchSetting.AUTO
-            ),
             search_tool_config=SearchToolConfig(
                 answer_style_config=answer_style_config,
                 document_pruning_config=document_pruning_config,
@@ -608,7 +740,6 @@ def stream_chat_message_objects(
             ),
             internet_search_tool_config=InternetSearchToolConfig(
                 answer_style_config=answer_style_config,
-                document_pruning_config=document_pruning_config,
             ),
             image_generation_tool_config=ImageGenerationToolConfig(
                 additional_headers=litellm_additional_headers,
@@ -618,52 +749,84 @@ def stream_chat_message_objects(
                 message_id=user_message.id if user_message else None,
                 additional_headers=custom_tool_additional_headers,
             ),
-            allowed_tool_ids=new_msg_req.allowed_tool_ids,
         )
+
+        # Filter custom tools based on allowed_custom_tool_ids if provided
+        if new_msg_req.allowed_custom_tool_ids is not None:
+            # Determine persona custom tool IDs present in tool_dict
+            # Custom tools are those produced from OpenAPI schema; built-ins come from in_code_tool_id
+            persona_custom_tool_ids = set()
+            built_in_tool_ids = set()
+            
+            for tool_id, tool_list in tool_dict.items():
+                if tool_list:
+                    # Check if this is a custom tool by looking at the tool class
+                    # Custom tools inherit from BaseTool, built-in tools inherit directly from Tool
+                    tool_instance = tool_list[0]
+                    if hasattr(tool_instance, '__class__'):
+                        # Check if it's a CustomTool (which inherits from BaseTool)
+                        if tool_instance.__class__.__name__ == 'CustomTool':
+                            persona_custom_tool_ids.add(tool_id)
+                        else:
+                            # All other tools are built-in tools (SearchTool, InternetSearchTool, ImageGenerationTool)
+                            built_in_tool_ids.add(tool_id)
+            
+            logger.info(f"[TOOL FILTERING] Received allowed_custom_tool_ids: {new_msg_req.allowed_custom_tool_ids}")
+            logger.info(f"[TOOL FILTERING] Persona custom tool IDs: {list(persona_custom_tool_ids)}")
+            logger.info(f"[TOOL FILTERING] Built-in tool IDs: {list(built_in_tool_ids)}")
+            
+            # Compute validated allowed IDs (intersection of requested and available)
+            validated_allowed_ids = set(new_msg_req.allowed_custom_tool_ids) & persona_custom_tool_ids
+            
+            # Log unknown IDs for debugging
+            unknown_ids = set(new_msg_req.allowed_custom_tool_ids) - persona_custom_tool_ids
+            if unknown_ids:
+                logger.warning(f"[TOOL FILTERING] Unknown tool IDs ignored: {list(unknown_ids)}")
+            
+            logger.info(f"[TOOL FILTERING] Effective allowed custom tool IDs: {list(validated_allowed_ids)}")
+            
+            # Filter tool_dict to keep only allowed custom tools and all built-in tools
+            filtered_tool_dict = {}
+            logger.info(f"[TOOL FILTERING] Tool dict: {tool_dict}")
+            for tool_id, tool_list in tool_dict.items():
+                # Keep all built-in tools unchanged
+                if tool_id in built_in_tool_ids:
+                    filtered_tool_dict[tool_id] = tool_list
+                # For custom tools, only keep if in validated_allowed_ids
+                elif tool_id in validated_allowed_ids:
+                    filtered_tool_dict[tool_id] = tool_list
+            
+            tool_dict = filtered_tool_dict
+            logger.info(f"[TOOL FILTERING] Filtered tool dict: {tool_dict}")
+            
+            # Log final tool names/types
+            final_tool_names = []
+            for tool_id, tool_list in tool_dict.items():
+                for tool in tool_list:
+                    final_tool_names.append(f"{tool.name} (ID: {tool_id})")
+            logger.info(f"[TOOL FILTERING] Final tools passed to Answer: {final_tool_names}")
 
         tools: list[Tool] = []
         for tool_list in tool_dict.values():
             tools.extend(tool_list)
 
-        force_use_tool = _get_force_search_settings(
-            new_msg_req, tools, search_tool_override_kwargs_for_user_files
-        )
-
-        # TODO: unify message history with single message history
-        message_history = [
-            PreviousMessage.from_chat_message(msg, files) for msg in history_msgs
-        ]
-        if not search_tool_override_kwargs_for_user_files and in_memory_user_files:
-            yield UserKnowledgeFilePacket(
-                user_files=[
-                    FileDescriptor(
-                        id=str(file.file_id), type=file.file_type, name=file.filename
-                    )
-                    for file in in_memory_user_files
-                ]
-            )
-
-        prompt_builder = AnswerPromptBuilder(
-            user_message=default_build_user_message(
-                user_query=final_msg.message,
-                prompt_config=prompt_config,
-                files=latest_query_files,
-                single_message_history=single_message_history,
-            ),
-            system_message=default_build_system_message(prompt_config, llm.config),
-            message_history=message_history,
-            llm_config=llm.config,
-            raw_user_query=final_msg.message,
-            raw_user_uploaded_files=latest_query_files or [],
-            single_message_history=single_message_history,
-        )
-
         # LLM prompt building, response capturing, etc.
+        logger.info(f"[FINAL LLM HISTORY] About to send {len(history_msgs_for_llm)} messages to LLM:")
+        for i, msg in enumerate(history_msgs_for_llm):
+            logger.info(f"  LLM Message {i}: {msg.message_type} - {msg.message[:200]}...")
+        
+        # Log if summary is being passed
+        if context.get("summary"):
+            logger.info(f"[SUMMARY PASSED] Passing summary to Answer class: {context['summary'][:100]}...")
+        else:
+            logger.info("[NO SUMMARY] No summary available to pass to Answer class")
+        
         answer = Answer(
-            prompt_builder=prompt_builder,
             is_connected=is_connected,
+            question=final_msg.message,
             latest_query_files=latest_query_files,
             answer_style_config=answer_style_config,
+            prompt_config=prompt_config,
             llm=(
                 llm
                 or get_main_llm_from_tuple(
@@ -676,23 +839,137 @@ def stream_chat_message_objects(
                     )
                 )
             ),
-            fast_llm=fast_llm,
-            force_use_tool=force_use_tool,
-            persona=persona,
-            rerank_settings=new_msg_req.rerank_settings,
-            chat_session_id=chat_session_id,
-            current_agent_message_id=reserved_message_id,
+            message_history=[
+                PreviousMessage.from_chat_message(msg, files) for msg in history_msgs_for_llm
+            ],
             tools=tools,
-            db_session=db_session,
-            use_agentic_search=new_msg_req.use_agentic_search,
-            skip_gen_ai_answer_generation=new_msg_req.skip_gen_ai_answer_generation,
+            force_use_tool=_get_force_search_settings(new_msg_req, tools),
+            conversation_summary=context.get("summary"),
         )
 
-        # Process streamed packets using the new packet processing module
-        yield from process_streamed_packets(
-            answer_processed_output=answer.processed_streamed_output,
-        )
+        reference_db_search_docs = None
+        qa_docs_response = None
+        # any files to associate with the AI message e.g. dall-e generated images
+        ai_message_files = []
+        dropped_indices = None
+        tool_result = None
 
+
+        for packet in answer.processed_streamed_output:
+            if isinstance(packet, ToolResponse):
+                if packet.id == SEARCH_RESPONSE_SUMMARY_ID:
+                    (
+                        qa_docs_response,
+                        reference_db_search_docs,
+                        dropped_indices,
+                    ) = _handle_search_tool_response_summary(
+                        packet=packet,
+                        db_session=db_session,
+                        selected_search_docs=selected_db_search_docs,
+                        # Deduping happens at the last step to avoid harming quality by dropping content early on
+                        dedupe_docs=(
+                            retrieval_options.dedupe_docs
+                            if retrieval_options
+                            else False
+                        ),
+                    )
+                    yield qa_docs_response
+                elif packet.id == SECTION_RELEVANCE_LIST_ID:
+                    relevance_sections = packet.response
+
+                    if reference_db_search_docs is not None:
+                        llm_indices = relevant_sections_to_indices(
+                            relevance_sections=relevance_sections,
+                            items=[
+                                translate_db_search_doc_to_server_search_doc(doc)
+                                for doc in reference_db_search_docs
+                            ],
+                        )
+
+                        if dropped_indices:
+                            llm_indices = drop_llm_indices(
+                                llm_indices=llm_indices,
+                                search_docs=reference_db_search_docs,
+                                dropped_indices=dropped_indices,
+                            )
+
+                        yield LLMRelevanceFilterResponse(
+                            llm_selected_doc_indices=llm_indices
+                        )
+                elif packet.id == FINAL_CONTEXT_DOCUMENTS_ID:
+                    yield FinalUsedContextDocsResponse(
+                        final_context_docs=packet.response
+                    )
+
+                elif packet.id == IMAGE_GENERATION_RESPONSE_ID:
+                    img_generation_response = cast(
+                        list[ImageGenerationResponse], packet.response
+                    )
+
+                    file_ids = save_files(
+                        urls=[img.url for img in img_generation_response if img.url],
+                        base64_files=[
+                            img.image_data
+                            for img in img_generation_response
+                            if img.image_data
+                        ],
+                        tenant_id=tenant_id,
+                    )
+                    ai_message_files = [
+                        FileDescriptor(id=str(file_id), type=ChatFileType.IMAGE)
+                        for file_id in file_ids
+                    ]
+                    yield FileChatDisplay(
+                        file_ids=[str(file_id) for file_id in file_ids]
+                    )
+                elif packet.id == INTERNET_SEARCH_RESPONSE_ID:
+                    (
+                        qa_docs_response,
+                        reference_db_search_docs,
+                    ) = _handle_internet_search_tool_response_summary(
+                        packet=packet,
+                        db_session=db_session,
+                    )
+                    yield qa_docs_response
+                elif packet.id == CUSTOM_TOOL_RESPONSE_ID:
+                    custom_tool_response = cast(CustomToolCallSummary, packet.response)
+
+                    if (
+                        custom_tool_response.response_type == "image"
+                        or custom_tool_response.response_type == "csv"
+                    ):
+                        file_ids = custom_tool_response.tool_result.file_ids
+                        ai_message_files.extend(
+                            [
+                                FileDescriptor(
+                                    id=str(file_id),
+                                    type=(
+                                        ChatFileType.IMAGE
+                                        if custom_tool_response.response_type == "image"
+                                        else ChatFileType.CSV
+                                    ),
+                                )
+                                for file_id in file_ids
+                            ]
+                        )
+                        yield FileChatDisplay(
+                            file_ids=[str(file_id) for file_id in file_ids]
+                        )
+                    else:
+                        yield CustomToolResponse(
+                            response=custom_tool_response.tool_result,
+                            tool_name=custom_tool_response.tool_name,
+                        )
+                elif packet.id == SEARCH_DOC_CONTENT_ID and include_contexts:
+                    yield cast(OnyxContexts, packet.response)
+
+            elif isinstance(packet, StreamStopInfo):
+                pass
+            else:
+                if isinstance(packet, ToolCallFinalResult):
+                    tool_result = packet
+                yield cast(ChatPacket, packet)
+        logger.debug("Reached end of stream")
     except ValueError as e:
         logger.exception("Failed to process chat message.")
 
@@ -701,31 +978,112 @@ def stream_chat_message_objects(
         db_session.rollback()
         return
 
-    # TODO: remove after moving kg stuff to api endpoint
-    except KGException:
-        raise
-
     except Exception as e:
-        logger.exception(f"Failed to process chat message due to {e}")
+        logger.exception("Failed to process chat message.")
+
         error_msg = str(e)
         stack_trace = traceback.format_exc()
+        logger.error(f"error_msg111: {error_msg}")
+        client_error_msg = litellm_exception_to_error_msg(e, llm) if llm else error_msg
+        if llm and llm.config.api_key and len(llm.config.api_key) > 2:
+            error_msg = error_msg.replace(llm.config.api_key, "[REDACTED_API_KEY]")
+            stack_trace = stack_trace.replace(llm.config.api_key, "[REDACTED_API_KEY]")
 
-        if isinstance(e, ToolCallException):
-            yield StreamingError(error=error_msg, stack_trace=stack_trace)
-        elif llm:
-            client_error_msg = litellm_exception_to_error_msg(e, llm)
-            if llm.config.api_key and len(llm.config.api_key) > 2:
-                client_error_msg = client_error_msg.replace(
-                    llm.config.api_key, "[REDACTED_API_KEY]"
-                )
-                stack_trace = stack_trace.replace(
-                    llm.config.api_key, "[REDACTED_API_KEY]"
-                )
-
-            yield StreamingError(error=client_error_msg, stack_trace=stack_trace)
-
+        yield StreamingError(error=client_error_msg, stack_trace=stack_trace)
         db_session.rollback()
         return
+
+    # Post-LLM answer processing
+    try:
+        logger.debug("Post-LLM answer processing")
+        message_specific_citations: MessageSpecificCitations | None = None
+        
+        # Process citations based on available document types
+        if reference_db_search_docs:
+            # Use search results for citations
+            message_specific_citations = _translate_citations(
+                citations_list=answer.citations,
+                db_docs=reference_db_search_docs,
+            )
+            logger.debug(f"Processed citations using search results: {message_specific_citations.citation_map if message_specific_citations else None}")
+
+        # Saving Gen AI answer and responding with message info
+        tool_name_to_tool_id: dict[str, int] = {}
+        for tool_id, tool_list in tool_dict.items():
+            for tool in tool_list:
+                tool_name_to_tool_id[tool.name] = tool_id
+
+        # Convert custom tool documents to the format expected by the frontend
+        custom_tool_docs_for_frontend = []
+
+        # Combine search docs and custom tool docs for the frontend
+        all_reference_docs = reference_db_search_docs or []
+        all_docs_for_frontend = [
+            translate_db_search_doc_to_server_search_doc(doc)
+            for doc in all_reference_docs
+        ] + custom_tool_docs_for_frontend
+
+        gen_ai_response_message = partial_response(
+            message=answer.llm_answer,
+            rephrased_query=(
+                qa_docs_response.rephrased_query if qa_docs_response else None
+            ),
+            reference_docs=all_reference_docs,  # Keep original for database storage
+            files=ai_message_files,
+            token_count=len(llm_tokenizer_encode_func(answer.llm_answer)),
+            citations=(
+                message_specific_citations.citation_map
+                if message_specific_citations
+                else None
+            ),
+            error=None,
+            tool_call=(
+                ToolCall(
+                    tool_id=tool_name_to_tool_id[tool_result.tool_name],
+                    tool_name=tool_result.tool_name,
+                    tool_arguments=tool_result.tool_args,
+                    tool_result=tool_result.tool_result,
+                )
+                if tool_result
+                else None
+            ),
+        )
+
+        logger.debug("Committing messages")
+        db_session.commit()  # actually save user / assistant message
+
+        # Create custom message response that includes custom tool documents
+        from onyx.context.search.models import RetrievalDocs
+        from onyx.server.query_and_chat.models import ChatMessageDetail
+        from onyx.db.chat import tool_call_to_final_result
+        
+        # Create context_docs with both search and custom tool documents
+        context_docs = RetrievalDocs(top_documents=all_docs_for_frontend) if all_docs_for_frontend else None
+        
+        msg_detail_response = ChatMessageDetail(
+            chat_session_id=gen_ai_response_message.chat_session_id,
+            message_id=gen_ai_response_message.id,
+            parent_message=gen_ai_response_message.parent_message,
+            latest_child_message=gen_ai_response_message.latest_child_message,
+            message=gen_ai_response_message.message,
+            rephrased_query=gen_ai_response_message.rephrased_query,
+            context_docs=context_docs,
+            message_type=gen_ai_response_message.message_type,
+            time_sent=gen_ai_response_message.time_sent,
+            overridden_model=gen_ai_response_message.overridden_model,
+            alternate_assistant_id=gen_ai_response_message.alternate_assistant_id,
+            citations=gen_ai_response_message.citations,
+            files=gen_ai_response_message.files or [],
+            tool_call=tool_call_to_final_result(gen_ai_response_message.tool_call),
+        )
+
+        yield msg_detail_response
+    except Exception as e:
+        error_msg = str(e)
+        logger.exception(error_msg)
+
+        # Frontend will erase whatever answer and show this instead
+        yield StreamingError(error="Failed to parse LLM output")
 
 
 @log_generator_function_time()
@@ -736,8 +1094,7 @@ def stream_chat_message(
     custom_tool_additional_headers: dict[str, str] | None = None,
     is_connected: Callable[[], bool] | None = None,
 ) -> Iterator[str]:
-    start_time = time.time()
-    with get_session_with_current_tenant() as db_session:
+    with get_session_context_manager() as db_session:
         objects = stream_chat_message_objects(
             new_msg_req=new_msg_req,
             user=user,
@@ -747,62 +1104,31 @@ def stream_chat_message(
             is_connected=is_connected,
         )
         for obj in objects:
-            # Check if this is a QADocsResponse with document results
-            if isinstance(obj, QADocsResponse):
-                document_retrieval_latency = time.time() - start_time
-                logger.debug(f"First doc time: {document_retrieval_latency}")
-
             yield get_json_line(obj.model_dump())
 
 
-def remove_answer_citations(answer: str) -> str:
-    pattern = r"\s*\[\[\d+\]\]\(http[s]?://[^\s]+\)"
-
-    return re.sub(pattern, "", answer)
-
-
 @log_function_time()
-def gather_stream(
-    packets: AnswerStream,
-) -> ChatBasicResponse:
+def gather_stream_for_slack(
+    packets: ChatPacketStream,
+) -> ChatOnyxBotResponse:
+    response = ChatOnyxBotResponse()
+
     answer = ""
-    citations: list[CitationInfo] = []
-    error_msg: str | None = None
-    message_id: int | None = None
-    top_documents: list[SavedSearchDoc] = []
-
     for packet in packets:
-        if isinstance(packet, Packet):
-            # Handle the different packet object types
-            if isinstance(packet.obj, MessageStart):
-                # MessageStart contains the initial content and final documents
-                if packet.obj.content:
-                    answer += packet.obj.content
-                if packet.obj.final_documents:
-                    top_documents = packet.obj.final_documents
-            elif isinstance(packet.obj, MessageDelta):
-                # MessageDelta contains incremental content updates
-                if packet.obj.content:
-                    answer += packet.obj.content
-            elif isinstance(packet.obj, CitationDelta):
-                # CitationDelta contains citation information
-                if packet.obj.citations:
-                    citations.extend(packet.obj.citations)
+        if isinstance(packet, OnyxAnswerPiece) and packet.answer_piece:
+            answer += packet.answer_piece
+        elif isinstance(packet, QADocsResponse):
+            response.docs = packet
         elif isinstance(packet, StreamingError):
-            error_msg = packet.error
-        elif isinstance(packet, MessageResponseIDInfo):
-            message_id = packet.reserved_assistant_message_id
+            response.error_msg = packet.error
+        elif isinstance(packet, ChatMessageDetail):
+            response.chat_message_id = packet.message_id
+        elif isinstance(packet, LLMRelevanceFilterResponse):
+            response.llm_selected_doc_indices = packet.llm_selected_doc_indices
+        elif isinstance(packet, AllCitations):
+            response.citations = packet.citations
 
-    if message_id is None:
-        raise ValueError("Message ID is required")
+    if answer:
+        response.answer = answer
 
-    return ChatBasicResponse(
-        answer=answer,
-        answer_citationless=remove_answer_citations(answer),
-        cited_documents={
-            citation.citation_num: citation.document_id for citation in citations
-        },
-        message_id=message_id,
-        error_msg=error_msg,
-        top_documents=top_documents,
-    )
+    return response

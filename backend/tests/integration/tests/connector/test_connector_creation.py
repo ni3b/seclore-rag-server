@@ -2,7 +2,6 @@ import os
 from datetime import datetime
 from datetime import timezone
 
-from onyx.connectors.models import InputType
 from onyx.server.documents.models import DocumentSource
 from tests.integration.common_utils.managers.cc_pair import CCPairManager
 from tests.integration.common_utils.managers.user import UserManager
@@ -56,7 +55,6 @@ def test_overlapping_connector_creation(reset: None) -> None:
         connector_specific_config=config,
         credential_json=credential,
         user_performing_action=admin_user,
-        input_type=InputType.POLL,
     )
 
     CCPairManager.wait_for_indexing_completion(
@@ -70,7 +68,6 @@ def test_overlapping_connector_creation(reset: None) -> None:
         connector_specific_config=config,
         credential_json=credential,
         user_performing_action=admin_user,
-        input_type=InputType.POLL,
     )
 
     CCPairManager.wait_for_indexing_completion(
@@ -115,7 +112,6 @@ def test_connector_pause_while_indexing(reset: None) -> None:
         connector_specific_config=config,
         credential_json=credential,
         user_performing_action=admin_user,
-        input_type=InputType.POLL,
     )
 
     CCPairManager.wait_for_indexing_in_progress(

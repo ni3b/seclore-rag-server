@@ -8,7 +8,6 @@ python chat_loadtest.py --api-key <api-key> --url localhost:8080
 
 For more options, checkout the bottom of the file.
 """
-
 import argparse
 import asyncio
 import logging
@@ -96,7 +95,7 @@ class ChatLoadTester:
                 "parent_message_id": parent_message_id,
                 "prompt_id": None,
                 "retrieval_options": {
-                    "run_search": "always",
+                    "run_search": "auto",
                     "real_time": True,
                 },
                 "file_descriptors": [],
@@ -191,12 +190,12 @@ def main() -> None:
         "--url",
         type=str,
         default="http://localhost:3000/api",
-        help="Onyx URL",
+        help="Seclore URL",
     )
     parser.add_argument(
         "--api-key",
         type=str,
-        help="Onyx Basic/Admin Level API key",
+        help="Seclore Basic/Admin Level API key",
     )
     parser.add_argument(
         "--concurrent",

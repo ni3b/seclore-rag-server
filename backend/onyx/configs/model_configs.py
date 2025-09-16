@@ -33,7 +33,7 @@ OLD_DEFAULT_MODEL_NORMALIZE_EMBEDDINGS = False
 
 # These are only used if reranking is turned off, to normalize the direct retrieval scores for display
 # Currently unused
-SIM_SCORE_RANGE_LOW = float(os.environ.get("SIM_SCORE_RANGE_LOW") or 0.0)
+SIM_SCORE_RANGE_LOW = float(os.environ.get("SIM_SCORE_RANGE_LOW") or 0.7)
 SIM_SCORE_RANGE_HIGH = float(os.environ.get("SIM_SCORE_RANGE_HIGH") or 1.0)
 # Certain models like e5, BGE, etc use a prefix for asymmetric retrievals (query generally shorter than docs)
 ASYM_QUERY_PREFIX = os.environ.get("ASYM_QUERY_PREFIX", "search_query: ")
@@ -61,7 +61,7 @@ GEN_AI_MODEL_VERSION = os.environ.get("GEN_AI_MODEL_VERSION")
 FAST_GEN_AI_MODEL_VERSION = os.environ.get("FAST_GEN_AI_MODEL_VERSION")
 
 # Override the auto-detection of LLM max context length
-GEN_AI_MAX_TOKENS = int(os.environ.get("GEN_AI_MAX_TOKENS") or 0) or None
+GEN_AI_MAX_TOKENS = int(os.environ.get("GEN_AI_MAX_TOKENS") or 100000) or None
 
 # Set this to be enough for an answer + quotes. Also used for Chat
 # This is the minimum token context we will leave for the LLM to generate an answer
@@ -71,19 +71,23 @@ GEN_AI_NUM_RESERVED_OUTPUT_TOKENS = int(
 
 # Typically, GenAI models nowadays are at least 4K tokens
 GEN_AI_MODEL_FALLBACK_MAX_TOKENS = int(
-    os.environ.get("GEN_AI_MODEL_FALLBACK_MAX_TOKENS") or 4096
+    os.environ.get("GEN_AI_MODEL_FALLBACK_MAX_TOKENS") or 100000
 )
 
 # Number of tokens from chat history to include at maximum
 # 3000 should be enough context regardless of use, no need to include as much as possible
 # as this drives up the cost unnecessarily
-GEN_AI_HISTORY_CUTOFF = 3000
+GEN_AI_HISTORY_CUTOFF = int(
+    os.environ.get("GEN_AI_HISTORY_CUTOFF") or 100000
+)
 # This is used when computing how much context space is available for documents
 # ahead of time in order to let the user know if they can "select" more documents
 # It represents a maximum "expected" number of input tokens from the latest user
 # message. At query time, we don't actually enforce this - we will only throw an
 # error if the total # of tokens exceeds the max input tokens.
-GEN_AI_SINGLE_USER_MESSAGE_EXPECTED_MAX_TOKENS = 512
+GEN_AI_SINGLE_USER_MESSAGE_EXPECTED_MAX_TOKENS = int(
+    os.environ.get("GEN_AI_SINGLE_USER_MESSAGE_EXPECTED_MAX_TOKENS") or 10000
+)
 GEN_AI_TEMPERATURE = float(os.environ.get("GEN_AI_TEMPERATURE") or 0)
 
 # should be used if you are using a custom LLM inference provider that doesn't support
@@ -132,10 +136,3 @@ if _LITELLM_EXTRA_BODY_RAW:
         LITELLM_EXTRA_BODY = json.loads(_LITELLM_EXTRA_BODY_RAW)
     except Exception:
         pass
-
-# Whether and how to lower scores for short chunks w/o relevant context
-# Evaluated via custom ML model
-
-USE_INFORMATION_CONTENT_CLASSIFICATION = (
-    os.environ.get("USE_INFORMATION_CONTENT_CLASSIFICATION", "false").lower() == "true"
-)

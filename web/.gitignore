@@ -35,11 +35,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# playwright testing temp files
 /admin_auth.json
-/user_auth.json
 /build-archive.log
-/test-results
 
-# generated clients ... in particular, the API to the Onyx backend itself!
-/src/lib/generated

@@ -1,6 +1,6 @@
 "use client";
 
-import { DateRangePickerValue } from "@/components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangePickerValue } from "@/app/ee/admin/performance/DateRangeSelector";
 import { getDatesList, useQueryAnalytics, useUserAnalytics } from "../lib";
 import { ThreeDotsLoader } from "@/components/Loading";
 import { AreaChartDisplay } from "@/components/ui/areaChart";
@@ -33,7 +33,6 @@ export function QueryPerformanceChart({
     );
   } else if (
     !queryAnalyticsData ||
-    queryAnalyticsData[0] === undefined ||
     !userAnalyticsData ||
     queryAnalyticsError ||
     userAnalyticsError

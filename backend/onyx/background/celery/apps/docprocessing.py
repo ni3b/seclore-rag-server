@@ -1,5 +1,4 @@
 from typing import Any
-from typing import cast
 
 from celery import Celery
 from celery import signals
@@ -13,7 +12,7 @@ from celery.signals import worker_shutdown
 
 import onyx.background.celery.apps.app_base as app_base
 from onyx.configs.constants import POSTGRES_CELERY_WORKER_DOCPROCESSING_APP_NAME
-from onyx.db.engine.sql_engine import SqlEngine
+from onyx.db.engine import SqlEngine
 from onyx.utils.logger import setup_logger
 from shared_configs.configs import MULTI_TENANT
 
@@ -22,7 +21,6 @@ logger = setup_logger()
 
 celery_app = Celery(__name__)
 celery_app.config_from_object("onyx.background.celery.configs.docprocessing")
-celery_app.Task = app_base.TenantAwareTask  # type: ignore [misc]
 
 
 @signals.task_prerun.connect
@@ -66,8 +64,7 @@ def on_worker_init(sender: Worker, **kwargs: Any) -> None:
     # "SSL connection has been closed unexpectedly"
     # actually setting the spawn method in the cloud fixes 95% of these.
     # setting pre ping might help even more, but not worrying about that yet
-    pool_size = cast(int, sender.concurrency)  # type: ignore
-    SqlEngine.init_engine(pool_size=pool_size, max_overflow=8)
+    SqlEngine.init_engine(pool_size=sender.concurrency, max_overflow=8)  # type: ignore
 
     app_base.wait_for_redis(sender, **kwargs)
     app_base.wait_for_db(sender, **kwargs)
@@ -101,10 +98,6 @@ def on_setup_logging(
 ) -> None:
     app_base.on_setup_logging(loglevel, logfile, format, colorize, **kwargs)
 
-
-base_bootsteps = app_base.get_bootsteps()
-for bootstep in base_bootsteps:
-    celery_app.steps["worker"].add(bootstep)
 
 celery_app.autodiscover_tasks(
     [

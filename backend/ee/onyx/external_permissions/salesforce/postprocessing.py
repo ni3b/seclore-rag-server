@@ -10,7 +10,7 @@ from ee.onyx.external_permissions.salesforce.utils import (
 )
 from onyx.configs.app_configs import BLURB_SIZE
 from onyx.context.search.models import InferenceChunk
-from onyx.db.engine.sql_engine import get_session_with_current_tenant
+from onyx.db.engine import get_session_context_manager
 from onyx.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -44,21 +44,20 @@ def _get_objects_access_for_user_email_from_salesforce(
     # This is cached in the function so the first query takes an extra 0.1-0.3 seconds
     # but subsequent queries for this source are essentially instant
     first_doc_id = chunks[0].document_id
-    with get_session_with_current_tenant() as db_session:
+    with get_session_context_manager() as db_session:
         salesforce_client = get_any_salesforce_client_for_doc_id(
             db_session, first_doc_id
         )
 
     # This is cached in the function so the first query takes an extra 0.1-0.3 seconds
     # but subsequent queries by the same user are essentially instant
-    start_time = time.monotonic()
+    start_time = time.time()
     user_id = get_salesforce_user_id_from_email(salesforce_client, user_email)
-    end_time = time.monotonic()
+    end_time = time.time()
     logger.info(
         f"Time taken to get Salesforce user ID: {end_time - start_time} seconds"
     )
     if user_id is None:
-        logger.warning(f"User '{user_email}' not found in Salesforce")
         return None
 
     # This is the only query that is not cached in the function
@@ -66,7 +65,6 @@ def _get_objects_access_for_user_email_from_salesforce(
     object_id_to_access = get_objects_access_for_user_id(
         salesforce_client, user_id, list(object_ids)
     )
-    logger.debug(f"Object ID to access: {object_id_to_access}")
     return object_id_to_access
 
 
@@ -217,7 +215,7 @@ def censor_salesforce_chunks(
 def _get_objects_access_for_user_email(
     object_ids: set[str], user_email: str
 ) -> dict[str, bool]:
-    with get_session_with_current_tenant() as db_session:
+    with get_session_context_manager() as db_session:
         external_groups = fetch_external_groups_for_user_email_and_group_ids(
             db_session=db_session,
             user_email=user_email,

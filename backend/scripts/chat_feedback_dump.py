@@ -198,7 +198,6 @@ def process_all_chat_feedback(onyx_url: str, api_key: str | None) -> None:
         r_sessions = get_chat_sessions(onyx_url, headers, user_id)
         logger.info(f"user={user_id} num_sessions={len(r_sessions.sessions)}")
         for session in r_sessions.sessions:
-            s: ChatSessionSnapshot
             try:
                 s = get_session_history(onyx_url, headers, session.id)
             except requests.exceptions.HTTPError:
@@ -220,15 +219,15 @@ if __name__ == "__main__":
         "--url",
         type=str,
         default="http://localhost:8080",
-        help="Onyx URL, should point to Onyx nginx.",
+        help="Seclore URL, should point to Seclore nginx.",
     )
 
     # Not needed if Auth is disabled?
-    # Or for Onyx MIT Edition API key must be replaced with session cookie
+    # Or for Seclore MIT Edition API key must be replaced with session cookie
     parser.add_argument(
         "--api-key",
         type=str,
-        help="Onyx Admin Level API key",
+        help="Seclore Admin Level API key",
     )
 
     args = parser.parse_args()

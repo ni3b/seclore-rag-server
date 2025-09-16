@@ -3,10 +3,8 @@ import os
 from sqlalchemy.orm import Session
 
 from onyx.db.models import SlackChannelConfig
-from onyx.db.slack_channel_config import (
-    fetch_slack_channel_config_for_channel_or_default,
-)
 from onyx.db.slack_channel_config import fetch_slack_channel_configs
+
 
 VALID_SLACK_FILTERS = [
     "answerable_prefilter",
@@ -19,16 +17,18 @@ def get_slack_channel_config_for_bot_and_channel(
     db_session: Session,
     slack_bot_id: int,
     channel_name: str | None,
-) -> SlackChannelConfig:
-    slack_bot_config = fetch_slack_channel_config_for_channel_or_default(
-        db_session=db_session, slack_bot_id=slack_bot_id, channel_name=channel_name
-    )
-    if not slack_bot_config:
-        raise ValueError(
-            "No default configuration has been set for this Slack bot. This should not be possible."
-        )
+) -> SlackChannelConfig | None:
+    if not channel_name:
+        return None
 
-    return slack_bot_config
+    slack_bot_configs = fetch_slack_channel_configs(
+        db_session=db_session, slack_bot_id=slack_bot_id
+    )
+    for config in slack_bot_configs:
+        if channel_name in config.channel_config["channel_name"]:
+            return config
+
+    return None
 
 
 def validate_channel_name(
@@ -64,7 +64,7 @@ TENANT_HEARTBEAT_INTERVAL = (
     15  # How often pods send heartbeats to indicate they are still processing a tenant
 )
 TENANT_HEARTBEAT_EXPIRATION = (
-    60  # How long before a tenant's heartbeat expires, allowing other pods to take over
+    30  # How long before a tenant's heartbeat expires, allowing other pods to take over
 )
 TENANT_ACQUISITION_INTERVAL = 60  # How often pods attempt to acquire unprocessed tenants and checks for new tokens
 

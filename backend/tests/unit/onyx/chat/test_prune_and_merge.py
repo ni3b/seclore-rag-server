@@ -4,7 +4,6 @@ from onyx.chat.prune_and_merge import _merge_sections
 from onyx.configs.constants import DocumentSource
 from onyx.context.search.models import InferenceChunk
 from onyx.context.search.models import InferenceSection
-from onyx.context.search.utils import inference_section_from_chunks
 
 
 # This large test accounts for all of the following:
@@ -38,9 +37,6 @@ def create_inference_chunk(
         metadata={},
         match_highlights=[],
         updated_at=None,
-        image_file_id=None,
-        doc_summary="",
-        chunk_context="",
     )
 
 
@@ -112,7 +108,7 @@ Content 17
             # Sections
             [
                 # Document 1, top/middle/bot connected + disconnected section
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_1_TOP_CHUNK,
                     chunks=[
                         DOC_1_FILLER_1,
@@ -121,8 +117,9 @@ Content 17
                         DOC_1_MID_CHUNK,
                         DOC_1_FILLER_3,
                     ],
+                    combined_content="N/A",  # Not used
                 ),
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_1_MID_CHUNK,
                     chunks=[
                         DOC_1_FILLER_2,
@@ -131,8 +128,9 @@ Content 17
                         DOC_1_FILLER_3,
                         DOC_1_FILLER_4,
                     ],
+                    combined_content="N/A",
                 ),
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_1_BOTTOM_CHUNK,
                     chunks=[
                         DOC_1_FILLER_3,
@@ -141,8 +139,9 @@ Content 17
                         DOC_1_FILLER_5,
                         DOC_1_FILLER_6,
                     ],
+                    combined_content="N/A",
                 ),
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_1_DISCONNECTED,
                     chunks=[
                         DOC_1_FILLER_7,
@@ -151,8 +150,9 @@ Content 17
                         DOC_1_FILLER_9,
                         DOC_1_FILLER_10,
                     ],
+                    combined_content="N/A",
                 ),
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_2_TOP_CHUNK,
                     chunks=[
                         DOC_2_FILLER_1,
@@ -161,8 +161,9 @@ Content 17
                         DOC_2_FILLER_3,
                         DOC_2_BOTTOM_CHUNK,
                     ],
+                    combined_content="N/A",
                 ),
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_2_BOTTOM_CHUNK,
                     chunks=[
                         DOC_2_TOP_CHUNK,
@@ -171,6 +172,7 @@ Content 17
                         DOC_2_FILLER_4,
                         DOC_2_FILLER_5,
                     ],
+                    combined_content="N/A",
                 ),
             ],
             # Expected Content
@@ -199,13 +201,15 @@ def test_merge_sections(
         (
             # Sections
             [
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_1_TOP_CHUNK,
                     chunks=[DOC_1_TOP_CHUNK],
+                    combined_content="N/A",  # Not used
                 ),
-                inference_section_from_chunks(
+                InferenceSection(
                     center_chunk=DOC_1_MID_CHUNK,
                     chunks=[DOC_1_MID_CHUNK],
+                    combined_content="N/A",
                 ),
             ],
             # Expected Content

@@ -108,27 +108,6 @@ export const InviteUserButton = ({
 
   const isMutating = isInviting || isUninviting;
 
-  return (
-    <>
-      {showInviteModal && (
-        <GenericConfirmModal
-          title={`${invited ? "Uninvite" : "Invite"} User`}
-          message={`Are you sure you want to ${
-            invited ? "uninvite" : "invite"
-          } ${user.email}?`}
-          onClose={() => setShowInviteModal(false)}
-          onConfirm={handleConfirm}
-        />
-      )}
-
-      <Button
-        className="w-min"
-        onClick={() => setShowInviteModal(true)}
-        disabled={isMutating}
-        size="sm"
-      >
-        {invited ? "Uninvite" : "Invite"}
-      </Button>
-    </>
-  );
+  // Hide the button completely
+  return null;
 };

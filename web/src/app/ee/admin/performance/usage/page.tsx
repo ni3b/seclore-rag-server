@@ -1,6 +1,6 @@
 "use client";
 
-import { AdminDateRangeSelector } from "../../../../../components/dateRangeSelectors/AdminDateRangeSelector";
+import { DateRangeSelector } from "../DateRangeSelector";
 import { OnyxBotChart } from "./OnyxBotChart";
 import { FeedbackChart } from "./FeedbackChart";
 import { QueryPerformanceChart } from "./QueryPerformanceChart";
@@ -22,7 +22,7 @@ export default function AnalyticsPage() {
         title="Usage Statistics"
         icon={<FiActivity size={32} />}
       />
-      <AdminDateRangeSelector
+      <DateRangeSelector
         value={timeRange}
         onValueChange={(value) => setTimeRange(value as any)}
       />

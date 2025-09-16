@@ -3,8 +3,6 @@ from abc import ABC
 from abc import abstractmethod
 from copy import copy
 
-from tokenizers import Encoding  # type: ignore
-from tokenizers import Tokenizer  # type: ignore
 from transformers import logging as transformer_logging  # type:ignore
 
 from onyx.configs.model_configs import DOC_EMBEDDING_CONTEXT_SIZE
@@ -12,8 +10,6 @@ from onyx.configs.model_configs import DOCUMENT_ENCODER_MODEL
 from onyx.context.search.models import InferenceChunk
 from onyx.utils.logger import setup_logger
 from shared_configs.enums import EmbeddingProvider
-
-TRIM_SEP_PAT = "\n... {n} tokens removed...\n"
 
 logger = setup_logger()
 transformer_logging.set_verbosity_error()
@@ -71,27 +67,16 @@ class TiktokenTokenizer(BaseTokenizer):
 
 class HuggingFaceTokenizer(BaseTokenizer):
     def __init__(self, model_name: str):
-        self.encoder: Tokenizer = Tokenizer.from_pretrained(model_name)
+        from tokenizers import Tokenizer  # type: ignore
 
-    def _safer_encode(self, string: str) -> Encoding:
-        """
-        Encode a string using the HuggingFaceTokenizer, but if it fails,
-        encode the string as ASCII and decode it back to a string. This helps
-        in cases where the string has weird characters like \udeb4.
-        """
-        try:
-            return self.encoder.encode(string, add_special_tokens=False)
-        except Exception:
-            return self.encoder.encode(
-                string.encode("ascii", "ignore").decode(), add_special_tokens=False
-            )
+        self.encoder = Tokenizer.from_pretrained(model_name)
 
     def encode(self, string: str) -> list[int]:
         # this returns no special tokens
-        return self._safer_encode(string).ids
+        return self.encoder.encode(string, add_special_tokens=False).ids
 
     def tokenize(self, string: str) -> list[str]:
-        return self._safer_encode(string).tokens
+        return self.encoder.encode(string, add_special_tokens=False).tokens
 
     def decode(self, tokens: list[int]) -> str:
         return self.encoder.decode(tokens)
@@ -114,7 +99,7 @@ def _check_tokenizer_cache(
 
         if not tokenizer:
             logger.info(
-                f"Falling back to default embedding model tokenizer: {DOCUMENT_ENCODER_MODEL}"
+                f"Falling back to default embedding model: {DOCUMENT_ENCODER_MODEL}"
             )
             tokenizer = HuggingFaceTokenizer(DOCUMENT_ENCODER_MODEL)
 
@@ -174,26 +159,9 @@ def tokenizer_trim_content(
     content: str, desired_length: int, tokenizer: BaseTokenizer
 ) -> str:
     tokens = tokenizer.encode(content)
-    if len(tokens) <= desired_length:
-        return content
-
-    return tokenizer.decode(tokens[:desired_length])
-
-
-def tokenizer_trim_middle(
-    tokens: list[int], desired_length: int, tokenizer: BaseTokenizer
-) -> str:
-    if len(tokens) <= desired_length:
-        return tokenizer.decode(tokens)
-    sep_str = TRIM_SEP_PAT.format(n=len(tokens) - desired_length)
-    sep_tokens = tokenizer.encode(sep_str)
-    slice_size = (desired_length - len(sep_tokens)) // 2
-    assert slice_size > 0, "Slice size is not positive, desired length is too short"
-    return (
-        tokenizer.decode(tokens[:slice_size])
-        + sep_str
-        + tokenizer.decode(tokens[-slice_size:])
-    )
+    if len(tokens) > desired_length:
+        content = tokenizer.decode(tokens[:desired_length])
+    return content
 
 
 def tokenizer_trim_chunks(

@@ -1,6 +1,6 @@
 "use client";
 
-import { Label, SubLabel } from "@/components/Field";
+import { Label, SubLabel } from "@/components/admin/connectors/Field";
 import { usePopup } from "@/components/admin/connectors/Popup";
 import { SettingsContext } from "@/components/settings/SettingsProvider";
 import { Button } from "@/components/ui/button";
@@ -91,7 +91,7 @@ export function CustomAnalyticsUpdateForm() {
             For security reasons, you must provide a secret key to update this
             script. This should be the value of the{" "}
             <i>CUSTOM_ANALYTICS_SECRET_KEY</i> environment variable set when
-            initially setting up Onyx.
+            initially setting up Seclore.
           </>
         </SubLabel>
         <input

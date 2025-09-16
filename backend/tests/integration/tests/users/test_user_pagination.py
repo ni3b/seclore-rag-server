@@ -46,7 +46,8 @@ def _verify_user_pagination(
 def test_user_pagination(reset: None) -> None:
     # Create an admin user to perform actions
     user_performing_action: DATestUser = UserManager.create(
-        name="admin_performing_action"
+        name="admin_performing_action",
+        is_first_user=True,
     )
 
     # Create 9 admin users
